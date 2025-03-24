@@ -71,6 +71,7 @@ def format_event(event) -> str:
     start = event["start"].get("dateTime", event["start"].get("date"))
     end   = event["end"].get("dateTime", event["end"].get("date"))
     title = event.get("summary", "No Title")
+    location = event.get("location", "")
 
     # Convert dateTime to local time if "T" is present
     if "T" in start:
@@ -85,7 +86,11 @@ def format_event(event) -> str:
     else:
         end_str = end
 
-    return f"- {title} ({start_str} to {end_str})"
+    # If a location is specified, include it in the output
+    if location:
+        return f"- {title} ({start_str} to {end_str}), location: {location}"
+    else:
+        return f"- {title} ({start_str} to {end_str})"
 
 #
 # 3. FETCH EVENTS
