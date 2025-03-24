@@ -254,13 +254,13 @@ def check_for_changes():
         weekly_changes = detect_changes(old_week, new_week)
 
         if daily_changes:
-            post_embed_to_discord(f"Changes Detected for: {meta['name']} (Today)", "
-".join(daily_changes), meta["color"])
+            post_embed_to_discord(f"Changes Detected for: {meta['name']} (Today)", "\n".join(daily_changes), meta["color"])
+
             save_current_events_for_key(daily_key, new_daily)
 
         if weekly_changes:
-            post_embed_to_discord(f"Changes Detected for: {meta['name']} (Week)", "
-".join(weekly_changes), meta["color"])
+            post_embed_to_discord(f"Changes Detected for: {meta['name']} (Today)", "\n".join(weekly_changes), meta["color"])
+
             save_current_events_for_key(weekly_key, new_week)
 
     print("[DEBUG] check_for_changes() finished.")
