@@ -18,7 +18,7 @@ credentials = service_account.Credentials.from_service_account_file(
 )
 service = build("calendar", "v3", credentials=credentials)
 
-EVENTS_FILE = "events.json"
+EVENTS_FILE = "/app/data/events.json"
 
 # Define multiple calendars with name and embed color
 CALENDARS = {
