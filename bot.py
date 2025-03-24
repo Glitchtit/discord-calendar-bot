@@ -3,6 +3,7 @@ import requests
 import schedule
 import time
 import json
+import hashlib
 from datetime import datetime, timedelta
 from dateutil import tz
 
@@ -10,9 +11,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
-print(f"[DEBUG] DISCORD_WEBHOOK_URL: {DISCORD_WEBHOOK_URL}")
 SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-print(f"[DEBUG] GOOGLE_APPLICATION_CREDENTIALS: {SERVICE_ACCOUNT_FILE}")
 
 SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
 credentials = service_account.Credentials.from_service_account_file(
@@ -20,33 +19,46 @@ credentials = service_account.Credentials.from_service_account_file(
 )
 service = build("calendar", "v3", credentials=credentials)
 
-EVENTS_FILE = "/app/data/events.json"
+EVENTS_FILE = "events.json"
 
-def get_accessible_calendars():
-    result = service.calendarList().list().execute()
+# 1. CALENDAR DISCOVERY
+
+def get_env_calendar_ids():
+    ids = os.environ.get("GOOGLE_CALENDAR_IDS", "")
+    return [cid.strip() for cid in ids.split(",") if cid.strip()]
+
+def subscribe_and_load_calendars():
+    calendar_ids = get_env_calendar_ids()
     calendars = {}
-    print(f"[DEBUG] Found {len(result.get('items', []))} calendars.")
 
-    for cal in result.get("items", []):
-        cal_id = cal["id"]
-        cal_name = cal.get("summaryOverride") or cal.get("summary")
-        # Assign a hash-based color (or pick from a predefined list)
-        color = hash(cal_id) % 0xFFFFFF  # random color from ID
+    for calendar_id in calendar_ids:
+        try:
+            service.calendarList().insert(body={"id": calendar_id}).execute()
+            print(f"[DEBUG] Subscribed to calendar: {calendar_id}")
+        except Exception as e:
+            if "Already Exists" in str(e):
+                print(f"[DEBUG] Already subscribed: {calendar_id}")
+            else:
+                print(f"[WARNING] Could not subscribe to {calendar_id}: {e}")
 
-        calendars[cal_id] = {
-            "name": cal_name,
-            "color": color
+        try:
+            cal = service.calendarList().get(calendarId=calendar_id).execute()
+            name = cal.get("summaryOverride") or cal.get("summary") or calendar_id
+        except Exception as e:
+            print(f"[WARNING] Could not fetch metadata for {calendar_id}: {e}")
+            name = calendar_id
+
+        color_hash = int(hashlib.md5(calendar_id.encode()).hexdigest()[:6], 16)
+        calendars[calendar_id] = {
+            "name": name,
+            "color": color_hash
         }
-        print(f"[DEBUG] Found calendar: {cal_name} ({cal_id})")
 
     return calendars
 
+CALENDARS = subscribe_and_load_calendars()
 
-# Define multiple calendars with name and embed color
-CALENDARS = get_accessible_calendars()
-
-
-# 1. LOADING / SAVING EVENTS
+# 2. LOADING / SAVING EVENTS
 
 def load_previous_events():
     if os.path.exists(EVENTS_FILE):
@@ -63,7 +75,7 @@ def save_current_events_for_key(key, events):
     with open(EVENTS_FILE, "w") as f:
         json.dump(all_data, f)
 
-# 2. DISCORD EMBEDS + FORMATTING
+# 3. DISCORD EMBEDS + FORMATTING
 
 def post_embed_to_discord(title: str, description: str, color: int = 5814783):
     if not DISCORD_WEBHOOK_URL:
@@ -109,7 +121,7 @@ def format_event(event) -> str:
     else:
         return f"- {title} ({start_str} to {end_str})"
 
-# 3. FETCH EVENTS
+# 4. FETCH EVENTS
 
 def get_events_for_day(date_obj, calendar_id):
     start_utc = date_obj.isoformat() + "T00:00:00Z"
@@ -138,7 +150,7 @@ def get_events_for_week(monday_date, calendar_id):
     ).execute()
     return result.get("items", [])
 
-# 4. DETECT CHANGES
+# 5. DETECT CHANGES
 
 def extract_comparable_fields(event):
     start = event["start"].get("dateTime", event["start"].get("date"))
@@ -168,7 +180,7 @@ def detect_changes(old_events, new_events):
             )
     return changes
 
-# 5. POSTING HAPPENINGS
+# 6. POSTING HAPPENINGS
 
 def post_todays_happenings():
     today = datetime.now(tz=tz.tzlocal()).date()
@@ -251,19 +263,12 @@ def check_for_changes():
 
     print("[DEBUG] check_for_changes() finished.")
 
-# 6. SCHEDULE
+# 7. SCHEDULE
 
 schedule.every().day.at("08:00").do(post_todays_happenings)
 schedule.every().monday.at("09:00").do(post_weeks_happenings)
 
 if __name__ == "__main__":
-    # TEMP: Test accessible calendars
-    print("Testing calendarList.list()...")
-    result = service.calendarList().list().execute()
-    for cal in result.get("items", []):
-        print(f"- {cal.get('summary')} ({cal.get('id')})")
-    exit()
-    
     print("[DEBUG] Bot started. Immediately posting today's and this week's happenings.")
     post_todays_happenings()
     post_weeks_happenings()
