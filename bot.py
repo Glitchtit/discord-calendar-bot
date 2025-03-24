@@ -235,8 +235,34 @@ def post_weeks_happenings():
 
 def check_for_changes():
     print("[DEBUG] check_for_changes() called.")
-    post_todays_happenings()
-    post_weeks_happenings()
+    today = datetime.now(tz=tz.tzlocal()).date()
+    monday = today - timedelta(days=today.weekday())
+    end = monday + timedelta(days=6)
+
+    for cid, meta in CALENDARS.items():
+        daily_key = f"DAILY_{meta['name'].replace(' ', '_')}_{today}"
+        weekly_key = f"WEEK_{meta['name'].replace(' ', '_')}_{monday}"
+
+        all_data = load_previous_events()
+        old_daily = all_data.get(daily_key, [])
+        old_week = all_data.get(weekly_key, [])
+
+        new_daily = get_events(meta, today, today)
+        new_week = get_events(meta, monday, end)
+
+        daily_changes = detect_changes(old_daily, new_daily)
+        weekly_changes = detect_changes(old_week, new_week)
+
+        if daily_changes:
+            post_embed_to_discord(f"Changes Detected for: {meta['name']} (Today)", "
+".join(daily_changes), meta["color"])
+            save_current_events_for_key(daily_key, new_daily)
+
+        if weekly_changes:
+            post_embed_to_discord(f"Changes Detected for: {meta['name']} (Week)", "
+".join(weekly_changes), meta["color"])
+            save_current_events_for_key(weekly_key, new_week)
+
     print("[DEBUG] check_for_changes() finished.")
 
 # 7. SCHEDULE
