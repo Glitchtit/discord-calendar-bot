@@ -202,12 +202,50 @@ def post_weeks_happenings():
 # 7. REAL-TIME CHANGES EVERY MINUTE
 #
 def check_for_changes():
+    """
+    Check daily and weekly sets each minute, but only post changes if there are any.
+    No full "today's happenings" or "this week's happenings" summaries here.
+    """
     print("[DEBUG] check_for_changes() called.")
-    # We do a daily check + a weekly check each minute,
-    # but they store their data in different keys, so there's no clash.
-    post_todays_happenings()
-    post_weeks_happenings()
+
+    today = datetime.now(tz=tz.tzlocal()).date()
+    monday = today - timedelta(days=today.weekday())
+
+    #
+    # 1) Check for changes in today's events
+    #
+    daily_key = f"DAILY_{today}"
+    all_data = load_previous_events()
+    old_daily_events = all_data.get(daily_key, [])
+
+    today_events = get_events_for_day(today)
+    daily_changes = detect_changes(old_daily_events, today_events)
+
+    if daily_changes:
+        # Only post to Discord if there's something new or removed
+        post_changes_to_discord(daily_changes)
+
+    # Update the JSON so we don't repeat the same changes next loop
+    save_current_events_for_key(daily_key, today_events)
+
+    #
+    # 2) Check for changes in this week's events
+    #
+    week_key = f"WEEK_{monday}"
+    # Reload the data in case we just wrote daily data
+    all_data = load_previous_events()
+    old_week_events = all_data.get(week_key, [])
+
+    week_events = get_events_for_week(monday)
+    weekly_changes = detect_changes(old_week_events, week_events)
+
+    if weekly_changes:
+        post_changes_to_discord(weekly_changes)
+
+    save_current_events_for_key(week_key, week_events)
+
     print("[DEBUG] check_for_changes() finished.")
+
 
 #
 # 8. SCHEDULE
