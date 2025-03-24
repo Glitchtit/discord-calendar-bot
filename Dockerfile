@@ -17,4 +17,4 @@ ENV DISCORD_WEBHOOK_URL=""
 ENV CALENDAR_ID=""
 
 # Default command
-CMD ["python", "-u" "bot.py"]
+CMD ["python3", "-u", "bot.py"]
