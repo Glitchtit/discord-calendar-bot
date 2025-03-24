@@ -6,7 +6,6 @@ WORKDIR /app
 
 # Copy requirements and install
 COPY requirements.txt /app/requirements.txt
-COPY events.json /app/events.json
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the source files into /app
