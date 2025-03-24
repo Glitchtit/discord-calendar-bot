@@ -10,7 +10,9 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+print(f"[DEBUG] DISCORD_WEBHOOK_URL: {DISCORD_WEBHOOK_URL}")
 SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+print(f"[DEBUG] GOOGLE_APPLICATION_CREDENTIALS: {SERVICE_ACCOUNT_FILE}")
 
 SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
 credentials = service_account.Credentials.from_service_account_file(
@@ -34,6 +36,7 @@ def get_accessible_calendars():
             "name": cal_name,
             "color": color
         }
+        print(f"[DEBUG] Found calendar: {cal_name} ({cal_id})")
 
     return calendars
 
