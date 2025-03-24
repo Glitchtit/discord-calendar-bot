@@ -188,7 +188,7 @@ def post_todays_happenings():
     for calendar_id, meta in CALENDARS.items():
         calendar_name = meta["name"]
         color = meta["color"]
-        key = f"DAILY_{calendar_id}_{today}"
+        key = f"DAILY_{meta['name'].replace(' ', '_')}_{today}"
 
         all_data = load_previous_events()
         old_events = all_data.get(key, [])
@@ -213,7 +213,7 @@ def post_weeks_happenings():
     for calendar_id, meta in CALENDARS.items():
         calendar_name = meta["name"]
         color = meta["color"]
-        key = f"WEEK_{calendar_id}_{monday}"
+        key = f"WEEK_{meta['name'].replace(' ', '_')}_{monday}"
 
         all_data = load_previous_events()
         old_events = all_data.get(key, [])
@@ -240,8 +240,8 @@ def check_for_changes():
         calendar_name = meta["name"]
         color = meta["color"]
 
-        daily_key = f"DAILY_{calendar_id}_{today}"
-        week_key = f"WEEK_{calendar_id}_{monday}"
+        daily_key = f"DAILY_{meta['name'].replace(' ', '_')}_{today}"
+        week_key = f"WEEK_{meta['name'].replace(' ', '_')}_{monday}"
 
         all_data = load_previous_events()
         old_daily = all_data.get(daily_key, [])
