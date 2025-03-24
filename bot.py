@@ -99,7 +99,6 @@ def format_event(event) -> str:
     else:
         end_str = end
 
-    # Optionally include location in parentheses
     if location:
         return f"- {title} ({start_str} to {end_str}, at {location})"
     else:
@@ -136,30 +135,54 @@ def get_events_for_week(monday_date):
     return result.get("items", [])
 
 #
-# 4. DETECT CHANGES
+# 4. DETECT CHANGES (ADDED, REMOVED, OR MODIFIED EVENTS)
 #
+def extract_comparable_fields(event):
+    """
+    Extract key fields to compare events.
+    """
+    start = event["start"].get("dateTime", event["start"].get("date"))
+    end = event["end"].get("dateTime", event["end"].get("date"))
+    summary = event.get("summary", "")
+    location = event.get("location", "")
+    description = event.get("description", "")
+    return (start, end, summary, location, description)
+
 def detect_changes(old_events, new_events):
     """
-    Compare the old vs. new event lists based on their IDs.
-    Return a list of lines describing added/removed events.
+    Compare old vs. new event lists.
+    Detect added, removed, and modified (changed) events.
     """
     changes = []
-    old_ids = {e["id"] for e in old_events}
-    new_ids = {e["id"] for e in new_events}
+    old_dict = {e["id"]: e for e in old_events}
+    new_dict = {e["id"]: e for e in new_events}
+    old_ids = set(old_dict.keys())
+    new_ids = set(new_dict.keys())
 
-    added   = [e for e in new_events if e["id"] not in old_ids]
-    removed = [e for e in old_events if e["id"] not in new_ids]
+    # Added events
+    added_ids = new_ids - old_ids
+    for eid in added_ids:
+        changes.append(f"Event added: {format_event(new_dict[eid])}")
 
-    for ev in added:
-        changes.append(f"Event added: {format_event(ev)}")
-    for ev in removed:
-        changes.append(f"Event removed: {format_event(ev)}")
+    # Removed events
+    removed_ids = old_ids - new_ids
+    for eid in removed_ids:
+        changes.append(f"Event removed: {format_event(old_dict[eid])}")
 
+    # Changed events: same ID but differing key fields (like time, title, etc.)
+    common_ids = old_ids & new_ids
+    for eid in common_ids:
+        old_fields = extract_comparable_fields(old_dict[eid])
+        new_fields = extract_comparable_fields(new_dict[eid])
+        if old_fields != new_fields:
+            changes.append(
+                f"Event changed:\nOLD: {format_event(old_dict[eid])}\nNEW: {format_event(new_dict[eid])}"
+            )
     return changes
 
 def post_changes_embed(changes):
     """
-    If there are changes, send them in a nicely embedded message.
+    If there are changes, send them in an embedded message.
     """
     if changes:
         description = "\n".join(changes)
@@ -173,8 +196,7 @@ def post_changes_embed(changes):
 def post_todays_happenings():
     """
     Runs once a day (08:00).
-    Posts today's events in an embed. Also checks for changes
-    (since we might not have posted them if no changes triggered).
+    Posts today's events in an embed and saves the current state.
     """
     today = datetime.now(tz=tz.tzlocal()).date()
     daily_key = f"DAILY_{today}"
@@ -182,10 +204,9 @@ def post_todays_happenings():
     all_data = load_previous_events()
     old_daily_events = all_data.get(daily_key, [])
 
-    # Fetch today's events
     today_events = get_events_for_day(today)
 
-    # Check & post changes found
+    # Check & post changes (added, removed, or modified)
     changes = detect_changes(old_daily_events, today_events)
     post_changes_embed(changes)
 
@@ -197,7 +218,7 @@ def post_todays_happenings():
     else:
         post_embed_to_discord("Today’s Happenings", "No events scheduled for today.")
 
-    # Save
+    # Save current state
     save_current_events_for_key(daily_key, today_events)
 
 #
@@ -206,7 +227,7 @@ def post_todays_happenings():
 def post_weeks_happenings():
     """
     Runs once a week (Monday 09:00).
-    Posts the entire Monday–Sunday events in an embed, plus any changes.
+    Posts the week's events in an embed and saves the current state.
     """
     now = datetime.now(tz=tz.tzlocal()).date()
     monday = now - timedelta(days=now.weekday())
@@ -215,7 +236,6 @@ def post_weeks_happenings():
     all_data = load_previous_events()
     old_week_events = all_data.get(week_key, [])
 
-    # Fetch week events
     week_events = get_events_for_week(monday)
 
     # Check & post changes
@@ -230,7 +250,7 @@ def post_weeks_happenings():
     else:
         post_embed_to_discord("This Week’s Happenings", "No events scheduled for this week.")
 
-    # Save
+    # Save current state
     save_current_events_for_key(week_key, week_events)
 
 #
@@ -238,45 +258,33 @@ def post_weeks_happenings():
 #
 def check_for_changes():
     """
-    Check daily and weekly sets each minute, but only post changes if there are any.
-    No full "today's happenings" or "this week's happenings" summaries here.
+    Check daily and weekly events each minute, posting only if there are any changes.
     """
     print("[DEBUG] check_for_changes() called.")
 
     today = datetime.now(tz=tz.tzlocal()).date()
     monday = today - timedelta(days=today.weekday())
 
-    #
-    # 1) Check for changes in today's events
-    #
+    # Check changes for today's events
     daily_key = f"DAILY_{today}"
     all_data = load_previous_events()
     old_daily_events = all_data.get(daily_key, [])
-
     today_events = get_events_for_day(today)
     daily_changes = detect_changes(old_daily_events, today_events)
 
     if daily_changes:
-        # Only post to Discord if there's something new or removed
         post_changes_embed(daily_changes)
-
-    # Update the JSON so we don't repeat the same changes next loop
     save_current_events_for_key(daily_key, today_events)
 
-    #
-    # 2) Check for changes in this week's events
-    #
+    # Check changes for the week's events
     week_key = f"WEEK_{monday}"
-    # Reload the data (in case we just wrote daily data)
-    all_data = load_previous_events()
+    all_data = load_previous_events()  # Reload data in case it changed
     old_week_events = all_data.get(week_key, [])
-
     week_events = get_events_for_week(monday)
     weekly_changes = detect_changes(old_week_events, week_events)
 
     if weekly_changes:
         post_changes_embed(weekly_changes)
-
     save_current_events_for_key(week_key, week_events)
 
     print("[DEBUG] check_for_changes() finished.")
@@ -292,8 +300,8 @@ if __name__ == "__main__":
     post_todays_happenings()
     post_weeks_happenings()
 
-    print("[DEBUG] Entering schedule loop. Checking for changes every 60 seconds.")
+    print("[DEBUG] Entering schedule loop. Checking for changes every 30 seconds.")
     while True:
         schedule.run_pending()
         check_for_changes()
-        time.sleep(60)
+        time.sleep(30)
