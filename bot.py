@@ -221,7 +221,7 @@ def check_for_changes():
     today_events = get_events_for_day(today)
     daily_changes = detect_changes(old_daily_events, today_events)
 
-    if daily_changes:
+    #if daily_changes:
         # Only post to Discord if there's something new or removed
         #post_changes_to_discord(daily_changes)
 
