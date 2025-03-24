@@ -18,7 +18,6 @@ SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
 credentials = service_account.Credentials.from_service_account_file(
     SERVICE_ACCOUNT_FILE, scopes=SCOPES
 )
-print(f"[DEBUG] Google credentials loaded." {credentials})
 service = build("calendar", "v3", credentials=credentials)
 
 EVENTS_FILE = "/app/data/events.json"
