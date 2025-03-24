@@ -245,5 +245,6 @@ if __name__ == "__main__":
     print("[DEBUG] Entering schedule loop. Will check for scheduled tasks every 60 seconds.")
     while True:
         schedule.run_pending()
+        print("[DEBUG] Checking for changes in events with loop...")
         check_for_changes()
         time.sleep(60)
