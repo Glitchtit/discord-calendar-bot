@@ -25,6 +25,7 @@ EVENTS_FILE = "/app/data/events.json"
 def get_accessible_calendars():
     result = service.calendarList().list().execute()
     calendars = {}
+    print(f"[DEBUG] Found {len(result.get('items', []))} calendars.")
 
     for cal in result.get("items", []):
         cal_id = cal["id"]
