@@ -51,36 +51,31 @@ def save_current_events_for_key(key, events):
         json.dump(all_data, f)
 
 #
-# 2. DISCORD + FORMATTING
+# 2. DISCORD EMBEDS + FORMATTING
 #
-def post_to_discord(message: str, embed: dict = None):
+def post_embed_to_discord(title: str, description: str, color: int = 5814783):
     """
-    Sends a message to the Discord channel via webhook.
+    Sends an embedded message to Discord with a title and description.
     """
-    print("[DEBUG] post_to_discord() called. Sending message to Discord...")
     if not DISCORD_WEBHOOK_URL:
-        print("[DEBUG] DISCORD_WEBHOOK_URL is not set. Cannot send message.")
+        print("[DEBUG] No DISCORD_WEBHOOK_URL set.")
         return
 
-    payload = {"content": message}
-    if embed:
-        payload["embeds"] = [embed]
+    payload = {
+        "embeds": [
+            {
+                "title": title,
+                "description": description,
+                "color": color
+            }
+        ]
+    }
 
     resp = requests.post(DISCORD_WEBHOOK_URL, json=payload)
     if resp.status_code not in [200, 204]:
-        print(f"[DEBUG] Failed to send message. Status: {resp.status_code} - {resp.text}")
+        print(f"[DEBUG] Discord post failed: {resp.status_code} {resp.text}")
     else:
-        print("[DEBUG] Message sent to Discord successfully.")
-
-def create_embed(title: str, description: str) -> dict:
-    """
-    Create an embed dictionary for Discord messages.
-    """
-    return {
-        "title": title,
-        "description": description,
-        "color": 5814783  # A nice blue color
-    }
+        print("[DEBUG] Discord post successful.")
 
 def format_event(event) -> str:
     """
@@ -104,7 +99,7 @@ def format_event(event) -> str:
     else:
         end_str = end
 
-    # If a location is specified, include it in the output
+    # Optionally include location in parentheses
     if location:
         return f"- {title} ({start_str} to {end_str}, at {location})"
     else:
@@ -143,181 +138,104 @@ def get_events_for_week(monday_date):
 #
 # 4. DETECT CHANGES
 #
-
-def extract_comparable_fields(event):
-    """
-    Return the key pieces of data we care about for detecting changes
-    (start time, end time, summary). If any of these differ,
-    we consider the event 'changed'.
-    """
-    start = event["start"].get("dateTime", event["start"].get("date"))
-    end = event["end"].get("dateTime", event["end"].get("date"))
-    summary = event.get("summary", "")
-    location = event.get("location", "")
-    description = event.get("description", "")
-    return (start, end, summary, location, description)
-
-
 def detect_changes(old_events, new_events):
     """
-    Compare old_events vs. new_events:
-      - Added: ID in new but not in old
-      - Removed: ID in old but not in new
-      - Changed: ID in both, but start/end/summary have changed
-    Returns a list of "Event added/removed/changed..." lines.
+    Compare the old vs. new event lists based on their IDs.
+    Return a list of lines describing added/removed events.
     """
     changes = []
+    old_ids = {e["id"] for e in old_events}
+    new_ids = {e["id"] for e in new_events}
 
-    # Convert old_events, new_events to dicts by ID for easy lookup
-    old_dict = {e["id"]: e for e in old_events}
-    new_dict = {e["id"]: e for e in new_events}
+    added   = [e for e in new_events if e["id"] not in old_ids]
+    removed = [e for e in old_events if e["id"] not in new_ids]
 
-    old_ids = set(old_dict.keys())
-    new_ids = set(new_dict.keys())
-
-    # 1) Removed
-    removed_ids = old_ids - new_ids
-    for rid in removed_ids:
-        changes.append(f"Event removed: {format_event(old_dict[rid])}")
-
-    # 2) Added
-    added_ids = new_ids - old_ids
-    for aid in added_ids:
-        changes.append(f"Event added: {format_event(new_dict[aid])}")
-
-    # 3) Potentially Changed
-    common_ids = old_ids & new_ids
-    for cid in common_ids:
-        old_fields = extract_comparable_fields(old_dict[cid])
-        new_fields = extract_comparable_fields(new_dict[cid])
-        # If the relevant fields differ, we consider it "changed"
-        if old_fields != new_fields:
-            changes.append(
-                f"Event changed:\n"
-                f"OLD: {format_event(old_dict[cid])}\n"
-                f"NEW: {format_event(new_dict[cid])}"
-            )
+    for ev in added:
+        changes.append(f"Event added: {format_event(ev)}")
+    for ev in removed:
+        changes.append(f"Event removed: {format_event(ev)}")
 
     return changes
 
-
-def post_changes_to_discord(changes):
+def post_changes_embed(changes):
     """
-    Post detected changes to Discord.
+    If there are changes, send them in a nicely embedded message.
     """
     if changes:
         description = "\n".join(changes)
-        embed = create_embed("Changes Detected", description)
-        post_to_discord("", embed)
-        print("[DEBUG] Changes detected and posted to Discord.")
+        post_embed_to_discord("Changes Detected", description)
     else:
-        print("[DEBUG] No changes detected.")
+        print("[DEBUG] No changes detected (no embed posted).")
 
 #
 # 5. DAILY LOGIC
 #
 def post_todays_happenings():
-    """
-    Retrieve today's events and post them to Discord.
-    """
-    print("[DEBUG] post_todays_happenings() called. Attempting to fetch today's events.")
     today = datetime.now(tz=tz.tzlocal()).date()
-    events = get_events_for_day(today)
-    previous_events = load_previous_events().get(f"DAILY_{today}", [])
+    daily_key = f"DAILY_{today}"
 
-    changes = detect_changes(previous_events, events)
-    post_changes_to_discord(changes)
+    all_data = load_previous_events()
+    old_daily_events = all_data.get(daily_key, [])
 
-    if not events:
-        message = "No events scheduled for today."
-        embed = create_embed("Today’s Happenings", message)
-        post_to_discord("", embed)
-    else:
-        lines = [format_event(e) for e in events]
+    # 1) Fetch today's events
+    today_events = get_events_for_day(today)
+
+    # 2) Detect changes
+    changes = detect_changes(old_daily_events, today_events)
+    post_changes_embed(changes)
+
+    # 3) Post daily summary
+    if today_events:
+        lines = [format_event(e) for e in today_events]
         description = "\n".join(lines)
-        embed = create_embed("Today’s Happenings", description)
-        post_to_discord("", embed)
+        post_embed_to_discord("Today’s Happenings", description)
+    else:
+        post_embed_to_discord("Today’s Happenings", "No events scheduled for today.")
 
-    save_current_events_for_key(f"DAILY_{today}", events)
-    print("[DEBUG] post_todays_happenings() finished. Check Discord for today's post.")
+    # 4) Save
+    save_current_events_for_key(daily_key, today_events)
 
 #
-# 6. WEEKLY LOGIC (including single-day events)
+# 6. WEEKLY LOGIC
 #
 def post_weeks_happenings():
-    """
-    Retrieve events for Monday–Sunday of the current week and post them.
-    """
-    print("[DEBUG] post_weeks_happenings() called. Attempting to fetch this week's events.")
     now = datetime.now(tz=tz.tzlocal()).date()
-    monday = now - timedelta(days=now.weekday())  # 0=Monday, 6=Sunday
-    events = get_events_for_week(monday)
-    previous_events = load_previous_events().get(f"WEEK_{monday}", [])
+    monday = now - timedelta(days=now.weekday())
+    week_key = f"WEEK_{monday}"
 
-    changes = detect_changes(previous_events, events)
-    post_changes_to_discord(changes)
+    all_data = load_previous_events()
+    old_week_events = all_data.get(week_key, [])
 
-    if not events:
-        message = "No events scheduled for this week."
-        embed = create_embed("This Week’s Happenings", message)
-        post_to_discord("", embed)
-    else:
-        lines = [format_event(e) for e in events]
+    # 1) Fetch Monday–Sunday events
+    week_events = get_events_for_week(monday)
+
+    # 2) Detect changes
+    changes = detect_changes(old_week_events, week_events)
+    post_changes_embed(changes)
+
+    # 3) Post weekly summary
+    if week_events:
+        lines = [format_event(e) for e in week_events]
         description = "\n".join(lines)
-        embed = create_embed("This Week’s Happenings", description)
-        post_to_discord("", embed)
+        post_embed_to_discord("This Week’s Happenings", description)
+    else:
+        post_embed_to_discord("This Week’s Happenings", "No events scheduled for this week.")
 
-    save_current_events_for_key(f"WEEK_{monday}", events)
-    print("[DEBUG] post_weeks_happenings() finished. Check Discord for weekly post.")
+    # 4) Save
+    save_current_events_for_key(week_key, week_events)
 
 #
 # 7. REAL-TIME CHANGES EVERY MINUTE
 #
 def check_for_changes():
     """
-    Check daily and weekly sets each minute, but only post changes if there are any.
-    No full "today's happenings" or "this week's happenings" summaries here.
+    This checks both today's events and the weekly events, once a minute,
+    and posts changes if detected.
     """
     print("[DEBUG] check_for_changes() called.")
-
-    today = datetime.now(tz=tz.tzlocal()).date()
-    monday = today - timedelta(days=today.weekday())
-
-    #
-    # 1) Check for changes in today's events
-    #
-    daily_key = f"DAILY_{today}"
-    all_data = load_previous_events()
-    old_daily_events = all_data.get(daily_key, [])
-
-    today_events = get_events_for_day(today)
-    daily_changes = detect_changes(old_daily_events, today_events)
-
-    #if daily_changes:
-        # Only post to Discord if there's something new or removed
-        #post_changes_to_discord(daily_changes)
-
-    # Update the JSON so we don't repeat the same changes next loop
-    save_current_events_for_key(daily_key, today_events)
-
-    #
-    # 2) Check for changes in this week's events
-    #
-    week_key = f"WEEK_{monday}"
-    # Reload the data in case we just wrote daily data
-    all_data = load_previous_events()
-    old_week_events = all_data.get(week_key, [])
-
-    week_events = get_events_for_week(monday)
-    weekly_changes = detect_changes(old_week_events, week_events)
-
-    if weekly_changes:
-        post_changes_to_discord(weekly_changes)
-
-    save_current_events_for_key(week_key, week_events)
-
+    post_todays_happenings()
+    post_weeks_happenings()
     print("[DEBUG] check_for_changes() finished.")
-
 
 #
 # 8. SCHEDULE
@@ -330,8 +248,8 @@ if __name__ == "__main__":
     post_todays_happenings()
     post_weeks_happenings()
 
-    print("[DEBUG] Entering schedule loop. Checking for changes every 30 seconds.")
+    print("[DEBUG] Entering schedule loop. Checking for changes every 60 seconds.")
     while True:
         schedule.run_pending()
         check_for_changes()
-        time.sleep(30)
+        time.sleep(60)
