@@ -2,6 +2,7 @@ import os
 import requests
 import schedule
 import time
+import json
 from datetime import datetime, timedelta
 from dateutil import tz
 
@@ -21,6 +22,8 @@ credentials = service_account.Credentials.from_service_account_file(
     SERVICE_ACCOUNT_FILE, scopes=SCOPES
 )
 service = build("calendar", "v3", credentials=credentials)
+
+EVENTS_FILE = "events.json"
 
 def post_to_discord(message: str):
     """
@@ -99,6 +102,59 @@ def get_events_for_week(monday_date):
     ).execute()
     return events_result.get("items", [])
 
+def load_previous_events():
+    """
+    Load the previous events from the JSON file.
+    """
+    if os.path.exists(EVENTS_FILE):
+        with open(EVENTS_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def save_current_events(events):
+    """
+    Save the current events to the JSON file.
+    """
+    with open(EVENTS_FILE, "w") as f:
+        json.dump(events, f)
+
+def detect_changes(previous_events, current_events):
+    """
+    Detect changes between previous and current events.
+    """
+    changes = []
+    previous_event_ids = {event["id"] for event in previous_events}
+    current_event_ids = {event["id"] for event in current_events}
+
+    added_events = [event for event in current_events if event["id"] not in previous_event_ids]
+    removed_events = [event for event in previous_events if event["id"] not in current_event_ids]
+    common_event_ids = previous_event_ids & current_event_ids
+
+    for event_id in common_event_ids:
+        prev_event = next(event for event in previous_events if event["id"] == event_id)
+        curr_event = next(event for event in current_events if event["id"] == event_id)
+        if prev_event != curr_event:
+            changes.append(f"Event changed: {format_event(curr_event)}")
+
+    for event in added_events:
+        changes.append(f"Event added: {format_event(event)}")
+
+    for event in removed_events:
+        changes.append(f"Event removed: {format_event(event)}")
+
+    return changes
+
+def post_changes_to_discord(changes):
+    """
+    Post detected changes to Discord.
+    """
+    if changes:
+        message = "**Changes Detected:**\n" + "\n".join(changes)
+        post_to_discord(message)
+        print("[DEBUG] Changes detected and posted to Discord.")
+    else:
+        print("[DEBUG] No changes detected.")
+
 def post_todays_happenings():
     """
     Retrieve today's events and post them to Discord.
@@ -106,6 +162,11 @@ def post_todays_happenings():
     print("[DEBUG] post_todays_happenings() called. Attempting to fetch today's events.")
     today = datetime.now(tz=tz.tzlocal()).date()
     events = get_events_for_day(today)
+    previous_events = load_previous_events().get(str(today), [])
+
+    changes = detect_changes(previous_events, events)
+    post_changes_to_discord(changes)
+
     if not events:
         message = "No events scheduled for today."
     else:
@@ -115,6 +176,7 @@ def post_todays_happenings():
         message = "\n".join(lines)
 
     post_to_discord(message)
+    save_current_events({str(today): events})
     print("[DEBUG] post_todays_happenings() finished. Check Discord for today's post.")
 
 def post_weeks_happenings():
@@ -125,6 +187,11 @@ def post_weeks_happenings():
     now = datetime.now(tz=tz.tzlocal()).date()
     monday = now - timedelta(days=now.weekday())  # 0=Monday, 6=Sunday
     events = get_events_for_week(monday)
+    previous_events = load_previous_events().get(str(monday), [])
+
+    changes = detect_changes(previous_events, events)
+    post_changes_to_discord(changes)
+
     if not events:
         message = "No events scheduled for this week."
     else:
@@ -134,7 +201,32 @@ def post_weeks_happenings():
         message = "\n".join(lines)
 
     post_to_discord(message)
+    save_current_events({str(monday): events})
     print("[DEBUG] post_weeks_happenings() finished. Check Discord for weekly post.")
+
+def check_for_changes():
+    """
+    Check for changes in today's and this week's events and post if any changes are detected.
+    """
+    print("[DEBUG] check_for_changes() called. Checking for changes in events.")
+    today = datetime.now(tz=tz.tzlocal()).date()
+    monday = today - timedelta(days=today.weekday())  # 0=Monday, 6=Sunday
+
+    # Check today's events
+    today_events = get_events_for_day(today)
+    previous_today_events = load_previous_events().get(str(today), [])
+    today_changes = detect_changes(previous_today_events, today_events)
+    post_changes_to_discord(today_changes)
+    save_current_events({str(today): today_events})
+
+    # Check this week's events
+    week_events = get_events_for_week(monday)
+    previous_week_events = load_previous_events().get(str(monday), [])
+    week_changes = detect_changes(previous_week_events, week_events)
+    post_changes_to_discord(week_changes)
+    save_current_events({str(monday): week_events})
+
+    print("[DEBUG] check_for_changes() finished.")
 
 # ------------------------
 # SCHEDULING
@@ -153,4 +245,5 @@ if __name__ == "__main__":
     print("[DEBUG] Entering schedule loop. Will check for scheduled tasks every 30 seconds.")
     while True:
         schedule.run_pending()
-        time.sleep(30)
+        check_for_changes()
+        time.sleep(60)
