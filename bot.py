@@ -156,8 +156,8 @@ def post_todays_happenings():
     today_events = get_events_for_day(today)
 
     # 2) Detect changes
-    changes = detect_changes(old_daily_events, today_events)
-    post_changes_to_discord(changes)
+    #changes = detect_changes(old_daily_events, today_events)
+    #post_changes_to_discord(changes)
 
     # 3) Post daily summary
     if today_events:
@@ -185,8 +185,8 @@ def post_weeks_happenings():
     # 2) No filtering out single-day events (the user wants them included)
 
     # 3) Detect changes
-    changes = detect_changes(old_week_events, week_events)
-    post_changes_to_discord(changes)
+    #changes = detect_changes(old_week_events, week_events)
+    #post_changes_to_discord(changes)
 
     # 4) Post weekly summary
     if week_events:
@@ -223,7 +223,7 @@ def check_for_changes():
 
     if daily_changes:
         # Only post to Discord if there's something new or removed
-        post_changes_to_discord(daily_changes)
+        #post_changes_to_discord(daily_changes)
 
     # Update the JSON so we don't repeat the same changes next loop
     save_current_events_for_key(daily_key, today_events)
