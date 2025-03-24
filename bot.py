@@ -204,29 +204,39 @@ def post_weeks_happenings():
     save_current_events({str(monday): events})
     print("[DEBUG] post_weeks_happenings() finished. Check Discord for weekly post.")
 
+def save_current_events_for_date(date_str, events):
+    """
+    Save (merge) the current events for a specific date into the JSON file
+    without overwriting other dates.
+    """
+    existing_data = load_previous_events()  # load the entire dictionary
+    existing_data[date_str] = events        # update this specific date
+    with open(EVENTS_FILE, "w") as f:
+        json.dump(existing_data, f)
+
 def check_for_changes():
-    """
-    Check for changes in today's and this week's events and post if any changes are detected.
-    """
     print("[DEBUG] check_for_changes() called. Checking for changes in events.")
     today = datetime.now(tz=tz.tzlocal()).date()
-    monday = today - timedelta(days=today.weekday())  # 0=Monday, 6=Sunday
+    monday = today - timedelta(days=today.weekday())
 
-    # Check today's events
+    # 1. Check today's events
     today_events = get_events_for_day(today)
-    previous_today_events = load_previous_events().get(str(today), [])
+    all_previous = load_previous_events()  # load all stored data
+    previous_today_events = all_previous.get(str(today), [])
     today_changes = detect_changes(previous_today_events, today_events)
     post_changes_to_discord(today_changes)
-    save_current_events({str(today): today_events})
+    save_current_events_for_date(str(today), today_events)
 
-    # Check this week's events
+    # 2. Check this week's events
     week_events = get_events_for_week(monday)
-    previous_week_events = load_previous_events().get(str(monday), [])
+    all_previous = load_previous_events()  # reload the file in case we just changed something
+    previous_week_events = all_previous.get(str(monday), [])
     week_changes = detect_changes(previous_week_events, week_events)
     post_changes_to_discord(week_changes)
-    save_current_events({str(monday): week_events})
+    save_current_events_for_date(str(monday), week_events)
 
     print("[DEBUG] check_for_changes() finished.")
+
 
 # ------------------------
 # SCHEDULING
