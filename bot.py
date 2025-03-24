@@ -12,7 +12,7 @@ from googleapiclient.discovery import build
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/calendar"]
 EVENTS_FILE = "events.json"
 
 credentials = service_account.Credentials.from_service_account_file(
