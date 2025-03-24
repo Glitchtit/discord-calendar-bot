@@ -124,12 +124,12 @@ def detect_changes(previous_events, current_events):
     removed = [e for e in previous_events if e["id"] not in curr_ids]
 
     # If you want to detect updates (e.g., changed times) for events with the same ID:
-    # common_ids = prev_ids & curr_ids
-    # for cid in common_ids:
-    #     p_event = next(e for e in previous_events if e["id"] == cid)
-    #     c_event = next(e for e in current_events if e["id"] == cid)
-    #     if p_event != c_event:
-    #         changes.append(f"Event changed: {format_event(c_event)}")
+    common_ids = prev_ids & curr_ids
+    for cid in common_ids:
+        p_event = next(e for e in previous_events if e["id"] == cid)
+        c_event = next(e for e in current_events if e["id"] == cid)
+        if p_event != c_event:
+            changes.append(f"Event changed: {format_event(c_event)}")
 
     for e in added:
         changes.append(f"Event added: {format_event(e)}")
