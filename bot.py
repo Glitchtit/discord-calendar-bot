@@ -10,7 +10,6 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
-CALENDAR_ID = os.environ.get("CALENDAR_ID")
 SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
 
 SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
@@ -21,17 +20,21 @@ service = build("calendar", "v3", credentials=credentials)
 
 EVENTS_FILE = "events.json"
 
-#
-# 1. LOADING / SAVING EVENTS
-#
-def load_previous_events():
-    """
-    Returns a dictionary of all stored events, with keys for each category/date,
-    e.g. {
-        "DAILY_YYYY-MM-DD": [ ...list of events... ],
-        "WEEK_YYYY-MM-DD":  [ ...list of events... ]
+# Define multiple calendars with name and embed color
+CALENDARS = {
+    "calendar1@example.com": {
+        "name": "Team Alpha",
+        "color": 0x3498db  # Blue
+    },
+    "calendar2@example.com": {
+        "name": "Team Beta",
+        "color": 0xe74c3c  # Red
     }
-    """
+}
+
+# 1. LOADING / SAVING EVENTS
+
+def load_previous_events():
     if os.path.exists(EVENTS_FILE):
         with open(EVENTS_FILE, "r") as f:
             try:
@@ -41,22 +44,14 @@ def load_previous_events():
     return {}
 
 def save_current_events_for_key(key, events):
-    """
-    Merges the list of 'events' into the JSON under 'key'.
-    This prevents overwriting other keys (daily vs. weekly).
-    """
     all_data = load_previous_events()
     all_data[key] = events
     with open(EVENTS_FILE, "w") as f:
         json.dump(all_data, f)
 
-#
 # 2. DISCORD EMBEDS + FORMATTING
-#
+
 def post_embed_to_discord(title: str, description: str, color: int = 5814783):
-    """
-    Sends an embedded message to Discord with a title and description.
-    """
     if not DISCORD_WEBHOOK_URL:
         print("[DEBUG] No DISCORD_WEBHOOK_URL set.")
         return
@@ -78,15 +73,11 @@ def post_embed_to_discord(title: str, description: str, color: int = 5814783):
         print("[DEBUG] Discord post successful.")
 
 def format_event(event) -> str:
-    """
-    Pretty-print an event with local times.
-    """
     start = event["start"].get("dateTime", event["start"].get("date"))
     end   = event["end"].get("dateTime", event["end"].get("date"))
     title = event.get("summary", "No Title")
     location = event.get("location", "")
 
-    # Convert dateTime to local time if "T" is present
     if "T" in start:
         start_dt = datetime.fromisoformat(start.replace("Z", "+00:00")).astimezone(tz.tzlocal())
         start_str = start_dt.strftime("%Y-%m-%d %H:%M")
@@ -104,15 +95,14 @@ def format_event(event) -> str:
     else:
         return f"- {title} ({start_str} to {end_str})"
 
-#
 # 3. FETCH EVENTS
-#
-def get_events_for_day(date_obj):
+
+def get_events_for_day(date_obj, calendar_id):
     start_utc = date_obj.isoformat() + "T00:00:00Z"
     end_utc   = date_obj.isoformat() + "T23:59:59Z"
 
     result = service.events().list(
-        calendarId=CALENDAR_ID,
+        calendarId=calendar_id,
         timeMin=start_utc,
         timeMax=end_utc,
         singleEvents=True,
@@ -120,13 +110,13 @@ def get_events_for_day(date_obj):
     ).execute()
     return result.get("items", [])
 
-def get_events_for_week(monday_date):
+def get_events_for_week(monday_date, calendar_id):
     start_utc = monday_date.isoformat() + "T00:00:00Z"
     end_of_week = monday_date + timedelta(days=6)
     end_utc   = end_of_week.isoformat() + "T23:59:59Z"
 
     result = service.events().list(
-        calendarId=CALENDAR_ID,
+        calendarId=calendar_id,
         timeMin=start_utc,
         timeMax=end_utc,
         singleEvents=True,
@@ -134,13 +124,9 @@ def get_events_for_week(monday_date):
     ).execute()
     return result.get("items", [])
 
-#
-# 4. DETECT CHANGES (ADDED, REMOVED, OR MODIFIED EVENTS)
-#
+# 4. DETECT CHANGES
+
 def extract_comparable_fields(event):
-    """
-    Extract key fields to compare events.
-    """
     start = event["start"].get("dateTime", event["start"].get("date"))
     end = event["end"].get("dateTime", event["end"].get("date"))
     summary = event.get("summary", "")
@@ -149,149 +135,110 @@ def extract_comparable_fields(event):
     return (start, end, summary, location, description)
 
 def detect_changes(old_events, new_events):
-    """
-    Compare old vs. new event lists.
-    Detect added, removed, and modified (changed) events.
-    """
     changes = []
     old_dict = {e["id"]: e for e in old_events}
     new_dict = {e["id"]: e for e in new_events}
     old_ids = set(old_dict.keys())
     new_ids = set(new_dict.keys())
 
-    # Added events
-    added_ids = new_ids - old_ids
-    for eid in added_ids:
+    for eid in new_ids - old_ids:
         changes.append(f"Event added: {format_event(new_dict[eid])}")
 
-    # Removed events
-    removed_ids = old_ids - new_ids
-    for eid in removed_ids:
+    for eid in old_ids - new_ids:
         changes.append(f"Event removed: {format_event(old_dict[eid])}")
 
-    # Changed events: same ID but differing key fields (like time, title, etc.)
-    common_ids = old_ids & new_ids
-    for eid in common_ids:
-        old_fields = extract_comparable_fields(old_dict[eid])
-        new_fields = extract_comparable_fields(new_dict[eid])
-        if old_fields != new_fields:
+    for eid in old_ids & new_ids:
+        if extract_comparable_fields(old_dict[eid]) != extract_comparable_fields(new_dict[eid]):
             changes.append(
                 f"Event changed:\nOLD: {format_event(old_dict[eid])}\nNEW: {format_event(new_dict[eid])}"
             )
     return changes
 
-def post_changes_embed(changes):
-    """
-    If there are changes, send them in an embedded message.
-    """
-    if changes:
-        description = "\n".join(changes)
-        post_embed_to_discord("Changes Detected", description)
-    else:
-        print("[DEBUG] No changes detected (no embed posted).")
+# 5. POSTING HAPPENINGS
 
-#
-# 5. DAILY SUMMARY (SCHEDULED)
-#
 def post_todays_happenings():
-    """
-    Runs once a day (08:00).
-    Posts today's events in an embed and saves the current state.
-    """
     today = datetime.now(tz=tz.tzlocal()).date()
-    daily_key = f"DAILY_{today}"
 
-    all_data = load_previous_events()
-    old_daily_events = all_data.get(daily_key, [])
+    for calendar_id, meta in CALENDARS.items():
+        calendar_name = meta["name"]
+        color = meta["color"]
+        key = f"DAILY_{calendar_id}_{today}"
 
-    today_events = get_events_for_day(today)
+        all_data = load_previous_events()
+        old_events = all_data.get(key, [])
+        new_events = get_events_for_day(today, calendar_id)
 
-    # Check & post changes (added, removed, or modified)
-    changes = detect_changes(old_daily_events, today_events)
-    post_changes_embed(changes)
+        changes = detect_changes(old_events, new_events)
+        if changes:
+            post_embed_to_discord(f"Changes Detected for: {calendar_name}", "\n".join(changes), color)
 
-    # Then post daily summary
-    if today_events:
-        lines = [format_event(e) for e in today_events]
-        description = "\n".join(lines)
-        post_embed_to_discord("Today’s Happenings", description)
-    else:
-        post_embed_to_discord("Today’s Happenings", "No events scheduled for today.")
+        if new_events:
+            lines = [format_event(e) for e in new_events]
+            post_embed_to_discord(f"Today’s Happenings for: {calendar_name}", "\n".join(lines), color)
+        else:
+            post_embed_to_discord(f"Today’s Happenings for: {calendar_name}", "No events scheduled for today.", color)
 
-    # Save current state
-    save_current_events_for_key(daily_key, today_events)
+        save_current_events_for_key(key, new_events)
 
-#
-# 6. WEEKLY SUMMARY (SCHEDULED)
-#
 def post_weeks_happenings():
-    """
-    Runs once a week (Monday 09:00).
-    Posts the week's events in an embed and saves the current state.
-    """
     now = datetime.now(tz=tz.tzlocal()).date()
     monday = now - timedelta(days=now.weekday())
-    week_key = f"WEEK_{monday}"
 
-    all_data = load_previous_events()
-    old_week_events = all_data.get(week_key, [])
+    for calendar_id, meta in CALENDARS.items():
+        calendar_name = meta["name"]
+        color = meta["color"]
+        key = f"WEEK_{calendar_id}_{monday}"
 
-    week_events = get_events_for_week(monday)
+        all_data = load_previous_events()
+        old_events = all_data.get(key, [])
+        new_events = get_events_for_week(monday, calendar_id)
 
-    # Check & post changes
-    changes = detect_changes(old_week_events, week_events)
-    post_changes_embed(changes)
+        changes = detect_changes(old_events, new_events)
+        if changes:
+            post_embed_to_discord(f"Changes Detected for: {calendar_name}", "\n".join(changes), color)
 
-    # Then post weekly summary
-    if week_events:
-        lines = [format_event(e) for e in week_events]
-        description = "\n".join(lines)
-        post_embed_to_discord("This Week’s Happenings", description)
-    else:
-        post_embed_to_discord("This Week’s Happenings", "No events scheduled for this week.")
+        if new_events:
+            lines = [format_event(e) for e in new_events]
+            post_embed_to_discord(f"This Week’s Happenings for: {calendar_name}", "\n".join(lines), color)
+        else:
+            post_embed_to_discord(f"This Week’s Happenings for: {calendar_name}", "No events scheduled for this week.", color)
 
-    # Save current state
-    save_current_events_for_key(week_key, week_events)
+        save_current_events_for_key(key, new_events)
 
-#
-# 7. REAL-TIME CHANGES EVERY MINUTE
-#
 def check_for_changes():
-    """
-    Check daily and weekly events each minute, posting only if there are any changes.
-    """
     print("[DEBUG] check_for_changes() called.")
-
     today = datetime.now(tz=tz.tzlocal()).date()
     monday = today - timedelta(days=today.weekday())
 
-    # Check changes for today's events
-    daily_key = f"DAILY_{today}"
-    all_data = load_previous_events()
-    old_daily_events = all_data.get(daily_key, [])
-    today_events = get_events_for_day(today)
-    daily_changes = detect_changes(old_daily_events, today_events)
+    for calendar_id, meta in CALENDARS.items():
+        calendar_name = meta["name"]
+        color = meta["color"]
 
-    if daily_changes:
-        post_changes_embed(daily_changes)
-    save_current_events_for_key(daily_key, today_events)
+        daily_key = f"DAILY_{calendar_id}_{today}"
+        week_key = f"WEEK_{calendar_id}_{monday}"
 
-    # Check changes for the week's events
-    week_key = f"WEEK_{monday}"
-    all_data = load_previous_events()  # Reload data in case it changed
-    old_week_events = all_data.get(week_key, [])
-    week_events = get_events_for_week(monday)
-    weekly_changes = detect_changes(old_week_events, week_events)
+        all_data = load_previous_events()
+        old_daily = all_data.get(daily_key, [])
+        old_week = all_data.get(week_key, [])
 
-    if weekly_changes:
-        post_changes_embed(weekly_changes)
-    save_current_events_for_key(week_key, week_events)
+        new_daily = get_events_for_day(today, calendar_id)
+        new_week = get_events_for_week(monday, calendar_id)
+
+        daily_changes = detect_changes(old_daily, new_daily)
+        weekly_changes = detect_changes(old_week, new_week)
+
+        if daily_changes:
+            post_embed_to_discord(f"Changes Detected for: {calendar_name} (Today)", "\n".join(daily_changes), color)
+        if weekly_changes:
+            post_embed_to_discord(f"Changes Detected for: {calendar_name} (Week)", "\n".join(weekly_changes), color)
+
+        save_current_events_for_key(daily_key, new_daily)
+        save_current_events_for_key(week_key, new_week)
 
     print("[DEBUG] check_for_changes() finished.")
 
-#
-# 8. SCHEDULE
-#
+# 6. SCHEDULE
+
 schedule.every().day.at("08:00").do(post_todays_happenings)
 schedule.every().monday.at("09:00").do(post_weeks_happenings)
 
