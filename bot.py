@@ -257,6 +257,13 @@ schedule.every().day.at("08:00").do(post_todays_happenings)
 schedule.every().monday.at("09:00").do(post_weeks_happenings)
 
 if __name__ == "__main__":
+    # TEMP: Test accessible calendars
+    print("Testing calendarList.list()...")
+    result = service.calendarList().list().execute()
+    for cal in result.get("items", []):
+        print(f"- {cal.get('summary')} ({cal.get('id')})")
+    exit()
+    
     print("[DEBUG] Bot started. Immediately posting today's and this week's happenings.")
     post_todays_happenings()
     post_weeks_happenings()
