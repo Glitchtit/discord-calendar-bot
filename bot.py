@@ -20,17 +20,27 @@ service = build("calendar", "v3", credentials=credentials)
 
 EVENTS_FILE = "/app/data/events.json"
 
+def get_accessible_calendars():
+    result = service.calendarList().list().execute()
+    calendars = {}
+
+    for cal in result.get("items", []):
+        cal_id = cal["id"]
+        cal_name = cal.get("summaryOverride") or cal.get("summary")
+        # Assign a hash-based color (or pick from a predefined list)
+        color = hash(cal_id) % 0xFFFFFF  # random color from ID
+
+        calendars[cal_id] = {
+            "name": cal_name,
+            "color": color
+        }
+
+    return calendars
+
+
 # Define multiple calendars with name and embed color
-CALENDARS = {
-    "calendar1@example.com": {
-        "name": "Team Alpha",
-        "color": 0x3498db  # Blue
-    },
-    "calendar2@example.com": {
-        "name": "Team Beta",
-        "color": 0xe74c3c  # Red
-    }
-}
+CALENDARS = get_accessible_calendars()
+
 
 # 1. LOADING / SAVING EVENTS
 
