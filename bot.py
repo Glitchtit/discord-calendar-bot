@@ -152,13 +152,15 @@ def get_ics_events(start_date, end_date, url):
         events = []
         for e in cal.events:
             if e.begin.date() >= start_date and e.begin.date() <= end_date:
+                id_source = f"{e.name}|{e.begin}|{e.end}|{e.location or ''}"
+                event_id = hashlib.md5(id_source.encode()).hexdigest()
                 events.append({
                     "summary": e.name,
                     "start": {"dateTime": e.begin.isoformat()},
                     "end": {"dateTime": e.end.isoformat()},
                     "location": e.location or "",
                     "description": e.description or "",
-                    "id": str(hash((e.name, e.begin.isoformat())))
+                    "id": event_id
                 })
         return events
     except Exception as e:
