@@ -28,8 +28,8 @@ def load_previous_events():
     """
     Returns a dictionary of all stored events, with keys for each category/date,
     e.g. {
-        "DAILY_2025-03-28": [ ...list of events... ],
-        "WEEK_2025-03-25":  [ ...list of events... ]
+        "DAILY_YYYY-MM-DD": [ ...list of events... ],
+        "WEEK_YYYY-MM-DD":  [ ...list of events... ]
     }
     """
     if os.path.exists(EVENTS_FILE):
@@ -168,23 +168,28 @@ def post_changes_embed(changes):
         print("[DEBUG] No changes detected (no embed posted).")
 
 #
-# 5. DAILY LOGIC
+# 5. DAILY SUMMARY (SCHEDULED)
 #
 def post_todays_happenings():
+    """
+    Runs once a day (08:00).
+    Posts today's events in an embed. Also checks for changes
+    (since we might not have posted them if no changes triggered).
+    """
     today = datetime.now(tz=tz.tzlocal()).date()
     daily_key = f"DAILY_{today}"
 
     all_data = load_previous_events()
     old_daily_events = all_data.get(daily_key, [])
 
-    # 1) Fetch today's events
+    # Fetch today's events
     today_events = get_events_for_day(today)
 
-    # 2) Detect changes
+    # Check & post changes found
     changes = detect_changes(old_daily_events, today_events)
     post_changes_embed(changes)
 
-    # 3) Post daily summary
+    # Then post daily summary
     if today_events:
         lines = [format_event(e) for e in today_events]
         description = "\n".join(lines)
@@ -192,13 +197,17 @@ def post_todays_happenings():
     else:
         post_embed_to_discord("Today’s Happenings", "No events scheduled for today.")
 
-    # 4) Save
+    # Save
     save_current_events_for_key(daily_key, today_events)
 
 #
-# 6. WEEKLY LOGIC
+# 6. WEEKLY SUMMARY (SCHEDULED)
 #
 def post_weeks_happenings():
+    """
+    Runs once a week (Monday 09:00).
+    Posts the entire Monday–Sunday events in an embed, plus any changes.
+    """
     now = datetime.now(tz=tz.tzlocal()).date()
     monday = now - timedelta(days=now.weekday())
     week_key = f"WEEK_{monday}"
@@ -206,14 +215,14 @@ def post_weeks_happenings():
     all_data = load_previous_events()
     old_week_events = all_data.get(week_key, [])
 
-    # 1) Fetch Monday–Sunday events
+    # Fetch week events
     week_events = get_events_for_week(monday)
 
-    # 2) Detect changes
+    # Check & post changes
     changes = detect_changes(old_week_events, week_events)
     post_changes_embed(changes)
 
-    # 3) Post weekly summary
+    # Then post weekly summary
     if week_events:
         lines = [format_event(e) for e in week_events]
         description = "\n".join(lines)
@@ -221,7 +230,7 @@ def post_weeks_happenings():
     else:
         post_embed_to_discord("This Week’s Happenings", "No events scheduled for this week.")
 
-    # 4) Save
+    # Save
     save_current_events_for_key(week_key, week_events)
 
 #
@@ -229,12 +238,47 @@ def post_weeks_happenings():
 #
 def check_for_changes():
     """
-    This checks both today's events and the weekly events, once a minute,
-    and posts changes if detected.
+    Check daily and weekly sets each minute, but only post changes if there are any.
+    No full "today's happenings" or "this week's happenings" summaries here.
     """
     print("[DEBUG] check_for_changes() called.")
-    post_todays_happenings()
-    post_weeks_happenings()
+
+    today = datetime.now(tz=tz.tzlocal()).date()
+    monday = today - timedelta(days=today.weekday())
+
+    #
+    # 1) Check for changes in today's events
+    #
+    daily_key = f"DAILY_{today}"
+    all_data = load_previous_events()
+    old_daily_events = all_data.get(daily_key, [])
+
+    today_events = get_events_for_day(today)
+    daily_changes = detect_changes(old_daily_events, today_events)
+
+    if daily_changes:
+        # Only post to Discord if there's something new or removed
+        post_changes_embed(daily_changes)
+
+    # Update the JSON so we don't repeat the same changes next loop
+    save_current_events_for_key(daily_key, today_events)
+
+    #
+    # 2) Check for changes in this week's events
+    #
+    week_key = f"WEEK_{monday}"
+    # Reload the data (in case we just wrote daily data)
+    all_data = load_previous_events()
+    old_week_events = all_data.get(week_key, [])
+
+    week_events = get_events_for_week(monday)
+    weekly_changes = detect_changes(old_week_events, week_events)
+
+    if weekly_changes:
+        post_changes_embed(weekly_changes)
+
+    save_current_events_for_key(week_key, week_events)
+
     print("[DEBUG] check_for_changes() finished.")
 
 #
