@@ -300,8 +300,8 @@ if __name__ == "__main__":
     post_todays_happenings()
     post_weeks_happenings()
 
-    print("[DEBUG] Entering schedule loop. Checking for changes every 30 seconds.")
+    print("[DEBUG] Entering schedule loop. Checking for changes every 20 seconds.")
     while True:
         schedule.run_pending()
         check_for_changes()
-        time.sleep(30)
+        time.sleep(20)
