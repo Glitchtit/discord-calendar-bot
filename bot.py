@@ -120,20 +120,63 @@ def get_events_for_week(monday_date):
 #
 # 4. DETECT CHANGES
 #
+
+def extract_comparable_fields(event):
+    """
+    Return the key pieces of data we care about for detecting changes
+    (start time, end time, summary). If any of these differ,
+    we consider the event 'changed'.
+    """
+    start = event["start"].get("dateTime", event["start"].get("date"))
+    end = event["end"].get("dateTime", event["end"].get("date"))
+    summary = event.get("summary", "")
+    location = event.get("location", "")
+    description = event.get("description", "")
+    return (start, end, summary, location, description)
+
+
 def detect_changes(old_events, new_events):
+    """
+    Compare old_events vs. new_events:
+      - Added: ID in new but not in old
+      - Removed: ID in old but not in new
+      - Changed: ID in both, but start/end/summary have changed
+    Returns a list of "Event added/removed/changed..." lines.
+    """
     changes = []
-    old_ids = {e["id"] for e in old_events}
-    new_ids = {e["id"] for e in new_events}
 
-    added   = [e for e in new_events if e["id"] not in old_ids]
-    removed = [e for e in old_events if e["id"] not in new_ids]
+    # Convert old_events, new_events to dicts by ID for easy lookup
+    old_dict = {e["id"]: e for e in old_events}
+    new_dict = {e["id"]: e for e in new_events}
 
-    for ev in added:
-        changes.append(f"Event added: {format_event(ev)}")
-    for ev in removed:
-        changes.append(f"Event removed: {format_event(ev)}")
+    old_ids = set(old_dict.keys())
+    new_ids = set(new_dict.keys())
+
+    # 1) Removed
+    removed_ids = old_ids - new_ids
+    for rid in removed_ids:
+        changes.append(f"Event removed: {format_event(old_dict[rid])}")
+
+    # 2) Added
+    added_ids = new_ids - old_ids
+    for aid in added_ids:
+        changes.append(f"Event added: {format_event(new_dict[aid])}")
+
+    # 3) Potentially Changed
+    common_ids = old_ids & new_ids
+    for cid in common_ids:
+        old_fields = extract_comparable_fields(old_dict[cid])
+        new_fields = extract_comparable_fields(new_dict[cid])
+        # If the relevant fields differ, we consider it "changed"
+        if old_fields != new_fields:
+            changes.append(
+                f"Event changed:\n"
+                f"OLD: {format_event(old_dict[cid])}\n"
+                f"NEW: {format_event(new_dict[cid])}"
+            )
 
     return changes
+
 
 def post_changes_to_discord(changes):
     if changes:
