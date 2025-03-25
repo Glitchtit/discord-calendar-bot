@@ -19,19 +19,19 @@ def generate_greeting(event_titles: list[str]):
 
     prompt = (
         f"Today is {today} and the schedule includes: {event_summary}. "
-        f"Write a playful, furry/anime-style greeting inspired by the 'owo what's this' meme, "
-        f"that mentions or reacts to some of those events in a cute way. "
+        f"Write a degenerate, furry/anime-style greeting inspired by the 'owo what's this' meme, "
+        f"that mentions or reacts to some of those events in a horny way. "
         f"Use language like 'uwu', 'nya~', or 'hewwo' and keep it under 40 words. "
-        f"Sound like a cheerful anime/furry assistant."
+        f"Sound like a horny anime/furry assistant."
     )
 
     response = client.chat.completions.create(
-        model="gpt-4",
+        model="gpt-4-mini",
         messages=[
-            {"role": "system", "content": "You're a kawaii furry anime assistant. Speak in an uwu/kawaii style."},
+            {"role": "system", "content": "You're a degenerate furry anime assistant. Speak in an uwu/kawaii style."},
             {"role": "user", "content": prompt},
         ],
-        max_tokens=60,
+        max_completion_tokens=60,
     )
 
     return response.choices[0].message.content.strip()
@@ -40,8 +40,8 @@ def generate_greeting(event_titles: list[str]):
 def generate_image_prompt():
     today = datetime.now().strftime("%A")
     return (
-        f"A cozy anime-style furry character stretching with a cup of tea on a {today} morning, "
-        f"in soft pastel colors, with sparkles and a warm glowing vibe, kawaii aesthetic."
+        f"A degenerate anime-style furry character stretching with a cup of tea on a {today} morning, "
+        f"in soft pastel colors, with sparkles and a warm glowing vibe, kawaii aesthetic, while looking like they are in heat."
     )
 
 def generate_image():
