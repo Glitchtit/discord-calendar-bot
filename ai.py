@@ -2,6 +2,9 @@ import os
 import requests
 from datetime import datetime
 from openai import OpenAI
+from dateutil import tz
+from bot import GROUPED_CALENDARS, get_events
+
 
 # Load environment variables
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
@@ -9,23 +12,31 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-def generate_greeting():
+def generate_greeting(event_titles: list[str]):
     today = datetime.now().strftime("%A, %B %d")
+
+    # Join event titles into a string prompt
+    event_summary = ", ".join(event_titles) if event_titles else "no special events"
+
     prompt = (
-        f"Write a playful, furry/anime-style greeting inspired by the 'owo what's this' meme "
-        f"for a calendar update on {today}. Use cute language like 'hewwo', 'uwu', or 'nya~', "
-        f"and keep it under 30 words. Make it warm, cozy, and silly."
+        f"Today is {today} and the schedule includes: {event_summary}. "
+        f"Write a playful, furry/anime-style greeting inspired by the 'owo what's this' meme, "
+        f"that mentions or reacts to some of those events in a cute way. "
+        f"Use language like 'uwu', 'nya~', or 'hewwo' and keep it under 40 words. "
+        f"Sound like a cheerful anime/furry assistant."
     )
 
     response = client.chat.completions.create(
         model="gpt-4",
         messages=[
-            {"role": "system", "content": "You're a kawaii furry anime assistant, always cheerful and uwu-fied."},
+            {"role": "system", "content": "You're a kawaii furry anime assistant. Speak in an uwu/kawaii style."},
             {"role": "user", "content": prompt},
         ],
-        max_tokens=50,
+        max_tokens=60,
     )
+
     return response.choices[0].message.content.strip()
+
 
 def generate_image_prompt():
     today = datetime.now().strftime("%A")
@@ -51,7 +62,15 @@ def post_greeting_to_discord():
         print("[DEBUG] No DISCORD_WEBHOOK_URL set.")
         return
 
-    greeting = generate_greeting()
+    today = datetime.now(tz=tz.tzlocal()).date()
+    event_titles = []
+
+    for calendars in GROUPED_CALENDARS.values():
+        for meta in calendars:
+            events = get_events(meta, today, today)
+            event_titles += [e.get("summary", "mystewious event~") for e in events]
+
+    greeting = generate_greeting(event_titles)
     image_url = generate_image()
 
     payload = {
@@ -60,10 +79,17 @@ def post_greeting_to_discord():
                 "title": "UwU Mowning Gweetings ✨🐾",
                 "description": greeting,
                 "image": {"url": image_url},
-                "color": 0xffb6c1  # Soft pink kawaii color
+                "color": 0xffb6c1
             }
         ]
     }
+
+    resp = requests.post(DISCORD_WEBHOOK_URL, json=payload)
+    if resp.status_code not in [200, 204]:
+        print(f"[DEBUG] Discord greeting post failed: {resp.status_code} {resp.text}")
+    else:
+        print("[DEBUG] Discord greeting post successful.")
+
 
     resp = requests.post(DISCORD_WEBHOOK_URL, json=payload)
     if resp.status_code not in [200, 204]:
