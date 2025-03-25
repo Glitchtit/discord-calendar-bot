@@ -82,18 +82,20 @@ CALENDARS = load_calendar_sources()
 
 def load_previous_events():
     if os.path.exists(EVENTS_FILE):
-        with open(EVENTS_FILE, "r") as f:
+        with open(EVENTS_FILE, "r", encoding="utf-8") as f:
             try:
                 return json.load(f)
             except json.JSONDecodeError:
                 pass
     return {}
 
+
 def save_current_events_for_key(key, events):
     all_data = load_previous_events()
     all_data[key] = events
-    with open(EVENTS_FILE, "w") as f:
-        json.dump(all_data, f)
+    with open(EVENTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(all_data, f, ensure_ascii=False)
+
 
 # 3. DISCORD EMBEDS + FORMATTING
 
