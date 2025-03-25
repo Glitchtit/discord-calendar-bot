@@ -237,7 +237,8 @@ def post_summary_for_date(start_date, end_date, key_prefix, label):
             lines = [format_event(e) for e in new_events]
             post_embed_to_discord(f"{label} for: {meta['name']}", "\n".join(lines), meta["color"])
         else:
-            post_embed_to_discord(f"{label} for: {meta['name']}", f"No events scheduled.", meta["color"])
+            print(f"[DEBUG] No events for {meta['name']} during {label.lower()}. No message sent.")
+
 
         save_current_events_for_key(key, new_events)
 
