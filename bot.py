@@ -27,21 +27,16 @@ def parse_calendar_sources():
     parsed = []
     for entry in sources.split(","):
         entry = entry.strip()
-        if entry.startswith("google:"):
-            content = entry[len("google:"):]
-            if ":" in content:
-                calendar_id, custom_name = content.split(":", 1)
-                parsed.append(("google", calendar_id.strip(), custom_name.strip()))
+        if entry.startswith("google:") or entry.startswith("ics:"):
+            prefix, rest = entry.split(":", 1)
+            # Split on last colon to separate optional custom name
+            if ":" in rest:
+                id_or_url, custom_name = rest.rsplit(":", 1)
+                parsed.append((prefix, id_or_url.strip(), custom_name.strip()))
             else:
-                parsed.append(("google", content.strip(), None))
-        elif entry.startswith("ics:"):
-            content = entry[len("ics:"):]
-            if ":" in content:
-                url, custom_name = content.split(":", 1)
-                parsed.append(("ics", url.strip(), custom_name.strip()))
-            else:
-                parsed.append(("ics", content.strip(), None))
+                parsed.append((prefix, rest.strip(), None))
     return parsed
+
 
 
 
