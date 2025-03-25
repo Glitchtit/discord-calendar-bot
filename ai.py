@@ -18,8 +18,8 @@ def generate_greeting(event_titles: list[str]) -> str:
 
     prompt = (
         f"H-hewwo~! It's {today}, and we've got some *extra thicc* scheduluwus coming up: {event_summary}~ (⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)💦 "
-        f"Write a shamelessly flirty, deranged furry-anime hybrid greeting, dripping with unfiltered 'owo what's this' energy. "
-        f"It should sound like it was written by a Discord mod in a fox maid suit who’s late for their ERP guild meetup. "
+        f"Write a shamelessly flirty, deranged anime-girl hybrid greeting, dripping with unfiltered 'owo what's this' energy. "
+        f"It should sound like it was written by a Discord mod in a maid suit who’s late for their world of warcraft guild meetup. "
         f"Include unhinged reactions to the events, questionable sound effects, and emojis that make people uncomfortable. "
         f"Use 'uwu', 'nya~', sparkles ✨, and tail-wagging noises. Limit to 40 words of raw degeneracy. Must still be safe for work."
         f"The names of your master it Thomas, and the mistress is Anniina. They are the owners of the server."
@@ -32,7 +32,7 @@ def generate_greeting(event_titles: list[str]) -> str:
             {
                 "role": "system",
                 "content": (
-                    "You're an unhinged but SFW furry anime assistant speaking in maximum uwu-style cringe. "
+                    "You're an unhinged but SFW anime-girl assistant speaking in maximum uwu-style cringe. "
                     "You are flirty, chaotic, and overly affectionate, but never explicit."
                 )
             },
@@ -48,12 +48,12 @@ def generate_image_prompt(event_titles: list[str]) -> str:
     event_summary = ", ".join(event_titles) if event_titles else "no important events"
 
     return (
-        f"A highly detailed, blushy, overly excited anthro furry foxgirl in a pastel maid dress and thigh-high socks, "
+        f"A highly detailed, blushy, overly excited anime-girl in a pastel maid dress and thigh-high socks, "
         f"surrounded by floating emojis and sparkles, preparing emotionally (and questionably) for: {event_summary}. "
         f"The {today} morning setting includes plushies, gamer gear, and questionable magical artifacts. "
         f"The character is dramatically sipping strawberry tea from a 'UwU Boss Mode' mug while posing like they're about to attend a cosplay RP meetup. "
         f"Make it painfully cute, degenerate, and slightly chaotic—but keep it safe-for-work in tone and composition. "
-        f"Imagine DeviantArt circa 2008 meets modern furry Twitter, with an unholy sprinkle of con-crunch energy."
+        f"Imagine DeviantArt circa 2008 meets modern weeb Twitter, with an unholy sprinkle of con-crunch energy."
     )
 
 def generate_image(prompt: str, max_retries: int = 3) -> str:
