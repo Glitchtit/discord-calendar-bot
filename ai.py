@@ -74,6 +74,17 @@ def post_greeting_to_discord(events: list[dict]):
     greeting = generate_greeting(event_titles)
     image_url = generate_image_prompt(event_titles)
 
+    # DEBUG: Show contents before sending
+    print("[DEBUG] Greeting:", greeting)
+    print("[DEBUG] Image URL:", image_url)
+
+    if not greeting or len(greeting) > 4000:
+        print("[ERROR] Greeting is invalid or too long.")
+        return
+
+    if not image_url.startswith("http"):
+        print("[ERROR] Image URL is invalid.")
+        return
 
     payload = {
         "embeds": [
@@ -91,6 +102,7 @@ def post_greeting_to_discord(events: list[dict]):
         print(f"[DEBUG] Discord greeting post failed: {resp.status_code} {resp.text}")
     else:
         print("[DEBUG] Discord greeting post successful.")
+
 
 
 if __name__ == "__main__":
