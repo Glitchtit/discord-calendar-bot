@@ -167,12 +167,13 @@ def get_google_events(start_date, end_date, calendar_id):
 def get_ics_events(start_date, end_date, url):
     try:
         response = requests.get(url)
+        response.encoding = 'utf-8'  # säkerställ rätt teckenkodning
         cal = ICS_Calendar(response.text)
         events = []
         for e in cal.events:
             if e.begin.date() >= start_date and e.begin.date() <= end_date:
                 id_source = f"{e.name}|{e.begin}|{e.end}|{e.location or ''}"
-                event_id = hashlib.md5(id_source.encode()).hexdigest()
+                event_id = hashlib.md5(id_source.encode("utf-8")).hexdigest()
                 events.append({
                     "summary": e.name,
                     "start": {"dateTime": e.begin.isoformat()},
@@ -185,6 +186,7 @@ def get_ics_events(start_date, end_date, url):
     except Exception as e:
         print(f"[ERROR] Could not fetch or parse ICS calendar: {url} - {e}")
         return []
+
 
 def get_events(source_meta, start_date, end_date):
     if source_meta["type"] == "google":
