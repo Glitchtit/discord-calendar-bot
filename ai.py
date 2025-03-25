@@ -1,26 +1,17 @@
 import os
 import time
-import random
 import requests
 from datetime import datetime
 from openai import OpenAI
-from dateutil import tz
 import openai
-
 
 # Load environment variables
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-SUNO_API_KEY = os.environ.get("SUNO_API_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-GENRES = [
-    "hyperpop", "synthwave", "lo-fi", "metalcore", "kawaii future bass",
-    "eurobeat", "trap", "pop punk", "vaporwave"
-]
-
-def generate_greeting(event_titles: list[str]):
+def generate_greeting(event_titles: list[str]) -> str:
     today = datetime.now().strftime("%A, %B %d")
     event_summary = ", ".join(event_titles) if event_titles else "no special events"
 
@@ -29,7 +20,8 @@ def generate_greeting(event_titles: list[str]):
         f"Write a shamelessly flirty, deranged furry-anime hybrid greeting, dripping with unfiltered 'owo what's this' energy. "
         f"It should sound like it was written by a Discord mod in a fox maid suit who’s late for their ERP guild meetup. "
         f"Include unhinged reactions to the events, questionable sound effects, and emojis that make people uncomfortable. "
-        f"Use 'uwu', 'nya~', sparkles ✨, and tail-wagging noises. Limit to 40 words of raw degeneracy.The names of the calendar users are Thomas and Anniina. Must still be safe for work."
+        f"Use 'uwu', 'nya~', sparkles ✨, and tail-wagging noises. Limit to 40 words of raw degeneracy. Must still be safe for work."
+        f"The names of your master it Thomas, and the mistress is Anniina. They are the owners of the server."
     )
 
     response = client.chat.completions.create(
@@ -83,7 +75,7 @@ def generate_image(prompt: str, max_retries: int = 3) -> str:
                 else:
                     raise RuntimeError("Image prompt blocked by content filter after multiple attempts.")
             else:
-                raise  # Re-raise other types of BadRequestError
+                raise
 
         except Exception as e:
             print(f"[ERROR] Unexpected error on image generation: {e}")
@@ -92,81 +84,25 @@ def generate_image(prompt: str, max_retries: int = 3) -> str:
 
     raise RuntimeError("Image generation failed after retries.")
 
-
-def generate_song_lyrics(greeting: str) -> tuple[str, str, str]:
-    genre = random.choice(GENRES)
-    title_prompt = (
-        f"Give a ridiculously dramatic song title in the style of {genre} based on this greeting: \"{greeting}\""
-    )
-    lyrics_prompt = (
-        f"Write cringe but catchy lyrics for a 20-second {genre} song, based on this greeting: \"{greeting}\". "
-        f"Include at least one 'nya~', one 'uwu', and one over-the-top reaction to a calendar event."
-    )
-
-    title_resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": title_prompt}],
-        max_tokens=30,
-    )
-
-    lyrics_resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": lyrics_prompt}],
-        max_tokens=200,
-    )
-
-    return title_resp.choices[0].message.content.strip(), lyrics_resp.choices[0].message.content.strip(), genre
-
-SUNO_API_BASE = "https://api.sunoapi.org"
-
-def generate_music_clip_suno(lyrics: str, title: str) -> str:
-    headers = {
-        "Authorization": f"Bearer {SUNO_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    # Step 1: Create task
-    payload = {
-        "title": title,
-        "prompt": lyrics
-    }
-
+def generate_tts_audio(greeting: str) -> str:
     try:
-        create_resp = requests.post(
-            f"{SUNO_API_BASE}/api/v1/music/create", headers=headers, json=payload
+        speech_response = client.audio.speech.create(
+            model="tts-1-hd",
+            voice="nova",  # high-pitched female voice
+            input=greeting,
+            response_format="mp3"
         )
-        create_data = create_resp.json()
 
-        if create_data.get("code") != 200:
-            raise Exception(f"Suno create error: {create_data.get('msg')}")
+        filename = "/tmp/greeting.mp3"
+        with open(filename, "wb") as f:
+            f.write(speech_response.content)
 
-        task_id = create_data["data"]["uuid"]
-        print(f"[DEBUG] Suno task ID: {task_id}")
+        # You can upload this file to your own CDN or Discord or return the path
+        return filename
+
     except Exception as e:
-        print(f"[ERROR] Failed to start music task: {e}")
+        print(f"[ERROR] Failed to generate TTS audio: {e}")
         return ""
-
-    # Step 2: Poll for result
-    for attempt in range(30):
-        time.sleep(2)
-        try:
-            poll_resp = requests.get(
-                f"{SUNO_API_BASE}/api/v1/music/task/{task_id}", headers=headers
-            )
-            poll_data = poll_resp.json()
-            song_data = poll_data.get("data", {})
-
-            if song_data.get("status") == "success":
-                music_url = song_data.get("musicUrl") or song_data.get("audio_url")
-                if music_url:
-                    return music_url
-        except Exception as e:
-            print(f"[DEBUG] Polling error: {e}")
-
-    print("[ERROR] Timed out waiting for Suno audio.")
-    return ""
-
-
 
 def post_greeting_to_discord(events: list[dict] = []):
     if not DISCORD_WEBHOOK_URL:
@@ -177,12 +113,11 @@ def post_greeting_to_discord(events: list[dict] = []):
     greeting = generate_greeting(event_titles)
     image_prompt = generate_image_prompt(event_titles)
     image_url = generate_image(image_prompt)
-    song_title, song_lyrics, genre = generate_song_lyrics(greeting)
-    music_url = generate_music_clip_suno(song_lyrics, song_title)
+    audio_path = generate_tts_audio(greeting)
 
     print("[DEBUG] Greeting:", greeting)
     print("[DEBUG] Image URL:", image_url)
-    print("[DEBUG] Music URL:", music_url)
+    print("[DEBUG] Audio path:", audio_path)
 
     if not greeting or len(greeting) > 4000:
         print("[ERROR] Greeting is invalid or too long.")
@@ -191,6 +126,10 @@ def post_greeting_to_discord(events: list[dict] = []):
     if not image_url.startswith("http"):
         print("[ERROR] Image URL is invalid.")
         return
+
+    files = {}
+    if audio_path and os.path.exists(audio_path):
+        files["file"] = ("greeting.mp3", open(audio_path, "rb"), "audio/mpeg")
 
     payload = {
         "embeds": [
@@ -203,16 +142,7 @@ def post_greeting_to_discord(events: list[dict] = []):
         ]
     }
 
-    if music_url:
-        payload["embeds"].append(
-            {
-                "title": f"🎵 Song of the Day: *{song_title}*",
-                "description": f"*Genre:* {genre}\n[▶️ Listen on Suno]({music_url})\n\n*Lyrics Preview:*\n{song_lyrics}",
-                "color": 0xff69b4
-            }
-        )
-
-    resp = requests.post(DISCORD_WEBHOOK_URL, json=payload)
+    resp = requests.post(DISCORD_WEBHOOK_URL, json=payload, files=files if files else None)
     if resp.status_code not in [200, 204]:
         print(f"[DEBUG] Discord greeting post failed: {resp.status_code} {resp.text}")
     else:
