@@ -282,34 +282,21 @@ def check_for_changes():
 
     for tag, calendars in GROUPED_CALENDARS.items():
         tag_label = "Thomas" if tag == "T" else "Anniina" if tag == "A" else "Both"
-        daily_key = f"DAILY_{tag}_{today}"
         weekly_key = f"WEEK_{tag}_{monday}"
 
         all_data = load_previous_events()
-        old_daily = all_data.get(daily_key, [])
         old_week = all_data.get(weekly_key, [])
 
-        new_daily = []
         new_week = []
 
         for meta in calendars:
-            new_daily += get_events(meta, today, today)
             new_week += get_events(meta, monday, end)
 
-        daily_changes = detect_changes(old_daily, new_daily)
         weekly_changes = detect_changes(old_week, new_week)
-
-        if daily_changes:
-            post_embed_to_discord(
-                f"Changes Detected – Today for {tag_label}",
-                "\n".join(daily_changes),
-                get_color_for_tag(tag)
-            )
-            save_current_events_for_key(daily_key, new_daily)
 
         if weekly_changes and delta > 180:
             post_embed_to_discord(
-                f"Changes Detected – This Week for {tag_label}",
+                f"Changes Detected – For {tag_label}",
                 "\n".join(weekly_changes),
                 get_color_for_tag(tag)
             )
