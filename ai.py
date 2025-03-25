@@ -32,7 +32,7 @@ def generate_greeting(event_titles: list[str]):
             {"role": "system", "content": "You're a painfully horny, uwu-fied furry anime assistant who speaks in maximum cringe."},
             {"role": "user", "content": prompt},
         ],
-        max_completion_tokens=60,
+        max_completion_tokens=100,
     )
 
     return response.choices[0].message.content.strip()
