@@ -4,6 +4,7 @@ import requests
 from datetime import datetime
 from openai import OpenAI
 import openai
+import json
 
 # Load environment variables
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
@@ -22,6 +23,7 @@ def generate_greeting(event_titles: list[str]) -> str:
         f"Include unhinged reactions to the events, questionable sound effects, and emojis that make people uncomfortable. "
         f"Use 'uwu', 'nya~', sparkles ✨, and tail-wagging noises. Limit to 40 words of raw degeneracy. Must still be safe for work."
         f"The names of your master it Thomas, and the mistress is Anniina. They are the owners of the server."
+
     )
 
     response = client.chat.completions.create(
@@ -62,7 +64,8 @@ def generate_image(prompt: str, max_retries: int = 3) -> str:
                 prompt=prompt,
                 size="1024x1024",
                 quality="standard",
-                n=1
+                n=1,
+                response_format="url"
             )
             return response.data[0].url
 
@@ -88,7 +91,7 @@ def generate_tts_audio(greeting: str) -> str:
     try:
         speech_response = client.audio.speech.create(
             model="tts-1-hd",
-            voice="nova",  # high-pitched female voice
+            voice="nova",
             input=greeting,
             response_format="mp3"
         )
@@ -97,7 +100,6 @@ def generate_tts_audio(greeting: str) -> str:
         with open(filename, "wb") as f:
             f.write(speech_response.content)
 
-        # You can upload this file to your own CDN or Discord or return the path
         return filename
 
     except Exception as e:
@@ -127,10 +129,7 @@ def post_greeting_to_discord(events: list[dict] = []):
         print("[ERROR] Image URL is invalid.")
         return
 
-    files = {}
-    if audio_path and os.path.exists(audio_path):
-        files["file"] = ("greeting.mp3", open(audio_path, "rb"), "audio/mpeg")
-
+    # First message: text + image embed
     payload = {
         "embeds": [
             {
@@ -142,11 +141,21 @@ def post_greeting_to_discord(events: list[dict] = []):
         ]
     }
 
-    resp = requests.post(DISCORD_WEBHOOK_URL, json=payload, files=files if files else None)
-    if resp.status_code not in [200, 204]:
-        print(f"[DEBUG] Discord greeting post failed: {resp.status_code} {resp.text}")
+    resp1 = requests.post(DISCORD_WEBHOOK_URL, json=payload)
+    if resp1.status_code not in [200, 204]:
+        print(f"[DEBUG] Discord embed post failed: {resp1.status_code} {resp1.text}")
     else:
-        print("[DEBUG] Discord greeting post successful.")
+        print("[DEBUG] Discord embed post successful.")
+
+    # Second message: audio file only
+    if audio_path and os.path.exists(audio_path):
+        with open(audio_path, "rb") as f:
+            files = {"file": ("greeting.mp3", f, "audio/mpeg")}
+            resp2 = requests.post(DISCORD_WEBHOOK_URL, files=files)
+            if resp2.status_code not in [200, 204]:
+                print(f"[DEBUG] Discord audio post failed: {resp2.status_code} {resp2.text}")
+            else:
+                print("[DEBUG] Discord audio post successful.")
 
 if __name__ == "__main__":
     post_greeting_to_discord()
