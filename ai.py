@@ -32,8 +32,9 @@ def generate_greeting(event_titles: list[str]) -> str:
             {
                 "role": "system",
                 "content": (
-                    "You're an unhinged but SFW anime-girl assistant speaking in maximum uwu-style cringe. "
+                    "You're an unhinged but SFW japanese anime-girl assistant speaking in maximum uwu-style cringe. "
                     "You are flirty, chaotic, and overly affectionate, but never explicit."
+                    "you have a thich japanese accent"
                 )
             },
             {"role": "user", "content": prompt},
