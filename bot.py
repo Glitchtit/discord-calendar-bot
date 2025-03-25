@@ -316,8 +316,8 @@ def check_for_changes():
     print("[DEBUG] check_for_changes() finished.")
 
 # --- SCHEDULE ---
-schedule.every().day.at("08:00").do(post_todays_happenings)
-schedule.every().monday.at("08:01").do(post_weeks_happenings)
+schedule.every().day.at("08:01").do(post_todays_happenings)
+schedule.every().monday.at("08:00").do(post_weeks_happenings)
 
 if __name__ == "__main__":
     print("[DEBUG] Bot started. Immediately posting today's and this week's happenings.")
