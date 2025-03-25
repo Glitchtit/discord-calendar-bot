@@ -5,6 +5,8 @@ import requests
 from datetime import datetime
 from openai import OpenAI
 from dateutil import tz
+import openai
+
 
 # Load environment variables
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
