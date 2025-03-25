@@ -90,9 +90,10 @@ def generate_image(prompt: str, max_retries: int = 3) -> str:
 def generate_tts_audio(greeting: str) -> str:
     try:
         speech_response = client.audio.speech.create(
-            model="tts-1-hd",
-            voice="nova",
+            model="gpt-4o-mini-tts",
+            voice="onyx",
             input=greeting,
+            instructions="speak in a hyper anime-like tone, with a thick japanese accent. Be overly affectionate and cringe, but safe for work.",
             response_format="mp3"
         )
 
