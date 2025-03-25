@@ -321,8 +321,9 @@ schedule.every().monday.at("08:00").do(post_weeks_happenings)
 
 if __name__ == "__main__":
     print("[DEBUG] Bot started. Immediately posting today's and this week's happenings.")
-    post_todays_happenings()
     post_weeks_happenings()
+    post_todays_happenings()
+    
 
     print("[DEBUG] Entering schedule loop. Checking for changes every 20 seconds.")
     while True:

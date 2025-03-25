@@ -26,7 +26,7 @@ def generate_greeting(event_titles: list[str]):
     )
 
     response = client.chat.completions.create(
-        model="gpt-4-mini",
+        model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": "You're a degenerate furry anime assistant. Speak in an uwu/kawaii style."},
             {"role": "user", "content": prompt},
