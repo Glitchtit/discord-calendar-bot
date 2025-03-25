@@ -37,14 +37,19 @@ def generate_greeting(event_titles: list[str]):
     return response.choices[0].message.content.strip()
 
 
-def generate_image_prompt():
+def generate_image_prompt(event_titles: list[str]):
     today = datetime.now().strftime("%A")
+    event_summary = ", ".join(event_titles) if event_titles else "no important events"
+
     return (
-        f"A disturbingly cute, blushing anthro furry anime fox in a frilly pink maid dress with cat stockings and a tail bow, "
-        f"posing like a magical girl while holding a mug that says 'Nyaa~gic Monday'. "
-        f"The cozy {today} morning scene is overloaded with glitter, floating paws, heart particles, and plushies. "
-        f"The energy is chaotic, flirty, and so kawaii it hurts, like a cursed bootleg dakimakura ad from 2009 DeviantArt."
+        f"A highly detailed, blushy, overly excited anthro furry foxgirl in a pastel maid dress and thigh-high socks, "
+        f"surrounded by floating emojis and sparkles, preparing emotionally (and questionably) for: {event_summary}. "
+        f"The {today} morning setting includes plushies, gamer gear, and questionable magical artifacts. "
+        f"The character is dramatically sipping strawberry tea from a 'Daddy’s Busy >///<' mug while posing like they're about to attend a cosplay ERP staff meeting. "
+        f"Make it painfully cute, degenerate, and slightly chaotic—but keep it safe-for-work in tone and composition. "
+        f"Imagine DeviantArt circa 2008 meets modern furry Twitter, with an unholy sprinkle of con-crunch energy."
     )
+
 
 
 
@@ -65,9 +70,10 @@ def post_greeting_to_discord(events: list[dict]):
         print("[DEBUG] No DISCORD_WEBHOOK_URL set.")
         return
 
-    event_titles = [e.get("summary", "mystewious event~") for e in events]
+    event_titles = [e.get("summary", "mystewious scheduluwu~") for e in events]
     greeting = generate_greeting(event_titles)
-    image_url = generate_image()
+    image_url = generate_image_prompt(event_titles)
+
 
     payload = {
         "embeds": [
