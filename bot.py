@@ -257,6 +257,9 @@ def check_for_changes():
     today = datetime.now(tz=tz.tzlocal()).date()
     monday = today - timedelta(days=today.weekday())
     end = monday + timedelta(days=6)
+    now = datetime.now(tz=tz.tzlocal())
+    scheduled_weekly_time = now.replace(hour=8, minute=1, second=0, microsecond=0)
+    delta = abs((now - scheduled_weekly_time).total_seconds())
 
     for cid, meta in CALENDARS.items():
         daily_key = f"DAILY_{meta['name'].replace(' ', '_')}_{today}"
@@ -272,21 +275,21 @@ def check_for_changes():
         daily_changes = detect_changes(old_daily, new_daily)
         weekly_changes = detect_changes(old_week, new_week)
 
-        if daily_changes:
-            post_embed_to_discord(f"Changes Detected for: {meta['name']} (Today)", "\n".join(daily_changes), meta["color"])
-
-            save_current_events_for_key(daily_key, new_daily)
-
-        if weekly_changes:
+        # Undvik post nära veckopost-tid
+        if weekly_changes and delta > 180:  # 3 minuter = 180 sekunder
             post_embed_to_discord(f"Changes Detected for: {meta['name']} (Today)", "\n".join(weekly_changes), meta["color"])
-
             save_current_events_for_key(weekly_key, new_week)
+        else:
+            if weekly_changes:
+                print(f"[DEBUG] Suppressed weekly change post for {meta['name']} due to timing (±3 min).")
+                save_current_events_for_key(weekly_key, new_week)
+
 
     print("[DEBUG] check_for_changes() finished.")
 
 # 7. SCHEDULE
 schedule.every().day.at("08:00").do(post_todays_happenings)
-schedule.every().monday.at("09:00").do(post_weeks_happenings)
+schedule.every().monday.at("08:01").do(post_weeks_happenings)
 
 if __name__ == "__main__":
     print("[DEBUG] Bot started. Immediately posting today's and this week's happenings.")
