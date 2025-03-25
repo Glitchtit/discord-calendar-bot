@@ -28,10 +28,16 @@ def parse_calendar_sources():
     for entry in sources.split(","):
         entry = entry.strip()
         if entry.startswith("google:"):
-            parsed.append(("google", entry[len("google:"):]))
+            content = entry[len("google:"):]
+            if ":" in content:
+                calendar_id, custom_name = content.split(":", 1)
+                parsed.append(("google", calendar_id.strip(), custom_name.strip()))
+            else:
+                parsed.append(("google", content.strip(), None))
         elif entry.startswith("ics:"):
-            parsed.append(("ics", entry[len("ics:"):]))
+            parsed.append(("ics", entry[len("ics:"):].strip(), None))
     return parsed
+
 
 def fetch_google_calendar_metadata(calendar_id):
     try:
@@ -57,13 +63,18 @@ def fetch_ics_calendar_metadata(url):
 
 def load_calendar_sources():
     calendars = {}
-    for ctype, cid in parse_calendar_sources():
+    for ctype, cid, custom_name in parse_calendar_sources():
         if ctype == "google":
             meta = fetch_google_calendar_metadata(cid)
         elif ctype == "ics":
             meta = fetch_ics_calendar_metadata(cid)
+
+        if custom_name:
+            meta["name"] = custom_name
+
         calendars[cid] = meta
     return calendars
+
 
 CALENDARS = load_calendar_sources()
 
