@@ -37,7 +37,7 @@ def generate_greeting(event_titles: list[str]) -> str:
             },
             {"role": "user", "content": prompt},
         ],
-        max_tokens=100,
+        max_tokens=150,
     )
 
     return response.choices[0].message.content.strip()
