@@ -29,7 +29,7 @@ def generate_greeting(event_titles: list[str]):
         f"Write a shamelessly flirty, deranged furry-anime hybrid greeting, dripping with unfiltered 'owo what's this' energy. "
         f"It should sound like it was written by a Discord mod in a fox maid suit who’s late for their ERP guild meetup. "
         f"Include unhinged reactions to the events, questionable sound effects, and emojis that make people uncomfortable. "
-        f"Use 'uwu', 'nya~', sparkles ✨, and tail-wagging noises. Limit to 40 words of raw degeneracy. Must still be safe for work."
+        f"Use 'uwu', 'nya~', sparkles ✨, and tail-wagging noises. Limit to 40 words of raw degeneracy.The names of the calendar users are Thomas and Anniina. Must still be safe for work."
     )
 
     response = client.chat.completions.create(
@@ -117,43 +117,55 @@ def generate_song_lyrics(greeting: str) -> tuple[str, str, str]:
 
     return title_resp.choices[0].message.content.strip(), lyrics_resp.choices[0].message.content.strip(), genre
 
-BASE_URL = "https://apibox.erweima.ai"
-
-def call_suno_api(endpoint: str, data: dict) -> dict:
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {SUNO_API_KEY}"
-    }
-    
-    response = requests.post(f"{BASE_URL}{endpoint}", headers=headers, json=data)
-    result = response.json()
-
-    if result.get("code") != 200:
-        raise Exception(f"[SUNO API ERROR] {result.get('msg')}")
-    
-    return result
+SUNO_API_BASE = "https://api.sunoapi.org"
 
 def generate_music_clip_suno(lyrics: str, title: str) -> str:
-    data = {
-        "prompt": lyrics,
-        "callBackUrl": "",  # Optional: set if you want async
-        "title": title
+    headers = {
+        "Authorization": f"Bearer {SUNO_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    # Step 1: Create task
+    payload = {
+        "title": title,
+        "prompt": lyrics
     }
 
     try:
-        result = call_suno_api("/api/v1/music", data)
-        song_info = result.get("data", {})
-        audio_url = song_info.get("musicUrl") or song_info.get("audio_url")
+        create_resp = requests.post(
+            f"{SUNO_API_BASE}/api/v1/music/create", headers=headers, json=payload
+        )
+        create_data = create_resp.json()
 
-        if not audio_url:
-            print("[ERROR] No audio URL in Suno response.")
-            return ""
+        if create_data.get("code") != 200:
+            raise Exception(f"Suno create error: {create_data.get('msg')}")
 
-        return audio_url
-
+        task_id = create_data["data"]["uuid"]
+        print(f"[DEBUG] Suno task ID: {task_id}")
     except Exception as e:
-        print(f"[ERROR] Suno music generation failed: {e}")
+        print(f"[ERROR] Failed to start music task: {e}")
         return ""
+
+    # Step 2: Poll for result
+    for attempt in range(30):
+        time.sleep(2)
+        try:
+            poll_resp = requests.get(
+                f"{SUNO_API_BASE}/api/v1/music/task/{task_id}", headers=headers
+            )
+            poll_data = poll_resp.json()
+            song_data = poll_data.get("data", {})
+
+            if song_data.get("status") == "success":
+                music_url = song_data.get("musicUrl") or song_data.get("audio_url")
+                if music_url:
+                    return music_url
+        except Exception as e:
+            print(f"[DEBUG] Polling error: {e}")
+
+    print("[ERROR] Timed out waiting for Suno audio.")
+    return ""
+
 
 
 def post_greeting_to_discord(events: list[dict] = []):
