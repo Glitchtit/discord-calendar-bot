@@ -40,9 +40,13 @@ def generate_greeting(event_titles: list[str]):
 def generate_image_prompt():
     today = datetime.now().strftime("%A")
     return (
-        f"An antropomorphic degenerate anime-style furry character stretching with a cup of tea on a {today} morning, "
-        f"in soft pastel colors, with sparkles and a warm glowing vibe, kawaii aesthetic, while looking like they are in heat."
+        f"A hyper-kawaii, overly detailed, blushing anthropomorphic furry anime character with huge sparkling eyes, "
+        f"fox ears, a floofy tail, and thigh-high socks, stretching seductively with a steaming cup of strawberry tea on a cozy {today} morning. "
+        f"The scene is drenched in pastel sparkles, hearts, floating chibi emojis, and soft lighting. "
+        f"The character is surrounded by plushies, posters of magical wolf-dragon hybrids, and radiates 'I'm in heat but it's wholesome' energy. "
+        f"Cringe levels are maximum. Make it look like it belongs on a dakimakura or the homepage of a long-forgotten DeviantArt RP forum."
     )
+
 
 def generate_image():
     image_prompt = generate_image_prompt()
