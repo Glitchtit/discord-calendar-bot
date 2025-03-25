@@ -10,7 +10,6 @@ from dateutil import tz
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 SUNO_API_KEY = os.environ.get("SUNO_API_KEY")
-SUNO_BASE_URL = "https://sunoapi.org/api"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -61,15 +60,36 @@ def generate_image_prompt(event_titles: list[str]) -> str:
         f"Imagine DeviantArt circa 2008 meets modern furry Twitter, with an unholy sprinkle of con-crunch energy."
     )
 
-def generate_image(prompt: str) -> str:
-    response = client.images.generate(
-        model="dall-e-3",
-        prompt=prompt,
-        size="1024x1024",
-        quality="standard",
-        n=1
-    )
-    return response.data[0].url
+def generate_image(prompt: str, max_retries: int = 3) -> str:
+    for attempt in range(max_retries):
+        try:
+            response = client.images.generate(
+                model="dall-e-3",
+                prompt=prompt,
+                size="1024x1024",
+                quality="standard",
+                n=1
+            )
+            return response.data[0].url
+
+        except openai.BadRequestError as e:
+            if e.status_code == 400 and "content_policy_violation" in str(e).lower():
+                print(f"[WARNING] Content policy violation on attempt {attempt + 1}")
+                if attempt + 1 < max_retries:
+                    time.sleep(1)
+                    continue
+                else:
+                    raise RuntimeError("Image prompt blocked by content filter after multiple attempts.")
+            else:
+                raise  # Re-raise other types of BadRequestError
+
+        except Exception as e:
+            print(f"[ERROR] Unexpected error on image generation: {e}")
+            if attempt + 1 == max_retries:
+                raise
+
+    raise RuntimeError("Image generation failed after retries.")
+
 
 def generate_song_lyrics(greeting: str) -> tuple[str, str, str]:
     genre = random.choice(GENRES)
@@ -95,47 +115,44 @@ def generate_song_lyrics(greeting: str) -> tuple[str, str, str]:
 
     return title_resp.choices[0].message.content.strip(), lyrics_resp.choices[0].message.content.strip(), genre
 
-def generate_music_clip_suno(lyrics: str, title: str) -> str:
-    if not SUNO_API_KEY:
-        print("[ERROR] No SUNO_API_KEY provided.")
-        return ""
+BASE_URL = "https://apibox.erweima.ai"
 
+def call_suno_api(endpoint: str, data: dict) -> dict:
     headers = {
-        "Authorization": f"Bearer {SUNO_API_KEY}",
         "Content-Type": "application/json",
+        "Authorization": f"Bearer {SUNO_API_KEY}"
     }
+    
+    response = requests.post(f"{BASE_URL}{endpoint}", headers=headers, json=data)
+    result = response.json()
 
-    gen_payload = {
-        "title": title,
-        "tags": ["funny", "cringe", "ai-generated"],
-        "prompt": lyrics
+    if result.get("code") != 200:
+        raise Exception(f"[SUNO API ERROR] {result.get('msg')}")
+    
+    return result
+
+def generate_music_clip_suno(lyrics: str, title: str) -> str:
+    data = {
+        "prompt": lyrics,
+        "callBackUrl": "",  # Optional: set if you want async
+        "title": title
     }
 
     try:
-        gen_response = requests.post(f"{SUNO_BASE_URL}/generate", headers=headers, json=gen_payload)
-        gen_response.raise_for_status()
-        uuid = gen_response.json().get("uuid")
-        if not uuid:
-            print("[ERROR] UUID not returned from Suno.")
+        result = call_suno_api("/api/v1/music", data)
+        song_info = result.get("data", {})
+        audio_url = song_info.get("musicUrl") or song_info.get("audio_url")
+
+        if not audio_url:
+            print("[ERROR] No audio URL in Suno response.")
             return ""
+
+        return audio_url
+
     except Exception as e:
-        print(f"[ERROR] Suno generate request failed: {e}")
+        print(f"[ERROR] Suno music generation failed: {e}")
         return ""
 
-    for attempt in range(30):
-        time.sleep(1)
-        try:
-            status_response = requests.get(f"{SUNO_BASE_URL}/status/{uuid}", headers=headers)
-            status_response.raise_for_status()
-            data = status_response.json()
-            audio_url = data.get("audio_url")
-            if audio_url:
-                return audio_url
-        except Exception as e:
-            print(f"[DEBUG] Polling error: {e}")
-
-    print("[ERROR] Timed out waiting for Suno song.")
-    return ""
 
 def post_greeting_to_discord(events: list[dict] = []):
     if not DISCORD_WEBHOOK_URL:
