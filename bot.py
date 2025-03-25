@@ -35,8 +35,14 @@ def parse_calendar_sources():
             else:
                 parsed.append(("google", content.strip(), None))
         elif entry.startswith("ics:"):
-            parsed.append(("ics", entry[len("ics:"):].strip(), None))
+            content = entry[len("ics:"):]
+            if ":" in content:
+                url, custom_name = content.split(":", 1)
+                parsed.append(("ics", url.strip(), custom_name.strip()))
+            else:
+                parsed.append(("ics", content.strip(), None))
     return parsed
+
 
 
 def fetch_google_calendar_metadata(calendar_id):
