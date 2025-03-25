@@ -92,7 +92,7 @@ def generate_tts_audio(greeting: str) -> str:
             model="gpt-4o-mini-tts",
             voice="onyx",
             input=greeting,
-            instructions="speak in a hyper anime-like tone, with a thick japanese accent. Be overly affectionate and cringe, but safe for work.",
+            instructions="speak in a super low and sultry anime-like tone, with a thick japanese accent. Be overly affectionate and cringe, but safe for work. Go full edgelord on the uwus and nyaas.",
             response_format="mp3"
         )
 
