@@ -9,6 +9,7 @@ from dateutil import tz
 from ics import Calendar as ICS_Calendar
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from ai import post_greeting_to_discord
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
@@ -230,6 +231,8 @@ def post_todays_happenings():
                 "\n".join(lines),
                 get_color_for_tag(tag)
             )
+    post_greeting_to_discord()
+
 
 def post_weeks_happenings():
     now = datetime.now(tz=tz.tzlocal()).date()
