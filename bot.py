@@ -20,8 +20,17 @@ credentials = service_account.Credentials.from_service_account_file(
 )
 service = build("calendar", "v3", credentials=credentials)
 
-# 1. CALENDAR DISCOVERY
+# --- COLOR MAPPING BY TAG ---
+def get_color_for_tag(tag):
+    if tag == "T":
+        return 0x3498db  # Blue (Thomas)
+    elif tag == "A":
+        return 0xe67e22  # Orange (Anniina)
+    elif tag == "B":
+        return 0x9b59b6  # Purple (Both)
+    return 0x95a5a6  # Default gray
 
+# --- CALENDAR DISCOVERY ---
 def parse_calendar_sources():
     sources = os.environ.get("CALENDAR_SOURCES", "")
     parsed = []
@@ -29,16 +38,10 @@ def parse_calendar_sources():
         entry = entry.strip()
         if entry.startswith("google:") or entry.startswith("ics:"):
             prefix, rest = entry.split(":", 1)
-            # Split on last colon to separate optional custom name
             if ":" in rest:
-                id_or_url, custom_name = rest.rsplit(":", 1)
-                parsed.append((prefix, id_or_url.strip(), custom_name.strip()))
-            else:
-                parsed.append((prefix, rest.strip(), None))
+                id_or_url, tag = rest.rsplit(":", 1)
+                parsed.append((prefix, id_or_url.strip(), tag.strip().upper()))
     return parsed
-
-
-
 
 def fetch_google_calendar_metadata(calendar_id):
     try:
@@ -54,33 +57,29 @@ def fetch_google_calendar_metadata(calendar_id):
         print(f"[WARNING] Couldn't get calendar metadata for {calendar_id}: {e}")
         name = calendar_id
 
-    color = int(hashlib.md5(calendar_id.encode()).hexdigest()[:6], 16)
-    return {"type": "google", "id": calendar_id, "name": name, "color": color}
+    return {"type": "google", "id": calendar_id, "name": name}
 
 def fetch_ics_calendar_metadata(url):
     name = url.split("/")[-1].split("?")[0] or "ICS Calendar"
-    color = int(hashlib.md5(url.encode()).hexdigest()[:6], 16)
-    return {"type": "ics", "id": url, "name": name, "color": color}
+    return {"type": "ics", "id": url, "name": name}
 
 def load_calendar_sources():
-    calendars = {}
-    for ctype, cid, custom_name in parse_calendar_sources():
+    grouped = {"T": [], "A": [], "B": []}
+    for ctype, cid, tag in parse_calendar_sources():
         if ctype == "google":
             meta = fetch_google_calendar_metadata(cid)
         elif ctype == "ics":
             meta = fetch_ics_calendar_metadata(cid)
+        else:
+            continue
 
-        if custom_name:
-            meta["name"] = custom_name
+        meta["tag"] = tag
+        grouped.setdefault(tag, []).append(meta)
+    return grouped
 
-        calendars[cid] = meta
-    return calendars
+GROUPED_CALENDARS = load_calendar_sources()
 
-
-CALENDARS = load_calendar_sources()
-
-# 2. LOADING / SAVING EVENTS
-
+# --- EVENT STORAGE ---
 def load_previous_events():
     if os.path.exists(EVENTS_FILE):
         with open(EVENTS_FILE, "r", encoding="utf-8") as f:
@@ -90,16 +89,13 @@ def load_previous_events():
                 pass
     return {}
 
-
 def save_current_events_for_key(key, events):
     all_data = load_previous_events()
     all_data[key] = events
     with open(EVENTS_FILE, "w", encoding="utf-8") as f:
         json.dump(all_data, f, ensure_ascii=False)
 
-
-# 3. DISCORD EMBEDS + FORMATTING
-
+# --- DISCORD POSTING ---
 def post_embed_to_discord(title: str, description: str, color: int = 5814783):
     if not DISCORD_WEBHOOK_URL:
         print("[DEBUG] No DISCORD_WEBHOOK_URL set.")
@@ -144,8 +140,7 @@ def format_event(event) -> str:
     else:
         return f"- {title} ({start_str} to {end_str})"
 
-# 4. FETCH EVENTS
-
+# --- FETCHING EVENTS ---
 def get_google_events(start_date, end_date, calendar_id):
     start_utc = start_date.isoformat() + "T00:00:00Z"
     end_utc   = end_date.isoformat() + "T23:59:59Z"
@@ -162,11 +157,11 @@ def get_google_events(start_date, end_date, calendar_id):
 def get_ics_events(start_date, end_date, url):
     try:
         response = requests.get(url)
-        response.encoding = 'utf-8'  # säkerställ rätt teckenkodning
+        response.encoding = 'utf-8'
         cal = ICS_Calendar(response.text)
         events = []
         for e in cal.events:
-            if e.begin.date() >= start_date and e.begin.date() <= end_date:
+            if start_date <= e.begin.date() <= end_date:
                 id_source = f"{e.name}|{e.begin}|{e.end}|{e.location or ''}"
                 event_id = hashlib.md5(id_source.encode("utf-8")).hexdigest()
                 events.append({
@@ -182,7 +177,6 @@ def get_ics_events(start_date, end_date, url):
         print(f"[ERROR] Could not fetch or parse ICS calendar: {url} - {e}")
         return []
 
-
 def get_events(source_meta, start_date, end_date):
     if source_meta["type"] == "google":
         return get_google_events(start_date, end_date, source_meta["id"])
@@ -190,8 +184,7 @@ def get_events(source_meta, start_date, end_date):
         return get_ics_events(start_date, end_date, source_meta["id"])
     return []
 
-# 5. DETECT CHANGES
-
+# --- CHANGE DETECTION ---
 def extract_comparable_fields(event):
     start = event["start"].get("dateTime", event["start"].get("date"))
     end = event["end"].get("dateTime", event["end"].get("date"))
@@ -209,10 +202,8 @@ def detect_changes(old_events, new_events):
 
     for eid in new_ids - old_ids:
         changes.append(f"Event added: {format_event(new_dict[eid])}")
-
     for eid in old_ids - new_ids:
         changes.append(f"Event removed: {format_event(old_dict[eid])}")
-
     for eid in old_ids & new_ids:
         if extract_comparable_fields(old_dict[eid]) != extract_comparable_fields(new_dict[eid]):
             changes.append(
@@ -220,37 +211,65 @@ def detect_changes(old_events, new_events):
             )
     return changes
 
-# 6. DAILY / WEEKLY POSTING
-
-def post_summary_for_date(start_date, end_date, key_prefix, label):
-    for cid, meta in CALENDARS.items():
-        key = f"{key_prefix}_{meta['name'].replace(' ', '_')}_{start_date}"
-        all_data = load_previous_events()
-        old_events = all_data.get(key, [])
-        new_events = get_events(meta, start_date, end_date)
-
-        changes = detect_changes(old_events, new_events)
-        if changes:
-            post_embed_to_discord(f"Changes Detected for: {meta['name']}", "\n".join(changes), meta["color"])
-
-        if new_events:
-            lines = [format_event(e) for e in new_events]
-            post_embed_to_discord(f"{label} for: {meta['name']}", "\n".join(lines), meta["color"])
-        else:
-            print(f"[DEBUG] No events for {meta['name']} during {label.lower()}. No message sent.")
-
-
-        save_current_events_for_key(key, new_events)
-
+# --- DAILY + WEEKLY POSTS ---
 def post_todays_happenings():
     today = datetime.now(tz=tz.tzlocal()).date()
-    post_summary_for_date(today, today, "DAILY", "Today’s Happenings")
+    weekday_name = today.strftime("%A")
+
+    for tag, calendars in GROUPED_CALENDARS.items():
+        all_events = []
+        for meta in calendars:
+            all_events += get_events(meta, today, today)
+
+        if all_events:
+            all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
+            lines = [format_event(e) for e in all_events]
+            person = "Thomas" if tag == "T" else "Anniina" if tag == "A" else "Both"
+            post_embed_to_discord(
+                f"Today’s Happenings – {weekday_name} for {person}",
+                "\n".join(lines),
+                get_color_for_tag(tag)
+            )
 
 def post_weeks_happenings():
     now = datetime.now(tz=tz.tzlocal()).date()
     monday = now - timedelta(days=now.weekday())
     end = monday + timedelta(days=6)
-    post_summary_for_date(monday, end, "WEEK", "This Week’s Happenings")
+
+    for tag, calendars in GROUPED_CALENDARS.items():
+        all_events = []
+        for meta in calendars:
+            all_events += get_events(meta, monday, end)
+
+        if not all_events:
+            continue
+
+        events_by_day = {}
+        for e in all_events:
+            start_str = e["start"].get("dateTime", e["start"].get("date"))
+            if "T" in start_str:
+                dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")).astimezone(tz.tzlocal())
+                day = dt.date()
+            else:
+                day = datetime.fromisoformat(start_str).date()
+            events_by_day.setdefault(day, []).append(e)
+
+        lines = []
+        for i in range(7):
+            day = monday + timedelta(days=i)
+            if day in events_by_day:
+                weekday_name = day.strftime("%A")
+                lines.append(f"**{weekday_name}**")
+                day_events = sorted(events_by_day[day], key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
+                lines.extend(format_event(e) for e in day_events)
+                lines.append("")
+
+        person = "Thomas" if tag == "T" else "Anniina" if tag == "A" else "Both"
+        post_embed_to_discord(
+            f"This Week’s Happenings for {person}",
+            "\n".join(lines),
+            get_color_for_tag(tag)
+        )
 
 def check_for_changes():
     print("[DEBUG] check_for_changes() called.")
@@ -261,33 +280,47 @@ def check_for_changes():
     scheduled_weekly_time = now.replace(hour=8, minute=1, second=0, microsecond=0)
     delta = abs((now - scheduled_weekly_time).total_seconds())
 
-    for cid, meta in CALENDARS.items():
-        daily_key = f"DAILY_{meta['name'].replace(' ', '_')}_{today}"
-        weekly_key = f"WEEK_{meta['name'].replace(' ', '_')}_{monday}"
+    for tag, calendars in GROUPED_CALENDARS.items():
+        tag_label = "Thomas" if tag == "T" else "Anniina" if tag == "A" else "Both"
+        daily_key = f"DAILY_{tag}_{today}"
+        weekly_key = f"WEEK_{tag}_{monday}"
 
         all_data = load_previous_events()
         old_daily = all_data.get(daily_key, [])
         old_week = all_data.get(weekly_key, [])
 
-        new_daily = get_events(meta, today, today)
-        new_week = get_events(meta, monday, end)
+        new_daily = []
+        new_week = []
+
+        for meta in calendars:
+            new_daily += get_events(meta, today, today)
+            new_week += get_events(meta, monday, end)
 
         daily_changes = detect_changes(old_daily, new_daily)
         weekly_changes = detect_changes(old_week, new_week)
 
-        # Undvik post nära veckopost-tid
-        if weekly_changes and delta > 180:  # 3 minuter = 180 sekunder
-            post_embed_to_discord(f"Changes Detected for: {meta['name']} (Today)", "\n".join(weekly_changes), meta["color"])
-            save_current_events_for_key(weekly_key, new_week)
-        else:
-            if weekly_changes:
-                print(f"[DEBUG] Suppressed weekly change post for {meta['name']} due to timing (±3 min).")
-                save_current_events_for_key(weekly_key, new_week)
+        if daily_changes:
+            post_embed_to_discord(
+                f"Changes Detected – Today for {tag_label}",
+                "\n".join(daily_changes),
+                get_color_for_tag(tag)
+            )
+            save_current_events_for_key(daily_key, new_daily)
 
+        if weekly_changes and delta > 180:
+            post_embed_to_discord(
+                f"Changes Detected – This Week for {tag_label}",
+                "\n".join(weekly_changes),
+                get_color_for_tag(tag)
+            )
+            save_current_events_for_key(weekly_key, new_week)
+        elif weekly_changes:
+            print(f"[DEBUG] Suppressed weekly change post for {tag_label} due to timing (±3 min).")
+            save_current_events_for_key(weekly_key, new_week)
 
     print("[DEBUG] check_for_changes() finished.")
 
-# 7. SCHEDULE
+# --- SCHEDULE ---
 schedule.every().day.at("08:00").do(post_todays_happenings)
 schedule.every().monday.at("08:01").do(post_weeks_happenings)
 
