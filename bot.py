@@ -216,6 +216,7 @@ def detect_changes(old_events, new_events):
 def post_todays_happenings():
     today = datetime.now(tz=tz.tzlocal()).date()
     weekday_name = today.strftime("%A")
+    all_events_for_greeting = []
 
     for tag, calendars in GROUPED_CALENDARS.items():
         all_events = []
@@ -231,7 +232,11 @@ def post_todays_happenings():
                 "\n".join(lines),
                 get_color_for_tag(tag)
             )
-    post_greeting_to_discord()
+            all_events_for_greeting += all_events
+
+    # Finally, send uwu message for all events of the day
+    post_greeting_to_discord(all_events_for_greeting)
+
 
 
 def post_weeks_happenings():

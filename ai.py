@@ -3,7 +3,6 @@ import requests
 from datetime import datetime
 from openai import OpenAI
 from dateutil import tz
-from bot import GROUPED_CALENDARS, get_events
 
 
 # Load environment variables
@@ -57,19 +56,12 @@ def generate_image():
     )
     return response.data[0].url
 
-def post_greeting_to_discord():
+def post_greeting_to_discord(events: list[dict]):
     if not DISCORD_WEBHOOK_URL:
         print("[DEBUG] No DISCORD_WEBHOOK_URL set.")
         return
 
-    today = datetime.now(tz=tz.tzlocal()).date()
-    event_titles = []
-
-    for calendars in GROUPED_CALENDARS.values():
-        for meta in calendars:
-            events = get_events(meta, today, today)
-            event_titles += [e.get("summary", "mystewious event~") for e in events]
-
+    event_titles = [e.get("summary", "mystewious event~") for e in events]
     greeting = generate_greeting(event_titles)
     image_url = generate_image()
 
@@ -90,12 +82,6 @@ def post_greeting_to_discord():
     else:
         print("[DEBUG] Discord greeting post successful.")
 
-
-    resp = requests.post(DISCORD_WEBHOOK_URL, json=payload)
-    if resp.status_code not in [200, 204]:
-        print(f"[DEBUG] Discord greeting post failed: {resp.status_code} {resp.text}")
-    else:
-        print("[DEBUG] Discord greeting post successful.")
 
 if __name__ == "__main__":
     post_greeting_to_discord()
