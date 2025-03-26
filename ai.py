@@ -21,7 +21,6 @@ def generate_greeting(event_titles: list[str]) -> str:
         f"It should sound like it was written by a Discord mod in a maid suit who’s late for their world of warcraft guild meetup. "
         f"Include unhinged reactions to the events, questionable sound effects, and emojis that make people uncomfortable. "
         f"Use 'uwu', 'nya~', sparkles ✨, and tail-wagging noises. Limit to 80 words of raw degeneracy. Must still be safe for work."
-        f"The names of your master it Thomas (an engineer), and the mistress is Anniina (industrial designer). They are the owners of the server and a couple, only mention their names."
     )
 
     response = client.chat.completions.create(
