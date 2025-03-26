@@ -4,6 +4,7 @@ import requests
 from datetime import datetime
 from openai import OpenAI
 import openai
+import json
 
 # Load environment variables
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
@@ -24,7 +25,7 @@ def generate_greeting(event_titles: list[str]) -> str:
     )
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-4o",
         messages=[
             {
                 "role": "system",
@@ -65,7 +66,19 @@ def generate_image(prompt: str, max_retries: int = 3) -> str:
                 n=1,
                 response_format="url"
             )
-            return response.data[0].url
+            image_url = response.data[0].url
+
+            # Download and save the image
+            image_response = requests.get(image_url)
+            image_response.raise_for_status()
+
+            os.makedirs("/data/art", exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            image_path = f"/data/art/generated_{timestamp}.png"
+            with open(image_path, "wb") as f:
+                f.write(image_response.content)
+
+            return image_path
 
         except openai.BadRequestError as e:
             if e.status_code == 400 and "content_policy_violation" in str(e).lower():
@@ -84,6 +97,7 @@ def generate_image(prompt: str, max_retries: int = 3) -> str:
                 raise
 
     raise RuntimeError("Image generation failed after retries.")
+
 
 def generate_tts_audio(greeting: str) -> str:
     try:
@@ -113,38 +127,38 @@ def post_greeting_to_discord(events: list[dict] = []):
     event_titles = [e.get("summary", "mystewious scheduluwu~") for e in events]
     greeting = generate_greeting(event_titles)
     image_prompt = generate_image_prompt(event_titles)
-    image_url = generate_image(image_prompt)
+    image_path = generate_image(image_prompt)
     audio_path = generate_tts_audio(greeting)
 
     print("[DEBUG] Greeting:", greeting)
-    print("[DEBUG] Image URL:", image_url)
-    print("[DEBUG] Audio path:", audio_path)
+    print("[DEBUG] Image Path:", image_path)
+    print("[DEBUG] Audio Path:", audio_path)
 
     if not greeting or len(greeting) > 4000:
         print("[ERROR] Greeting is invalid or too long.")
         return
 
-    if not image_url.startswith("http"):
-        print("[ERROR] Image URL is invalid.")
-        return
-
-    # First message: text + image embed
-    payload = {
-        "embeds": [
-            {
-                "title": "UwU Mowning Gweetings ✨🐾",
-                "description": greeting,
-                "image": {"url": image_url},
-                "color": 0xffb6c1
+    # First message: text + image file attachment
+    if image_path and os.path.exists(image_path):
+        with open(image_path, "rb") as img_file:
+            files = {"file": ("generated_image.png", img_file, "image/png")}
+            payload = {
+                "embeds": [
+                    {
+                        "title": "UwU Mowning Gweetings ✨🐾",
+                        "description": greeting,
+                        "image": {"url": "attachment://generated_image.png"},
+                        "color": 0xffb6c1
+                    }
+                ]
             }
-        ]
-    }
-
-    resp1 = requests.post(DISCORD_WEBHOOK_URL, json=payload)
-    if resp1.status_code not in [200, 204]:
-        print(f"[DEBUG] Discord embed post failed: {resp1.status_code} {resp1.text}")
+            resp1 = requests.post(DISCORD_WEBHOOK_URL, data={"payload_json": json.dumps(payload)}, files=files)
+            if resp1.status_code not in [200, 204]:
+                print(f"[DEBUG] Discord embed post failed: {resp1.status_code} {resp1.text}")
+            else:
+                print("[DEBUG] Discord embed post successful.")
     else:
-        print("[DEBUG] Discord embed post successful.")
+        print("[ERROR] Image file is missing or invalid.")
 
     # Second message: audio file only
     if audio_path and os.path.exists(audio_path):
@@ -155,6 +169,7 @@ def post_greeting_to_discord(events: list[dict] = []):
                 print(f"[DEBUG] Discord audio post failed: {resp2.status_code} {resp2.text}")
             else:
                 print("[DEBUG] Discord audio post successful.")
+
 
 if __name__ == "__main__":
     post_greeting_to_discord()
