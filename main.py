@@ -100,7 +100,7 @@ def task_daily_update_and_check():
             await channel.send(greeting_text)
             prompt = generate_image_prompt(event_titles)
             try:
-                img_path = generate_image(prompt)
+                img_path = await asyncio.to_thread(generate_image, prompt)
                 await channel.send(file=discord.File(img_path))
             except Exception as e:
                 await channel.send(f"[Error generating image] {e}")
