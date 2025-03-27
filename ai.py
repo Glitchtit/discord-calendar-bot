@@ -261,7 +261,7 @@ def generate_image(prompt: str, max_retries: int = 3) -> str:
     """
     Calls OpenAI Image API (DALL·E-like) to generate an image. 
     Downloads it locally and returns the file path.
-    Retries up to max_retries on transient errors.
+    Retries up to max_retries on transient errors. 
     """
     for attempt in range(max_retries):
         try:
