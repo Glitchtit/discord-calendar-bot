@@ -1,15 +1,13 @@
-# embeddings.py
-
 import os
 import openai
 import math
 import json
+from log import log
 
 openai.api_key = os.environ["OPENAI_API_KEY"]
 
 EMBEDDING_MODEL = "text-embedding-ada-002"
 EMBEDS_FILE = "/data/embeds.json"
-
 
 def embed_text(text: str) -> list[float]:
     response = openai.Embedding.create(
@@ -18,7 +16,6 @@ def embed_text(text: str) -> list[float]:
     )
     return response["data"][0]["embedding"]
 
-
 def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     dot_prod = sum(a * b for a, b in zip(vec_a, vec_b))
     mag_a = math.sqrt(sum(a * a for a in vec_a))
@@ -26,7 +23,6 @@ def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     if mag_a == 0 or mag_b == 0:
         return 0.0
     return dot_prod / (mag_a * mag_b)
-
 
 class EventEmbeddingStore:
     def __init__(self):
@@ -41,11 +37,11 @@ class EventEmbeddingStore:
                     if isinstance(stored, list):
                         self.data = stored
                     else:
-                        print("[WARN] EMBEDS_FILE is not a list.")
+                        log.warning("[Embeds] EMBEDS_FILE is not a list.")
             except Exception as e:
-                print(f"[WARN] Failed to load {EMBEDS_FILE}: {e}")
+                log.warning(f"[Embeds] Failed to load {EMBEDS_FILE}: {e}")
         else:
-            print("[INFO] No existing embeddings found.")
+            log.info("[Embeds] No existing embeddings found.")
 
     def save(self):
         os.makedirs(os.path.dirname(EMBEDS_FILE), exist_ok=True)
@@ -53,7 +49,7 @@ class EventEmbeddingStore:
             with open(EMBEDS_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"[ERROR] Failed to write {EMBEDS_FILE}: {e}")
+            log.error(f"[Embeds] Failed to write {EMBEDS_FILE}: {e}")
 
     def get_all_event_ids(self) -> set:
         return {item["event_id"] for item in self.data}
