@@ -9,3 +9,5 @@ ics==0.7.2
 openai==0.27.0
 discord.py==2.2.2
 numpy
+colorlog>=6.7.0
+

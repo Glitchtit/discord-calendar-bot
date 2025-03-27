@@ -6,10 +6,12 @@ import threading
 import discord
 from discord.ext import commands
 from discord import app_commands
-
 from datetime import datetime
 from dateutil import tz
 from dateutil.relativedelta import relativedelta, SU
+import logging
+import colorlog
+import openai
 
 # -- Local module imports --
 from calendar_tasks import (
@@ -21,8 +23,37 @@ from calendar_tasks import (
     ALL_EVENTS_KEY
 )
 from ai import store, generate_greeting, generate_image_prompt, generate_image
-import openai
 
+# -----------------------
+# LOGGING SETUP
+# -----------------------
+os.makedirs("/data/logs", exist_ok=True)
+log_format = "%(asctime)s [%(levelname)s] %(message)s"
+file_handler = logging.FileHandler("/data/logs/bot.log")
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(logging.Formatter(log_format))
+
+color_formatter = colorlog.ColoredFormatter(
+    "%(log_color)s%(asctime)s [%(levelname)s]%(reset)s %(message)s",
+    log_colors={
+        'DEBUG': 'cyan',
+        'INFO': 'green',
+        'WARNING': 'yellow',
+        'ERROR': 'red',
+        'CRITICAL': 'bold_red',
+    }
+)
+console_handler = colorlog.StreamHandler()
+console_handler.setLevel(logging.DEBUG)
+console_handler.setFormatter(color_formatter)
+
+log = logging.getLogger("calendar-bot")
+log.setLevel(logging.DEBUG)
+log.handlers = [file_handler, console_handler]
+
+# -----------------------
+# DISCORD BOT SETUP
+# -----------------------
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
 ANNOUNCEMENT_CHANNEL_ID = os.environ.get("ANNOUNCEMENT_CHANNEL_ID", "")
 
@@ -30,28 +61,24 @@ bot = commands.Bot(command_prefix="!", intents=discord.Intents.default())
 
 @bot.event
 async def on_ready():
-    print(f"Bot connected as {bot.user} (ID: {bot.user.id})")
-    
+    log.info(f"Bot connected as {bot.user} (ID: {bot.user.id})")
+
     try:
         synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} slash commands.")
+        log.info(f"Synced {len(synced)} slash commands.")
     except Exception as e:
-        print(f"Error syncing slash commands: {e}")
+        log.warning(f"Error syncing slash commands: {e}")
 
-    # 🔁 Run initial sync right away (non-blocking)
     def run_initial_sync():
-        print("[Startup] Performing initial calendar sync and embedding...")
+        log.info("[Startup] Performing initial calendar sync and embedding...")
         task_daily_update_and_check()
 
     threading.Thread(target=run_initial_sync, daemon=True).start()
-
-    # 🕗 Then start the recurring schedule
     start_scheduling_thread()
 
-
-# -------------------------------------------------
+# -----------------------
 # SCHEDULING
-# -------------------------------------------------
+# -----------------------
 def run_schedule_loop():
     while True:
         schedule.run_pending()
@@ -63,14 +90,20 @@ def start_scheduling_thread():
     t.start()
 
 def task_daily_update_and_check():
+    log.info("[Sync] Starting daily update...")
+
     channel = bot.get_channel(int(ANNOUNCEMENT_CHANNEL_ID)) if ANNOUNCEMENT_CHANNEL_ID else None
     new_events = get_all_calendar_events()
+    log.info(f"[Sync] Fetched {len(new_events)} upcoming events.")
+
     prev_data = load_previous_events()
     old_events = prev_data.get(ALL_EVENTS_KEY, [])
-
     changes = detect_changes(old_events, new_events)
+
     if changes:
+        log.info(f"[Sync] Detected {len(changes)} calendar changes.")
         save_current_events_for_key(ALL_EVENTS_KEY, new_events)
+
         if channel:
             async def post_changes():
                 chunk_size = 1800
@@ -87,10 +120,15 @@ def task_daily_update_and_check():
                     await channel.send("**Calendar Changes Detected**\n" + "\n".join(current_block))
             asyncio.run_coroutine_threadsafe(post_changes(), bot.loop)
     else:
+        log.info("[Sync] No calendar changes found.")
         if not old_events:
+            log.info("[Sync] No previous event snapshot — saving current events.")
             save_current_events_for_key(ALL_EVENTS_KEY, new_events)
 
+    before_count = len(store.get_all_event_ids())
     update_store_embeddings(old_events, new_events)
+    after_count = len(store.get_all_event_ids())
+    log.info(f"[Sync] Embedding store now contains {after_count} events (was {before_count}, net change: {after_count - before_count}).")
 
     if channel:
         async def post_daily_greeting():
@@ -119,18 +157,12 @@ def update_store_embeddings(old_events, new_events):
         end = evt["end"].get("dateTime") or evt["end"].get("date", "")
         loc = evt.get("location", "")
         desc = evt.get("description", "")
-        text_repr = (
-            f"Title: {summary}\n"
-            f"Start: {start}\n"
-            f"End: {end}\n"
-            f"Location: {loc}\n"
-            f"Desc: {desc}"
-        )
+        text_repr = f"Title: {summary}\nStart: {start}\nEnd: {end}\nLocation: {loc}\nDesc: {desc}"
         store.add_or_update_event(eid, text_repr)
 
-# -------------------------------------------------
+# -----------------------
 # SLASH COMMANDS
-# -------------------------------------------------
+# -----------------------
 @bot.tree.command(name="ask", description="Ask the AI anything about your calendar or otherwise.")
 @app_commands.describe(query="Your question or query.")
 async def ask_command(interaction: discord.Interaction, query: str):
@@ -209,7 +241,6 @@ async def uwu_command(interaction: discord.Interaction):
             this_week_events.append(e)
 
     event_titles = [evt.get("summary", "mysterious event") for evt in this_week_events]
-
     greeting_text = generate_greeting(event_titles)
     await interaction.followup.send(f"**UwU Greeting**\n{greeting_text}")
 
@@ -220,12 +251,12 @@ async def uwu_command(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"[Error generating image] {e}")
 
-# -------------------------------------------------
+# -----------------------
 # MAIN
-# -------------------------------------------------
+# -----------------------
 if __name__ == "__main__":
     if not TOKEN:
-        print("Error: DISCORD_BOT_TOKEN environment variable not set.")
+        log.critical("DISCORD_BOT_TOKEN environment variable not set.")
         exit(1)
 
     bot.run(TOKEN)
