@@ -31,12 +31,23 @@ bot = commands.Bot(command_prefix="!", intents=discord.Intents.default())
 @bot.event
 async def on_ready():
     print(f"Bot connected as {bot.user} (ID: {bot.user.id})")
+    
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} slash commands.")
     except Exception as e:
         print(f"Error syncing slash commands: {e}")
+
+    # 🔁 Run initial sync right away (non-blocking)
+    def run_initial_sync():
+        print("[Startup] Performing initial calendar sync and embedding...")
+        task_daily_update_and_check()
+
+    threading.Thread(target=run_initial_sync, daemon=True).start()
+
+    # 🕗 Then start the recurring schedule
     start_scheduling_thread()
+
 
 # -------------------------------------------------
 # SCHEDULING
