@@ -10,7 +10,6 @@ from datetime import datetime
 from dateutil import tz
 from dateutil.relativedelta import relativedelta, SU
 import openai
-
 from calendar_tasks import (
     get_all_calendar_events,
     detect_changes,
@@ -21,6 +20,8 @@ from calendar_tasks import (
     ALL_EVENTS_KEY
 )
 from ai import store, generate_greeting, generate_image_prompt, generate_image
+from date_utils import extract_date_range_from_query
+from embeddings import EventEmbeddingStore
 from log import log
 
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
@@ -126,8 +127,48 @@ def update_store_embeddings(old_events, new_events):
 async def ask_command(interaction: discord.Interaction, query: str):
     await interaction.response.defer()
     message = await interaction.followup.send("🔮 Summoning an answer...")
+
     try:
-        top_events = store.query(query, top_k=5)
+        all_events = load_previous_events().get(ALL_EVENTS_KEY, [])
+        date_range = extract_date_range_from_query(query)
+
+        if date_range:
+            start_dt, end_dt = date_range
+            log.debug(f"[Query] Filtering events from {start_dt} to {end_dt}")
+
+            def is_within_range(event):
+                start_str = event["start"].get("dateTime") or event["start"].get("date")
+                if "T" in start_str:
+                    dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                else:
+                    dt = datetime.fromisoformat(start_str).replace(hour=0, minute=0, second=0, tzinfo=tz.tzlocal())
+                dt_local = dt.astimezone(tz.tzlocal())
+                return start_dt <= dt_local <= end_dt
+
+            filtered_events = list(filter(is_within_range, all_events))
+        else:
+            filtered_events = all_events
+
+        # Optional: tag-based filtering (e.g. "Thomas's events")
+        query_lower = query.lower()
+        if "thomas" in query_lower:
+            filtered_events = [e for e in filtered_events if e.get("tag", "").upper() in {"T", "B"}]
+        elif "anniina" in query_lower:
+            filtered_events = [e for e in filtered_events if e.get("tag", "").upper() in {"A", "B"}]
+
+        temp_store = EventEmbeddingStore()
+        for e in filtered_events:
+            eid = e["id"]
+            summary = e.get("summary", "")
+            start = e["start"].get("dateTime") or e["start"].get("date", "")
+            end = e["end"].get("dateTime") or e["end"].get("date", "")
+            loc = e.get("location", "")
+            desc = e.get("description", "")
+            text_repr = f"Title: {summary}\nStart: {start}\nEnd: {end}\nLocation: {loc}\nDesc: {desc}"
+            temp_store.add_or_update_event(eid, text_repr)
+
+        top_events = temp_store.query(query, top_k=5)
+
         if not top_events:
             system_msg = "You are a helpful assistant. You have no calendar context available yet."
         else:
@@ -138,6 +179,7 @@ async def ask_command(interaction: discord.Interaction, query: str):
                 "Use them to answer the user's query accurately. "
                 "If the query does not relate to these events, answer to the best of your ability."
             )
+
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
@@ -146,9 +188,11 @@ async def ask_command(interaction: discord.Interaction, query: str):
             ],
             stream=True
         )
+
         full_reply = ""
         buffer = ""
         last_edit = time.time()
+
         async def maybe_edit():
             nonlocal buffer, full_reply, last_edit
             now = time.time()
@@ -157,13 +201,17 @@ async def ask_command(interaction: discord.Interaction, query: str):
                 await message.edit(content=full_reply)
                 buffer = ""
                 last_edit = now
+
         for chunk in response:
             delta = chunk["choices"][0]["delta"].get("content", "")
             buffer += delta
             await maybe_edit()
+
         full_reply += buffer
         await message.edit(content=full_reply or "🤷 No response.")
+
     except Exception as e:
+        log.exception("[ASK Command] Error while generating response")
         await message.edit(content=f"[Error streaming response] {e}")
 
 @bot.tree.command(name="uwu", description="Generate a cringe catgirl greeting for today's events.")
