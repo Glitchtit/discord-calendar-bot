@@ -19,7 +19,7 @@ from ai import generate_greeting, generate_image_prompt, generate_image
 # 1) --- Configuration / Environment ---
 SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "service_account.json")
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
-EVENTS_FILE = os.environ.get("EVENTS_FILE", "events.json")
+EVENTS_FILE = os.environ.get("EVENTS_FILE", "/data/events.json")
 
 # This key is where we'll store *all* events (rather than date-bounded sets).
 ALL_EVENTS_KEY = "ALL_EVENTS"
