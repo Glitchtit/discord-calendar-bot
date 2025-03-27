@@ -1,24 +1,37 @@
-# Use an official Python base image
-FROM python:3.10
+# Use a lightweight base image with Python 3.10 (you can also use python:3.9-slim, etc.)
+FROM python:3.10-slim
 
-# Create a working directory
-WORKDIR /app
+# System-wide settings to avoid Python buffering and writing .pyc files
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-# Copy requirements and install
+# Install system dependencies if needed (for example, git, build tools, etc.)
+# If not needed, you can omit the following lines
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy in your requirements
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the source files into /app
-COPY . /app/
+# Install Python dependencies
+WORKDIR /app
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
 
-# Set environment variables (can be overridden at runtime)
-ENV GOOGLE_APPLICATION_CREDENTIALS="/app/service_account.json"
-ENV DISCORD_WEBHOOK_URL=""
-ENV CALENDAR_SOURCES=""
-ENV EVENTS_FILE="/data/events.json"
+# Copy the rest of your code into the container
+COPY . /app
 
-# Ensure /data exists for volume mounting
-VOLUME ["/data"]
+# Optionally set environment variables for your bot and calendar
+# (or you can pass them in at runtime via `docker run -e ...`)
+# ENV DISCORD_BOT_TOKEN="YourDiscordBotToken"
+# ENV ANNOUNCEMENT_CHANNEL_ID="YourChannelID"
+# ENV OPENAI_API_KEY="YourOpenAIKey"
+# ENV GOOGLE_APPLICATION_CREDENTIALS="/app/service_account.json"
+# ENV CALENDAR_SOURCES="google:someone@example.com:T,ics:https://example.com/feed.ics:B"
 
-# Default command
-CMD ["python3", "-u", "bot.py"]
+# Expose no specific port since Discord bots typically don't listen on HTTP ports
+# EXPOSE 8080  # For example, only if you had a web server
+
+# Finally, set the default command to run your main script
+CMD ["python", "main.py"]
