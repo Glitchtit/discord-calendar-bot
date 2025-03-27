@@ -10,7 +10,7 @@ import requests
 openai.api_key = os.environ["OPENAI_API_KEY"]
 
 EMBEDDING_MODEL = "text-embedding-ada-002"
-EMBEDS_FILE = os.environ.get("EMBEDS_FILE", "/data/embeds.json")
+EMBEDS_FILE = "/data/embeds.json"
 
 
 def embed_text(text: str) -> list[float]:
