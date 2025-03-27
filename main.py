@@ -1,5 +1,3 @@
-# main.py
-
 import os
 import time
 import asyncio
@@ -9,7 +7,6 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-# -- Import from your local modules --
 from calendar_tasks import (
     get_all_calendar_events,
     detect_changes,
@@ -18,7 +15,6 @@ from calendar_tasks import (
     format_event,
     ALL_EVENTS_KEY
 )
-
 from ai import store, ask_ai_any_question, generate_greeting, generate_image_prompt, generate_image
 
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
@@ -30,68 +26,54 @@ bot = commands.Bot(command_prefix="!", intents=discord.Intents.default())
 async def on_ready():
     print(f"Bot connected as {bot.user} (ID: {bot.user.id})")
 
-    # Attempt slash command sync
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} slash commands.")
     except Exception as e:
         print(f"Error syncing slash commands: {e}")
 
-    # ------------------------------------------------
-    # CHANGE: Immediately do an update on startup
-    # so events.json + embeds.json are current.
-    # ------------------------------------------------
-    task_daily_update_and_check()
+    # Instead of calling task_daily_update_and_check() directly,
+    # run it in a background thread so the event loop isn’t blocked:
+    def run_initial_sync():
+        task_daily_update_and_check()
 
-    # Start the scheduled tasks thread (so daily checks still happen)
+    threading.Thread(target=run_initial_sync, daemon=True).start()
+
+    # Also start your scheduled tasks in another thread
     start_scheduling_thread()
 
 
 def run_schedule_loop():
-    """Runs in a separate thread to handle scheduled jobs."""
     while True:
         schedule.run_pending()
         time.sleep(30)
 
 
 def start_scheduling_thread():
-    """
-    You can define your daily or periodic tasks here. For example:
-      schedule.every().day.at("08:00").do(task_daily_update_and_check)
-    Then launch them in a separate thread.
-    """
-    # Example: do a full sync every day at 08:00
+    # example: update daily at 08:00
     schedule.every().day.at("08:00").do(task_daily_update_and_check)
-
     t = threading.Thread(target=run_schedule_loop, daemon=True)
     t.start()
 
 
 def task_daily_update_and_check():
     """
-    1) Fetch all events from calendar sources.
-    2) Detect changes vs. the old stored list.
-    3) Update the vector store for any new or changed events.
-    4) Optionally post changes and a catgirl greeting in a Discord channel.
+    1) Fetch all events.
+    2) Detect changes.
+    3) Update vector store.
+    4) Optionally announce changes in a channel.
     """
     channel = bot.get_channel(int(ANNOUNCEMENT_CHANNEL_ID)) if ANNOUNCEMENT_CHANNEL_ID else None
-    if not channel:
-        print("[WARN] Announcement channel not set or not accessible.")
 
-    # 1) Fetch new list of *all* events
     new_events = get_all_calendar_events()
-
-    # 2) Compare to old
     prev_data = load_previous_events()
     old_events = prev_data.get(ALL_EVENTS_KEY, [])
 
     changes = detect_changes(old_events, new_events)
     if changes:
         save_current_events_for_key(ALL_EVENTS_KEY, new_events)
-
         if channel:
             async def post_changes():
-                # chunk the messages to avoid length issues
                 chunk_size = 1800
                 current_block = []
                 current_len = 0
@@ -105,23 +87,22 @@ def task_daily_update_and_check():
                 if current_block:
                     await channel.send("**Calendar Changes Detected**\n" + "\n".join(current_block))
 
+            # Schedule on the main event loop
             asyncio.run_coroutine_threadsafe(post_changes(), bot.loop)
-
     else:
-        # If no changes but we have no record yet, store them anyway
+        # if no changes but empty store, save the new list
         if not old_events:
             save_current_events_for_key(ALL_EVENTS_KEY, new_events)
 
-    # 3) Update embeddings in the store
+    # embed new events
     update_store_embeddings(old_events, new_events)
 
-    # 4) (Optional) Post daily catgirl greeting
+    # optional daily greeting
     if channel:
         async def post_daily_greeting():
             event_titles = [evt.get("summary", "mysterious event") for evt in new_events]
             greeting_text = generate_greeting(event_titles)
             await channel.send(greeting_text)
-
             try:
                 prompt = generate_image_prompt(event_titles)
                 img_path = generate_image(prompt)
@@ -133,18 +114,14 @@ def task_daily_update_and_check():
 
 
 def update_store_embeddings(old_events, new_events):
-    """
-    Removes any events no longer in the new list, then adds/updates
-    embeddings for all new or changed events.
-    """
     old_ids = {e["id"] for e in old_events}
     new_ids = {e["id"] for e in new_events}
 
-    # Remove any events that disappeared
+    # remove vanished events
     for removed_id in (old_ids - new_ids):
         store.remove_event(removed_id)
 
-    # Add/update all current events
+    # add/update
     for evt in new_events:
         eid = evt["id"]
         summary = evt.get("summary", "")
@@ -159,7 +136,8 @@ def update_store_embeddings(old_events, new_events):
             f"Location: {loc}\n"
             f"Desc: {desc}"
         )
-
+        # This does a blocking openai.Embedding.create() call
+        # but now in a background thread (not on the main event loop):
         store.add_or_update_event(eid, text_repr)
 
 
