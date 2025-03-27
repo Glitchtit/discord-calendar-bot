@@ -176,7 +176,7 @@ async def uwu_command(interaction: discord.Interaction):
     await interaction.followup.send(f"**UwU Greeting**\n{greeting_text}")
     prompt = generate_image_prompt(event_titles)
     try:
-        img_path = generate_image(prompt)
+        img_path = await asyncio.to_thread(generate_image, prompt)
         await interaction.followup.send(file=discord.File(img_path))
     except Exception as e:
         await interaction.followup.send(f"[Error generating image] {e}")
