@@ -163,31 +163,21 @@ async def ask_command(interaction: discord.Interaction, query: str):
                 dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")).astimezone(tz.tzlocal())
                 day = dt.strftime("%A, %B %d")
                 title = e.get("summary", "(No Title)")
-                events_by_day[day].append(f"• {title}")
+                events_by_day[day].append(f"- {title}")
 
             sorted_days = sorted(events_by_day)
-            chunks = [sorted_days[i:i+25] for i in range(0, len(sorted_days), 25)]
-            embeds = []
-            for i, chunk in enumerate(chunks):
-                embed = discord.Embed(title=f"📅 Event Schedule (Part {i+1})", color=0x7289da)
-                for day in chunk:
-                    day_events = events_by_day[day]
-                    joined = ""
-                    for line in day_events:
-                        if len(joined) + len(line) + 1 > 1024:
-                            embed.add_field(name=day, value=joined, inline=False)
-                            day = day + " (cont.)"  # Add suffix to avoid duplicate field names
-                            joined = line + "\n"
-                        else:
-                            joined += line + "\n"
-                    if joined:
-                        embed.add_field(name=day, value=joined.strip(), inline=False)
+            lines = ["**📅 Upcoming Schedule**"]
+            for day in sorted_days:
+                lines.append(f"\n__{day}__")
+                lines.extend(events_by_day[day])
 
-                embeds.append(embed)
+            output = "\n".join(lines)
+            if len(output) > 1900:
+                output = output[:1900] + "\n... (truncated)"
 
             await message.delete()
-            for i in range(0, len(embeds), 10):
-                await interaction.followup.send(embeds=embeds[i:i+10])
+            await interaction.followup.send(output)
+
 
             return
 

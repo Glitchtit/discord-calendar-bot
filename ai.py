@@ -23,7 +23,7 @@ def ask_ai_any_question(user_query: str, top_k: int = 5) -> str:
 
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_query},
@@ -47,7 +47,7 @@ def generate_greeting(event_titles: list[str]) -> str:
     )
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[
                 {
                     "role": "system",
@@ -59,7 +59,7 @@ def generate_greeting(event_titles: list[str]) -> str:
                 },
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=200,
+            max_tokens=900,
             temperature=1.0,
         )
         return response.choices[0].message.content.strip()
@@ -98,7 +98,7 @@ def generate_image(prompt: str, max_retries: int = 3) -> str:
                 model="dall-e-3",
                 prompt=prompt,
                 n=1,
-                size="512x512",
+                size="1024x1024",
                 quality="hd",
                 response_format="url"
             )
