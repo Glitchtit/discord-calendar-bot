@@ -134,11 +134,13 @@ async def ask_command(interaction: discord.Interaction, query: str):
         all_events = load_previous_events().get(ALL_EVENTS_KEY, [])
         date_range = extract_date_range_from_query(query)
 
+        # Fallback to next 7 days for general calendar queries
         if not date_range and is_calendar_prompt(query):
             start_dt = datetime.now(tz=tz.tzlocal())
             end_dt = start_dt + timedelta(days=7)
+            date_range = (start_dt, end_dt)
 
-
+        # Filter events by date range
         if date_range:
             start_dt, end_dt = date_range
             log.debug(f"[Query] Filtering events from {start_dt} to {end_dt}")
@@ -156,12 +158,14 @@ async def ask_command(interaction: discord.Interaction, query: str):
         else:
             filtered_events = all_events
 
+        # Optional tag filtering
         query_lower = query.lower()
         if "thomas" in query_lower:
             filtered_events = [e for e in filtered_events if e.get("tag", "").upper() in {"T", "B"}]
         elif "anniina" in query_lower:
             filtered_events = [e for e in filtered_events if e.get("tag", "").upper() in {"A", "B"}]
 
+        # ✅ OPTION A: Show structured markdown if it's a calendar-style prompt
         if is_calendar_prompt(query):
             events_by_day = defaultdict(list)
             for e in filtered_events:
@@ -183,36 +187,32 @@ async def ask_command(interaction: discord.Interaction, query: str):
 
             await message.delete()
             await interaction.followup.send(output)
-
-
             return
 
-        temp_store = EventEmbeddingStore()
+        # ✅ OPTION B: Send full list of relevant events to GPT for summarization
+        full_event_texts = []
         for e in filtered_events:
-            eid = e["id"]
             summary = e.get("summary", "")
             start = e["start"].get("dateTime") or e["start"].get("date", "")
             end = e["end"].get("dateTime") or e["end"].get("date", "")
             loc = e.get("location", "")
             desc = e.get("description", "")
             text_repr = f"Title: {summary}\nStart: {start}\nEnd: {end}\nLocation: {loc}\nDesc: {desc}"
-            await asyncio.to_thread(temp_store.add_or_update_event, eid, text_repr)
+            full_event_texts.append(text_repr)
 
-        top_events = temp_store.query(query, top_k=5)
+        if not full_event_texts:
+            await message.edit(content="🤷 No relevant events found.")
+            return
 
-        if not top_events:
-            system_msg = "You are a helpful assistant. You have no calendar context available yet."
-        else:
-            relevant_text = "\n\n".join(top_events)
-            system_msg = (
-                "You are a helpful scheduling assistant with knowledge of the following relevant events:\n\n"
-                f"{relevant_text}\n\n"
-                "Use them to answer the user's query accurately. "
-                "If the query does not relate to these events, answer to the best of your ability."
-            )
+        system_msg = (
+            "You are a helpful scheduling assistant with knowledge of the following relevant events:\n\n"
+            + "\n\n".join(full_event_texts) +
+            "\n\nUse them to answer the user's query accurately. "
+            "If the query does not relate to these events, answer to the best of your ability."
+        )
 
         response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": query},
@@ -244,6 +244,7 @@ async def ask_command(interaction: discord.Interaction, query: str):
     except Exception as e:
         log.exception("[ASK Command] Error while generating response")
         await message.edit(content=f"[Error streaming response] {e}")
+
 
 @bot.tree.command(name="uwu", description="Generate a cringe catgirl greeting for today's events.")
 async def uwu_command(interaction: discord.Interaction):
