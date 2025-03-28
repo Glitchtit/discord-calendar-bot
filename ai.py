@@ -95,7 +95,7 @@ def generate_image(prompt: str, max_retries: int = 3) -> str:
     for attempt in range(max_retries):
         try:
             response = openai.Image.create(
-                model="dall-e-3",
+                model="dall-e-2",
                 prompt=prompt,
                 n=1,
                 size="1024x1024",
