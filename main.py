@@ -131,104 +131,49 @@ async def ask_command(interaction: discord.Interaction, query: str):
     message = await interaction.followup.send("🔮 Summoning an answer...")
 
     try:
+        from dateutil import tz
+
+        # Load all events and keep those within the next 30 days
         all_events = load_previous_events().get(ALL_EVENTS_KEY, [])
-        date_range = extract_date_range_from_query(query)
+        now = datetime.now(tz=tz.tzlocal())
+        future_cutoff = now + timedelta(days=30)
 
-        if not date_range and is_calendar_prompt(query):
-            start_dt = datetime.now(tz=tz.tzlocal())
-            end_dt = start_dt + timedelta(days=7)
-            date_range = (start_dt, end_dt)
+        def is_upcoming(event):
+            start_str = event["start"].get("dateTime") or event["start"].get("date")
+            dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+            dt_local = dt.astimezone(tz.tzlocal())
+            return now <= dt_local <= future_cutoff
 
-        if date_range:
-            start_dt, end_dt = date_range
-            log.debug(f"[Query] Filtering events from {start_dt} to {end_dt}")
+        relevant_events = [e for e in all_events if is_upcoming(e)]
 
-            def is_within_range(event):
-                start_str = event["start"].get("dateTime") or event["start"].get("date")
-                if "T" in start_str:
-                    dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-                else:
-                    dt = datetime.fromisoformat(start_str).replace(hour=0, minute=0, second=0, tzinfo=tz.tzlocal())
-                dt_local = dt.astimezone(tz.tzlocal())
-                return start_dt <= dt_local <= end_dt
-
-            filtered_events = list(filter(is_within_range, all_events))
-        else:
-            filtered_events = all_events
-
+        # Optionally filter by tag in query
         query_lower = query.lower()
         if "thomas" in query_lower:
-            filtered_events = [e for e in filtered_events if e.get("tag", "").upper() in {"T", "B"}]
+            relevant_events = [e for e in relevant_events if e.get("tag", "").upper() in {"T", "B"}]
         elif "anniina" in query_lower:
-            filtered_events = [e for e in filtered_events if e.get("tag", "").upper() in {"A", "B"}]
+            relevant_events = [e for e in relevant_events if e.get("tag", "").upper() in {"A", "B"}]
 
-        # ✅ Structured markdown calendar view with sorting by person and event time
-        if is_calendar_prompt(query):
-            events_by_day = defaultdict(lambda: defaultdict(list))
-            date_keys = {}
-
-            for e in filtered_events:
-                start_str = e["start"].get("dateTime") or e["start"].get("date")
-                dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")).astimezone(tz.tzlocal())
-                day_label = dt.strftime("%A, %B %d, %Y")
-                tag = e.get("tag", "").upper()
-                title = e.get("summary", "(No Title)")
-                time_str = dt.strftime("%H:%M") if "T" in start_str else ""
-
-                if tag == "T":
-                    person = "Thomas"
-                elif tag == "A":
-                    person = "Anniina"
-                elif tag == "B":
-                    person = "Both"
-                else:
-                    person = "Other"
-
-                # Store events as tuples (time, event) for sorting
-                events_by_day[day_label][person].append((dt, f"- {time_str} {title}".strip()))
-                date_keys[day_label] = dt
-
-            # Sort days chronologically
-            sorted_days = sorted(date_keys.items(), key=lambda x: x[1])
-            lines = ["**📅 Upcoming Schedule**"]
-
-            # Generate the markdown output
-            for day_label, _ in sorted_days:
-                lines.append(f"\n__{day_label}__")
-                for person in sorted(events_by_day[day_label].keys()):
-                    lines.append(f"**{person}**")
-                    # Sort events by time within each person group
-                    sorted_events = sorted(events_by_day[day_label][person], key=lambda x: x[0])
-                    lines.extend([event for _, event in sorted_events])
-
-            output = "\n".join(lines)
-            if len(output) > 1900:
-                output = output[:1900] + "\n... (truncated)"
-
-            await message.delete()
-            await interaction.followup.send(output)
-            return
-
-        # ✅ AI answer with full event context
-        full_event_texts = []
-        for e in filtered_events:
-            summary = e.get("summary", "")
+        # Format events as blocks of text
+        event_blocks = []
+        for e in relevant_events:
+            title = e.get("summary", "")
             start = e["start"].get("dateTime") or e["start"].get("date", "")
             end = e["end"].get("dateTime") or e["end"].get("date", "")
             loc = e.get("location", "")
             desc = e.get("description", "")
-            text_repr = f"Title: {summary}\nStart: {start}\nEnd: {end}\nLocation: {loc}\nDesc: {desc}"
-            full_event_texts.append(text_repr)
+            block = f"Title: {title}\nStart: {start}\nEnd: {end}\nLocation: {loc}\nDesc: {desc}"
+            event_blocks.append(block)
 
-        if not full_event_texts:
-            await message.edit(content="🤷 No relevant events found.")
+        if not event_blocks:
+            await message.edit(content="🤷 No upcoming events found.")
             return
 
+        # Construct prompt for GPT
         system_msg = (
-            "You are a helpful scheduling assistant with knowledge of the following relevant events:\n\n"
-            + "\n\n".join(full_event_texts) +
-            "\n\nUse them to answer the user's query accurately. "
-            "If the query does not relate to these events, answer to the best of your ability."
+            "You are a helpful scheduling assistant. Below is a list of upcoming events:\n\n"
+            + "\n\n".join(event_blocks) +
+            "\n\nBased on the user's question, list or describe the relevant events. "
+            "If the question includes a time range like 'next week' or 'this Friday', figure out which events apply and explain them clearly."
         )
 
         response = openai.ChatCompletion.create(
@@ -264,6 +209,7 @@ async def ask_command(interaction: discord.Interaction, query: str):
     except Exception as e:
         log.exception("[ASK Command] Error while generating response")
         await message.edit(content=f"[Error streaming response] {e}")
+
 
 
 @bot.tree.command(name="uwu", description="Generate a cringe catgirl greeting for today's events.")
