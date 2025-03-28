@@ -4,18 +4,31 @@ import time
 import requests
 import openai
 from datetime import datetime
+from dateutil import tz
 from embeddings import embed_text, cosine_similarity, EventEmbeddingStore
 
 store = EventEmbeddingStore()
 
 def ask_ai_any_question(user_query: str, top_k: int = 5) -> str:
+    now = datetime.now(tz=tz.tzlocal()).strftime("%A, %B %d, %Y")
+    q = user_query.lower().strip()
+
+    # Direct shortcut for "what day is today?" style queries
+    if q in {"what is today", "what's today", "what day is today", "what's the date", "today's date"}:
+        return f"Today is {now}!"
+
     top_events = store.query(user_query, top_k=top_k)
+
     if not top_events:
-        system_msg = "You are a helpful assistant. You have no calendar context available yet."
+        system_msg = (
+            f"You are a helpful assistant. Today is {now}. "
+            "You have no calendar context available yet."
+        )
     else:
         relevant_text = "\n\n".join(top_events)
         system_msg = (
-            "You are a helpful scheduling assistant with knowledge of the following relevant events:\n\n"
+            f"You are a helpful scheduling assistant. Today is {now}.\n\n"
+            "You have knowledge of the following relevant events:\n\n"
             f"{relevant_text}\n\n"
             "Use them to answer the user's query accurately. "
             "If the query does not relate to these events, answer to the best of your ability."
@@ -36,7 +49,7 @@ def ask_ai_any_question(user_query: str, top_k: int = 5) -> str:
         return f"[ERROR calling OpenAI] {e}"
 
 def generate_greeting(event_titles: list[str]) -> str:
-    today = datetime.now().strftime("%A, %B %d")
+    today = datetime.now(tz=tz.tzlocal()).strftime("%A, %B %d")
     event_summary = ", ".join(event_titles) if event_titles else "no special events"
     prompt = (
         f"H-hewwo~! It's {today}, and we've got some *extra thicc* scheduluwus coming up: {event_summary}~ (⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)💦 "
@@ -67,7 +80,7 @@ def generate_greeting(event_titles: list[str]) -> str:
         return f"[Error generating greeting] {e}"
 
 def generate_image_prompt(event_titles: list[str]) -> str:
-    today = datetime.now().strftime("%A")
+    today = datetime.now(tz=tz.tzlocal()).strftime("%A")
     short_titles = []
     total_len = 0
     for title in event_titles:
