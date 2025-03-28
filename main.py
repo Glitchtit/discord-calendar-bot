@@ -175,7 +175,9 @@ async def ask_command(interaction: discord.Interaction, query: str):
                 embeds.append(embed)
 
             await message.delete()
-            await interaction.followup.send(embeds=embeds)
+            for i in range(0, len(embeds), 10):
+                await interaction.followup.send(embeds=embeds[i:i+10])
+
             return
 
         temp_store = EventEmbeddingStore()
