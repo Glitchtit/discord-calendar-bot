@@ -171,7 +171,18 @@ async def ask_command(interaction: discord.Interaction, query: str):
             for i, chunk in enumerate(chunks):
                 embed = discord.Embed(title=f"📅 Event Schedule (Part {i+1})", color=0x7289da)
                 for day in chunk:
-                    embed.add_field(name=day, value="\n".join(events_by_day[day]), inline=False)
+                    day_events = events_by_day[day]
+                    joined = ""
+                    for line in day_events:
+                        if len(joined) + len(line) + 1 > 1024:
+                            embed.add_field(name=day, value=joined, inline=False)
+                            day = day + " (cont.)"  # Add suffix to avoid duplicate field names
+                            joined = line + "\n"
+                        else:
+                            joined += line + "\n"
+                    if joined:
+                        embed.add_field(name=day, value=joined.strip(), inline=False)
+
                 embeds.append(embed)
 
             await message.delete()
