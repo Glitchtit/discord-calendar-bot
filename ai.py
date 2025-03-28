@@ -98,7 +98,7 @@ def generate_image(prompt: str, max_retries: int = 3) -> str:
                 model="dall-e-3",
                 prompt=prompt,
                 n=1,
-                size="1024x1024",
+                size="480x480",
                 quality="hd",
                 response_format="url"
             )
