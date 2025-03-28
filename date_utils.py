@@ -21,7 +21,7 @@ def extract_date_range_from_query(query: str) -> tuple[datetime, datetime] | Non
         return None
 
     now = datetime.now().astimezone()
-    future_dates = [dt for _, dt in parsed if dt > now]
+    future_dates = [dt for _, dt in parsed if dt >= now.replace(hour=0, minute=0, second=0, microsecond=0)]
     if not future_dates:
         return None
 
