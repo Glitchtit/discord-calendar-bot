@@ -10,24 +10,51 @@ from embeddings import embed_text, cosine_similarity, EventEmbeddingStore
 store = EventEmbeddingStore()
 
 def ask_ai_any_question(user_query: str, top_k: int = 5) -> str:
-    now = datetime.now(tz=tz.tzlocal()).strftime("%A, %B %d, %Y")
+    now_dt = datetime.now(tz=tz.tzlocal())
+    now_str = now_dt.strftime("%A, %B %d, %Y")
     q = user_query.lower().strip()
 
-    # Direct shortcut for "what day is today?" style queries
-    if q in {"what is today", "what's today", "what day is today", "what's the date", "today's date"}:
-        return f"Today is {now}!"
+    # 1️⃣ Literal day-of-date fallback
+    if q in {
+        "what is today", "what's today", "what day is today",
+        "what's the date", "today's date", "what day is it", "what date is it"
+    }:
+        return f"Today is {now_str}!"
 
+    # 2️⃣ Natural-language date range handling (e.g., "tomorrow", "next week")
+    date_range = extract_date_range_from_query(user_query)
+    if date_range:
+        start, end = date_range
+        all_events = load_previous_events().get(ALL_EVENTS_KEY, [])
+        matched = []
+        for e in all_events:
+            start_str = e["start"].get("dateTime", e["start"].get("date"))
+            try:
+                dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")).astimezone(tz=tz.tzlocal())
+                if start <= dt <= end:
+                    matched.append(f"- {e.get('summary')} ({dt.strftime('%A, %B %d %H:%M')})")
+            except Exception:
+                continue
+
+        if matched:
+            return (
+                f"📅 Events from {start.strftime('%A %B %d')} to {end.strftime('%A %B %d')}:\n\n"
+                + "\n".join(matched)
+            )
+        else:
+            return f"📭 No events found between {start.strftime('%A %B %d')} and {end.strftime('%A %B %d')}."
+
+    # 3️⃣ Semantic fallback
     top_events = store.query(user_query, top_k=top_k)
-
     if not top_events:
         system_msg = (
-            f"You are a helpful assistant. Today is {now}. "
+            f"You are a helpful assistant. Today is {now_str}. "
             "You have no calendar context available yet."
         )
     else:
         relevant_text = "\n\n".join(top_events)
         system_msg = (
-            f"You are a helpful scheduling assistant. Today is {now}.\n\n"
+            f"You are a helpful scheduling assistant. Today is {now_str}.\n\n"
             "You have knowledge of the following relevant events:\n\n"
             f"{relevant_text}\n\n"
             "Use them to answer the user's query accurately. "
@@ -35,6 +62,7 @@ def ask_ai_any_question(user_query: str, top_k: int = 5) -> str:
         )
 
     try:
+        import openai
         response = openai.ChatCompletion.create(
             model="gpt-4o",
             messages=[
