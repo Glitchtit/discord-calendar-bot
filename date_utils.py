@@ -4,13 +4,19 @@ import dateparser.search
 
 
 def extract_date_range_from_query(query: str) -> tuple[datetime, datetime] | None:
+    now = datetime.now().astimezone()
     parsed = dateparser.search.search_dates(
         query,
         settings={
             "PREFER_DATES_FROM": "future",
-            "RETURN_AS_TIMEZONE_AWARE": True
+            "RETURN_AS_TIMEZONE_AWARE": True,
+            "RELATIVE_BASE": now
         }
     )
+
+    if parsed:
+    print(f"[Parsed Dates] {parsed}")
+
     if not parsed:
         return None
 
