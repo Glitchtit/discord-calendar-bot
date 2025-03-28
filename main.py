@@ -7,10 +7,9 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
+from collections import defaultdict
 from dateutil import tz
 from dateutil.relativedelta import relativedelta, SU
-import logging
-import colorlog
 import openai
 from calendar_tasks import (
     get_all_calendar_events,
@@ -24,7 +23,6 @@ from calendar_tasks import (
 from ai import store, generate_greeting, generate_image_prompt, generate_image
 from date_utils import extract_date_range_from_query, is_calendar_prompt
 from embeddings import EventEmbeddingStore
-from collections import defaultdict
 from log import log
 
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
@@ -167,11 +165,17 @@ async def ask_command(interaction: discord.Interaction, query: str):
                 title = e.get("summary", "(No Title)")
                 events_by_day[day].append(f"• {title}")
 
-            embed = discord.Embed(title="📅 Event Schedule", color=0x7289da)
-            for day in sorted(events_by_day):
-                embed.add_field(name=day, value="\n".join(events_by_day[day]), inline=False)
+            sorted_days = sorted(events_by_day)
+            chunks = [sorted_days[i:i+25] for i in range(0, len(sorted_days), 25)]
+            embeds = []
+            for i, chunk in enumerate(chunks):
+                embed = discord.Embed(title=f"📅 Event Schedule (Part {i+1})", color=0x7289da)
+                for day in chunk:
+                    embed.add_field(name=day, value="\n".join(events_by_day[day]), inline=False)
+                embeds.append(embed)
 
-            await message.edit(content=None, embed=embed)
+            await message.delete()
+            await interaction.followup.send(embeds=embeds)
             return
 
         temp_store = EventEmbeddingStore()
@@ -184,7 +188,6 @@ async def ask_command(interaction: discord.Interaction, query: str):
             desc = e.get("description", "")
             text_repr = f"Title: {summary}\nStart: {start}\nEnd: {end}\nLocation: {loc}\nDesc: {desc}"
             await asyncio.to_thread(temp_store.add_or_update_event, eid, text_repr)
-
 
         top_events = temp_store.query(query, top_k=5)
 
