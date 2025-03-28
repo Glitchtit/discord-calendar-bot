@@ -126,7 +126,7 @@ async def update_store_embeddings(old_events, new_events):
 
 @bot.tree.command(name="what", description="Ask the AI anything about your calendar or otherwise.")
 @app_commands.describe(query="Your question or query.")
-async def ask_command(interaction: discord.Interaction, query: str):
+async def what_command(interaction: discord.Interaction, query: str):
     await interaction.response.defer()
     message = await interaction.followup.send("🔮 Summoning an answer...")
 
