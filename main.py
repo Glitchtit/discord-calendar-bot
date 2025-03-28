@@ -174,6 +174,7 @@ async def ask_command(interaction: discord.Interaction, query: str):
             + "\n\n".join(event_blocks) +
             "\n\nBased on the user's question, list or describe the relevant events. "
             "If the question includes a time range like 'next week' or 'this Friday', figure out which events apply and explain them clearly."
+            "If nothing else is specified, categorize the events per day of the week"
         )
 
         response = openai.ChatCompletion.create(
