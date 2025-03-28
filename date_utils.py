@@ -15,7 +15,7 @@ def extract_date_range_from_query(query: str) -> tuple[datetime, datetime] | Non
     )
 
     if parsed:
-    print(f"[Parsed Dates] {parsed}")
+        print(f"[Parsed Dates] {parsed}")
 
     if not parsed:
         return None
