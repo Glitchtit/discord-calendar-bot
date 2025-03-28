@@ -34,7 +34,15 @@ def extract_date_range_from_query(query: str) -> tuple[datetime, datetime] | Non
             end_of_month = start_of_month.replace(month=start_of_month.month + 1, day=1) - timedelta(seconds=1)
         return (start_of_month, end_of_month)
 
+    if "next week" in query.lower():
+        # Start = next Monday
+        next_monday = (now + timedelta(days=(7 - now.weekday()))).replace(hour=0, minute=0)
+        next_sunday = next_monday + timedelta(days=6, hours=23, minutes=59)
+        return (next_monday, next_sunday)
+
+    # fallback
     return (first - timedelta(hours=12), first + timedelta(hours=12))
+
 
 
 def is_calendar_prompt(query: str) -> bool:

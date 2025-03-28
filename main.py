@@ -9,6 +9,7 @@ from discord import app_commands
 from datetime import datetime
 from collections import defaultdict
 from dateutil import tz
+from datetime import timedelta
 from dateutil.relativedelta import relativedelta, SU
 import openai
 from calendar_tasks import (
@@ -100,12 +101,12 @@ async def task_daily_update_and_check():
             event_titles = get_today_event_titles(new_events)
             greeting_text = generate_greeting(event_titles)
             await channel.send(greeting_text)
-            prompt = generate_image_prompt(event_titles)
-            try:
-                img_path = await asyncio.to_thread(generate_image, prompt)
-                await channel.send(file=discord.File(img_path))
-            except Exception as e:
-                await channel.send(f"[Error generating image] {e}")
+           # prompt = generate_image_prompt(event_titles)
+            #try:
+             #   img_path = await asyncio.to_thread(generate_image, prompt)
+              #  await channel.send(file=discord.File(img_path))
+            #except Exception as e:
+             #   await channel.send(f"[Error generating image] {e}")
         asyncio.create_task(post_daily_greeting())
 
 async def update_store_embeddings(old_events, new_events):
@@ -132,6 +133,11 @@ async def ask_command(interaction: discord.Interaction, query: str):
     try:
         all_events = load_previous_events().get(ALL_EVENTS_KEY, [])
         date_range = extract_date_range_from_query(query)
+
+        if not date_range and is_calendar_prompt(query):
+            start_dt = datetime.now(tz=tz.tzlocal())
+            end_dt = start_dt + timedelta(days=7)
+
 
         if date_range:
             start_dt, end_dt = date_range
