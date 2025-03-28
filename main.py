@@ -124,7 +124,7 @@ async def update_store_embeddings(old_events, new_events):
         text_repr = f"Title: {summary}\nStart: {start}\nEnd: {end}\nLocation: {loc}\nDesc: {desc}"
         await asyncio.to_thread(store.add_or_update_event, eid, text_repr)
 
-@bot.tree.command(name="ask", description="Ask the AI anything about your calendar or otherwise.")
+@bot.tree.command(name="what", description="Ask the AI anything about your calendar or otherwise.")
 @app_commands.describe(query="Your question or query.")
 async def ask_command(interaction: discord.Interaction, query: str):
     await interaction.response.defer()
