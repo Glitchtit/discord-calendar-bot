@@ -7,6 +7,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
+from collections import defaultdict
 from dateutil import tz
 from dateutil.relativedelta import relativedelta, SU
 import openai
@@ -20,7 +21,7 @@ from calendar_tasks import (
     ALL_EVENTS_KEY
 )
 from ai import store, generate_greeting, generate_image_prompt, generate_image
-from date_utils import extract_date_range_from_query
+from date_utils import extract_date_range_from_query, is_calendar_prompt
 from embeddings import EventEmbeddingStore
 from log import log
 
@@ -149,12 +150,27 @@ async def ask_command(interaction: discord.Interaction, query: str):
         else:
             filtered_events = all_events
 
-        # Optional: tag-based filtering (e.g. "Thomas's events")
         query_lower = query.lower()
         if "thomas" in query_lower:
             filtered_events = [e for e in filtered_events if e.get("tag", "").upper() in {"T", "B"}]
         elif "anniina" in query_lower:
             filtered_events = [e for e in filtered_events if e.get("tag", "").upper() in {"A", "B"}]
+
+        if is_calendar_prompt(query):
+            events_by_day = defaultdict(list)
+            for e in filtered_events:
+                start_str = e["start"].get("dateTime") or e["start"].get("date")
+                dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")).astimezone(tz.tzlocal())
+                day = dt.strftime("%A, %B %d")
+                title = e.get("summary", "(No Title)")
+                events_by_day[day].append(f"• {title}")
+
+            embed = discord.Embed(title="📅 Event Schedule", color=0x7289da)
+            for day in sorted(events_by_day):
+                embed.add_field(name=day, value="\n".join(events_by_day[day]), inline=False)
+
+            await message.edit(content=None, embed=embed)
+            return
 
         temp_store = EventEmbeddingStore()
         for e in filtered_events:
