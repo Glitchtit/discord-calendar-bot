@@ -134,13 +134,11 @@ async def ask_command(interaction: discord.Interaction, query: str):
         all_events = load_previous_events().get(ALL_EVENTS_KEY, [])
         date_range = extract_date_range_from_query(query)
 
-        # Fallback to next 7 days for general calendar queries
         if not date_range and is_calendar_prompt(query):
             start_dt = datetime.now(tz=tz.tzlocal())
             end_dt = start_dt + timedelta(days=7)
             date_range = (start_dt, end_dt)
 
-        # Filter events by date range
         if date_range:
             start_dt, end_dt = date_range
             log.debug(f"[Query] Filtering events from {start_dt} to {end_dt}")
@@ -158,28 +156,50 @@ async def ask_command(interaction: discord.Interaction, query: str):
         else:
             filtered_events = all_events
 
-        # Optional tag filtering
         query_lower = query.lower()
         if "thomas" in query_lower:
             filtered_events = [e for e in filtered_events if e.get("tag", "").upper() in {"T", "B"}]
         elif "anniina" in query_lower:
             filtered_events = [e for e in filtered_events if e.get("tag", "").upper() in {"A", "B"}]
 
-        # ✅ OPTION A: Show structured markdown if it's a calendar-style prompt
+        # ✅ Structured markdown calendar view with sorting by person and event time
         if is_calendar_prompt(query):
-            events_by_day = defaultdict(list)
+            events_by_day = defaultdict(lambda: defaultdict(list))
+            date_keys = {}
+
             for e in filtered_events:
                 start_str = e["start"].get("dateTime") or e["start"].get("date")
                 dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")).astimezone(tz.tzlocal())
-                day = dt.strftime("%A, %B %d")
+                day_label = dt.strftime("%A, %B %d, %Y")
+                tag = e.get("tag", "").upper()
                 title = e.get("summary", "(No Title)")
-                events_by_day[day].append(f"- {title}")
+                time_str = dt.strftime("%H:%M") if "T" in start_str else ""
 
-            sorted_days = sorted(events_by_day)
+                if tag == "T":
+                    person = "Thomas"
+                elif tag == "A":
+                    person = "Anniina"
+                elif tag == "B":
+                    person = "Both"
+                else:
+                    person = "Other"
+
+                # Store events as tuples (time, event) for sorting
+                events_by_day[day_label][person].append((dt, f"- {time_str} {title}".strip()))
+                date_keys[day_label] = dt
+
+            # Sort days chronologically
+            sorted_days = sorted(date_keys.items(), key=lambda x: x[1])
             lines = ["**📅 Upcoming Schedule**"]
-            for day in sorted_days:
-                lines.append(f"\n__{day}__")
-                lines.extend(events_by_day[day])
+
+            # Generate the markdown output
+            for day_label, _ in sorted_days:
+                lines.append(f"\n__{day_label}__")
+                for person in sorted(events_by_day[day_label].keys()):
+                    lines.append(f"**{person}**")
+                    # Sort events by time within each person group
+                    sorted_events = sorted(events_by_day[day_label][person], key=lambda x: x[0])
+                    lines.extend([event for _, event in sorted_events])
 
             output = "\n".join(lines)
             if len(output) > 1900:
@@ -189,7 +209,7 @@ async def ask_command(interaction: discord.Interaction, query: str):
             await interaction.followup.send(output)
             return
 
-        # ✅ OPTION B: Send full list of relevant events to GPT for summarization
+        # ✅ AI answer with full event context
         full_event_texts = []
         for e in filtered_events:
             summary = e.get("summary", "")
