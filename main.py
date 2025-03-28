@@ -7,9 +7,10 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
-from collections import defaultdict
 from dateutil import tz
 from dateutil.relativedelta import relativedelta, SU
+import logging
+import colorlog
 import openai
 from calendar_tasks import (
     get_all_calendar_events,
@@ -23,6 +24,7 @@ from calendar_tasks import (
 from ai import store, generate_greeting, generate_image_prompt, generate_image
 from date_utils import extract_date_range_from_query, is_calendar_prompt
 from embeddings import EventEmbeddingStore
+from collections import defaultdict
 from log import log
 
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
@@ -39,12 +41,12 @@ async def on_ready():
     except Exception as e:
         log.warning(f"Error syncing slash commands: {e}")
 
-    def run_initial_sync():
-        log.info("[Startup] Performing initial calendar sync and embedding...")
-        task_daily_update_and_check()
-
-    threading.Thread(target=run_initial_sync, daemon=True).start()
+    asyncio.create_task(run_initial_sync())
     start_scheduling_thread()
+
+async def run_initial_sync():
+    log.info("[Startup] Performing initial calendar sync and embedding...")
+    await task_daily_update_and_check()
 
 def run_schedule_loop():
     while True:
@@ -52,11 +54,11 @@ def run_schedule_loop():
         time.sleep(30)
 
 def start_scheduling_thread():
-    schedule.every().day.at("08:00").do(task_daily_update_and_check)
+    schedule.every().day.at("08:00").do(lambda: asyncio.run(task_daily_update_and_check()))
     t = threading.Thread(target=run_schedule_loop, daemon=True)
     t.start()
 
-def task_daily_update_and_check():
+async def task_daily_update_and_check():
     log.info("[Sync] Starting daily update...")
     channel = bot.get_channel(int(ANNOUNCEMENT_CHANNEL_ID)) if ANNOUNCEMENT_CHANNEL_ID else None
     new_events = get_all_calendar_events()
@@ -83,7 +85,7 @@ def task_daily_update_and_check():
                     current_len += len(c) + 1
                 if current_block:
                     await channel.send("**Calendar Changes Detected**\n" + "\n".join(current_block))
-            asyncio.run_coroutine_threadsafe(post_changes(), bot.loop)
+            asyncio.create_task(post_changes())
     else:
         log.info("[Sync] No calendar changes found.")
         if not old_events:
@@ -91,7 +93,7 @@ def task_daily_update_and_check():
             save_current_events_for_key(ALL_EVENTS_KEY, new_events)
 
     before_count = len(store.get_all_event_ids())
-    update_store_embeddings(old_events, new_events)
+    await update_store_embeddings(old_events, new_events)
     after_count = len(store.get_all_event_ids())
     log.info(f"[Sync] Embedding store now contains {after_count} events (was {before_count}, net change: {after_count - before_count}).")
 
@@ -106,9 +108,9 @@ def task_daily_update_and_check():
                 await channel.send(file=discord.File(img_path))
             except Exception as e:
                 await channel.send(f"[Error generating image] {e}")
-        asyncio.run_coroutine_threadsafe(post_daily_greeting(), bot.loop)
+        asyncio.create_task(post_daily_greeting())
 
-def update_store_embeddings(old_events, new_events):
+async def update_store_embeddings(old_events, new_events):
     old_ids = {e["id"] for e in old_events}
     new_ids = {e["id"] for e in new_events}
     for removed_id in (old_ids - new_ids):
@@ -121,7 +123,7 @@ def update_store_embeddings(old_events, new_events):
         loc = evt.get("location", "")
         desc = evt.get("description", "")
         text_repr = f"Title: {summary}\nStart: {start}\nEnd: {end}\nLocation: {loc}\nDesc: {desc}"
-        store.add_or_update_event(eid, text_repr)
+        await asyncio.to_thread(store.add_or_update_event, eid, text_repr)
 
 @bot.tree.command(name="ask", description="Ask the AI anything about your calendar or otherwise.")
 @app_commands.describe(query="Your question or query.")
@@ -181,7 +183,8 @@ async def ask_command(interaction: discord.Interaction, query: str):
             loc = e.get("location", "")
             desc = e.get("description", "")
             text_repr = f"Title: {summary}\nStart: {start}\nEnd: {end}\nLocation: {loc}\nDesc: {desc}"
-            temp_store.add_or_update_event(eid, text_repr)
+            await asyncio.to_thread(temp_store.add_or_update_event, eid, text_repr)
+
 
         top_events = temp_store.query(query, top_k=5)
 
