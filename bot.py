@@ -1,6 +1,5 @@
 import schedule
 import time
-import os
 from datetime import datetime, timedelta
 from dateutil import tz
 from events import (
@@ -15,7 +14,8 @@ from ai import post_greeting_to_discord
 import requests
 import json
 from environ import DISCORD_WEBHOOK_URL
-from log import logger  # Shared logger instance
+from log import logger
+
 
 def format_event(event) -> str:
     start = event["start"].get("dateTime", event["start"].get("date"))
@@ -33,6 +33,7 @@ def format_event(event) -> str:
     else:
         end_str = end
     return f"- {title} ({start_str} to {end_str}" + (f", at {location})" if location else ")")
+
 
 def post_embed_to_discord(title: str, description: str, color: int = 5814783):
     if not DISCORD_WEBHOOK_URL:
@@ -53,6 +54,7 @@ def post_embed_to_discord(title: str, description: str, color: int = 5814783):
     else:
         logger.info(f"Posted embed: {title}")
 
+
 def post_todays_happenings():
     logger.info("Posting today's happenings.")
     today = datetime.now(tz=tz.tzlocal()).date()
@@ -61,7 +63,6 @@ def post_todays_happenings():
     for tag, calendars in GROUPED_CALENDARS.items():
         all_events = []
         for meta in calendars:
-            logger.debug(f"Fetching today's events for {meta['name']} ({tag})")
             all_events += get_events(meta, today, today)
         if all_events:
             all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
@@ -74,6 +75,7 @@ def post_todays_happenings():
             all_events_for_greeting += all_events
     post_greeting_to_discord(all_events_for_greeting)
 
+
 def post_weeks_happenings():
     logger.info("Posting this week's happenings.")
     now = datetime.now(tz=tz.tzlocal()).date()
@@ -82,7 +84,6 @@ def post_weeks_happenings():
     for tag, calendars in GROUPED_CALENDARS.items():
         all_events = []
         for meta in calendars:
-            logger.debug(f"Fetching weekly events for {meta['name']} ({tag})")
             all_events += get_events(meta, monday, end)
         if not all_events:
             continue
@@ -106,6 +107,7 @@ def post_weeks_happenings():
             get_color_for_tag(tag)
         )
 
+
 def extract_comparable_fields(event):
     return (
         event["start"].get("dateTime", event["start"].get("date")),
@@ -114,6 +116,7 @@ def extract_comparable_fields(event):
         event.get("location", ""),
         event.get("description", "")
     )
+
 
 def detect_changes(old_events, new_events):
     changes = []
@@ -129,6 +132,7 @@ def detect_changes(old_events, new_events):
                 f"Event changed:\nOLD: {format_event(old_dict[eid])}\nNEW: {format_event(new_dict[eid])}"
             )
     return changes
+
 
 def check_for_changes():
     today = datetime.now(tz=tz.tzlocal()).date()
@@ -165,8 +169,9 @@ def check_for_changes():
             logger.info(f"[{tag}] Changes detected but suppressed due to ±3 min timing.")
             save_current_events_for_key(key, new_events)
         else:
-            # No log if nothing changed
+            # Silent if nothing changed
             pass
+
 
 def fetch_and_store_future_events():
     logger.info("Fetching 6 months of future events.")
@@ -180,6 +185,7 @@ def fetch_and_store_future_events():
         if all_events:
             save_current_events_for_key(key, all_events)
         logger.info(f"Stored {len(all_events)} events for {get_name_for_tag(tag)} ({tag}) from {today} to {end}")
+
 
 if __name__ == "__main__":
     logger.info("Bot started.")
