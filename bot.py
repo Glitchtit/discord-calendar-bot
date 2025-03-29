@@ -12,7 +12,7 @@ from googleapiclient.discovery import build
 from ai import post_greeting_to_discord
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
-SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "service_account.json")
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 EVENTS_FILE = "/data/events.json"
 
