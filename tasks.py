@@ -1,4 +1,5 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
+from dateutil import tz
 from discord.ext import tasks
 from utils import (
     get_today,
@@ -33,14 +34,14 @@ def start_all_tasks(bot):
 
 @tasks.loop(minutes=1)
 async def schedule_daily_posts(bot):
-    now = get_today()
-    time = now.strftime("%H:%M")
-    dt_now = get_today()
-    local_now = dt_now.today()
+    local_now = datetime.now(tz=tz.tzlocal())
+    today = local_now.date()
+
     if local_now.weekday() == 0 and local_now.hour == 8 and local_now.minute == 0:
-        monday = get_monday_of_week(now)
+        monday = get_monday_of_week(today)
         for tag in GROUPED_CALENDARS:
             await post_tagged_week(bot, tag, monday)
+
     if local_now.hour == 8 and local_now.minute == 1:
         await post_todays_happenings(bot, include_greeting=True)
 
