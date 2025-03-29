@@ -165,8 +165,8 @@ async def on_ready():
         logger.info(f"Synced {len(synced)} commands.")
     except Exception:
         logger.exception("Failed to sync slash commands.")
-    asyncio.create_task(post_weeks_happenings())
-    asyncio.create_task(post_todays_happenings(include_greeting=True))
+    await post_weeks_happenings()
+    await post_todays_happenings(include_greeting=True)
     schedule_daily_posts.start()
 
 
