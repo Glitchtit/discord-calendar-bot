@@ -142,7 +142,7 @@ def post_greeting_to_discord(events: list[dict] = []):
         print("[ERROR] Skipping post due to greeting generation failure.")
         return
 
-    image_path = generate_image(greeting)
+    image_path = generate_image(greeting, persona)
 
     print("[DEBUG] Greeting:", greeting)
     print("[DEBUG] Image Path:", image_path)
