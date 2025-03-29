@@ -2,11 +2,14 @@ import os
 import json
 import time
 import requests
-import openai
 from datetime import datetime
 from dateutil import tz
+from openai import OpenAI
 from embeddings import embed_text, cosine_similarity, EventEmbeddingStore
+from date_utils import extract_date_range_from_query
+from calendar_tasks import load_previous_events, ALL_EVENTS_KEY
 
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 store = EventEmbeddingStore()
 
 def ask_ai_any_question(user_query: str, top_k: int = 5) -> str:
@@ -14,14 +17,12 @@ def ask_ai_any_question(user_query: str, top_k: int = 5) -> str:
     now_str = now_dt.strftime("%A, %B %d, %Y")
     q = user_query.lower().strip()
 
-    # 1️⃣ Literal day-of-date fallback
     if q in {
         "what is today", "what's today", "what day is today",
         "what's the date", "today's date", "what day is it", "what date is it"
     }:
         return f"Today is {now_str}!"
 
-    # 2️⃣ Natural-language date range handling (e.g., "tomorrow", "next week")
     date_range = extract_date_range_from_query(user_query)
     if date_range:
         start, end = date_range
@@ -38,13 +39,12 @@ def ask_ai_any_question(user_query: str, top_k: int = 5) -> str:
 
         if matched:
             return (
-                f"📅 Events from {start.strftime('%A %B %d')} to {end.strftime('%A %B %d')}:\n\n"
+                f"\U0001F4C5 Events from {start.strftime('%A %B %d')} to {end.strftime('%A %B %d')}:\n\n"
                 + "\n".join(matched)
             )
         else:
-            return f"📭 No events found between {start.strftime('%A %B %d')} and {end.strftime('%A %B %d')}."
+            return f"\U0001F4ED No events found between {start.strftime('%A %B %d')} and {end.strftime('%A %B %d')}."
 
-    # 3️⃣ Semantic fallback
     top_events = store.query(user_query, top_k=top_k)
     if not top_events:
         system_msg = (
@@ -62,8 +62,7 @@ def ask_ai_any_question(user_query: str, top_k: int = 5) -> str:
         )
 
     try:
-        import openai
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_msg},
@@ -80,14 +79,14 @@ def generate_greeting(event_titles: list[str]) -> str:
     today = datetime.now(tz=tz.tzlocal()).strftime("%A, %B %d")
     event_summary = ", ".join(event_titles) if event_titles else "no special events"
     prompt = (
-        f"H-hewwo~! It's {today}, and we've got some *extra thicc* scheduluwus coming up: {event_summary}~ (⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)💦 "
+        f"H-hewwo~! It's {today}, and we've got some *extra thicc* scheduluwus coming up: {event_summary}~ (⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)\U0001F4A6 "
         f"Write a shamelessly flirty, deranged anime-catgirl hybrid greeting, dripping with unfiltered 'owo what's this' energy. "
         f"It should sound like it was written by a Discord mod in a maid suit who’s late for their world of warcraft guild meetup. "
         f"Include unhinged reactions to the events, questionable sound effects, and emojis that make people uncomfortable. "
         f"Use 'uwu', 'nya~', sparkles ✨, and tail-wagging noises. Limit to ~80 words. Must still be safe for work."
     )
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {
@@ -135,7 +134,7 @@ def generate_image_prompt(event_titles: list[str]) -> str:
 def generate_image(prompt: str, max_retries: int = 3) -> str:
     for attempt in range(max_retries):
         try:
-            response = openai.Image.create(
+            response = client.images.generate(
                 model="dall-e-3",
                 prompt=prompt,
                 n=1,
@@ -143,7 +142,7 @@ def generate_image(prompt: str, max_retries: int = 3) -> str:
                 quality="hd",
                 response_format="url"
             )
-            image_url = response["data"][0]["url"]
+            image_url = response.data[0].url
             img_data = requests.get(image_url)
             img_data.raise_for_status()
             os.makedirs("/data/art", exist_ok=True)
@@ -152,15 +151,8 @@ def generate_image(prompt: str, max_retries: int = 3) -> str:
             with open(filename, "wb") as f:
                 f.write(img_data.content)
             return filename
-        except openai.error.OpenAIError as e:
-            print(f"[OpenAI Error] {e}")
-            if attempt + 1 < max_retries:
-                time.sleep(2)
-                continue
-            else:
-                raise
         except Exception as e:
-            print(f"[ERROR] Unexpected error generating image: {e}")
+            print(f"[ERROR] Attempt {attempt+1} - {e}")
             if attempt + 1 < max_retries:
                 time.sleep(2)
                 continue

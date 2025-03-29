@@ -1,20 +1,20 @@
 import os
-import openai
 import math
 import json
 from log import log
+from openai import OpenAI
 
-openai.api_key = os.environ["OPENAI_API_KEY"]
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 EMBEDDING_MODEL = "text-embedding-ada-002"
 EMBEDS_FILE = "/data/embeds.json"
 
 def embed_text(text: str) -> list[float]:
-    response = openai.Embedding.create(
+    response = client.embeddings.create(
         model=EMBEDDING_MODEL,
-        input=text
+        input=[text]
     )
-    return response["data"][0]["embedding"]
+    return response.data[0].embedding
 
 def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     dot_prod = sum(a * b for a, b in zip(vec_a, vec_b))

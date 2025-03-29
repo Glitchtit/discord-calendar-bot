@@ -6,12 +6,10 @@ import threading
 import discord
 from discord.ext import commands
 from discord import app_commands
-from datetime import datetime
-from collections import defaultdict
+from datetime import datetime, timedelta
 from dateutil import tz
-from datetime import timedelta
-from dateutil.relativedelta import relativedelta, SU
-import openai
+from openai import OpenAI
+
 from calendar_tasks import (
     get_all_calendar_events,
     detect_changes,
@@ -23,9 +21,9 @@ from calendar_tasks import (
 )
 from ai import store, generate_greeting, generate_image_prompt, generate_image
 from date_utils import extract_date_range_from_query, is_calendar_prompt
-from embeddings import EventEmbeddingStore
 from log import log
 
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
 ANNOUNCEMENT_CHANNEL_ID = os.environ.get("ANNOUNCEMENT_CHANNEL_ID", "")
 
@@ -39,7 +37,6 @@ async def on_ready():
         log.info(f"Synced {len(synced)} slash commands.")
     except Exception as e:
         log.warning(f"Error syncing slash commands: {e}")
-
     asyncio.create_task(run_initial_sync())
     start_scheduling_thread()
 
@@ -101,12 +98,12 @@ async def task_daily_update_and_check():
             event_titles = get_today_event_titles(new_events)
             greeting_text = generate_greeting(event_titles)
             await channel.send(greeting_text)
-           # prompt = generate_image_prompt(event_titles)
-            #try:
-             #   img_path = await asyncio.to_thread(generate_image, prompt)
-              #  await channel.send(file=discord.File(img_path))
-            #except Exception as e:
-             #   await channel.send(f"[Error generating image] {e}")
+            prompt = generate_image_prompt(event_titles)
+            try:
+                img_path = await asyncio.to_thread(generate_image, prompt)
+                await channel.send(file=discord.File(img_path))
+            except Exception as e:
+                await channel.send(f"[Error generating image] {e}")
         asyncio.create_task(post_daily_greeting())
 
 async def update_store_embeddings(old_events, new_events):
@@ -128,12 +125,8 @@ async def update_store_embeddings(old_events, new_events):
 @app_commands.describe(query="Your question or query.")
 async def what_command(interaction: discord.Interaction, query: str):
     await interaction.response.defer()
-    message = await interaction.followup.send("🔮 Summoning an answer...")
-
+    message = await interaction.followup.send("\U0001F52E Summoning an answer...")
     try:
-        from dateutil import tz
-
-        # Load all events and keep those within the next 30 days
         all_events = load_previous_events().get(ALL_EVENTS_KEY, [])
         now = datetime.now(tz=tz.tzlocal())
         future_cutoff = now + timedelta(days=30)
@@ -146,14 +139,12 @@ async def what_command(interaction: discord.Interaction, query: str):
 
         relevant_events = [e for e in all_events if is_upcoming(e)]
 
-        # Optionally filter by tag in query
         query_lower = query.lower()
         if "thomas" in query_lower:
             relevant_events = [e for e in relevant_events if e.get("tag", "").upper() in {"T", "B"}]
         elif "anniina" in query_lower:
             relevant_events = [e for e in relevant_events if e.get("tag", "").upper() in {"A", "B"}]
 
-        # Format events as blocks of text
         event_blocks = []
         for e in relevant_events:
             title = e.get("summary", "")
@@ -168,16 +159,15 @@ async def what_command(interaction: discord.Interaction, query: str):
             await message.edit(content="🤷 No upcoming events found.")
             return
 
-        # Construct prompt for GPT
         system_msg = (
             "You are a helpful scheduling assistant. Below is a list of upcoming events:\n\n"
             + "\n\n".join(event_blocks) +
             "\n\nBased on the user's question, list or describe the relevant events. "
-            "If the question includes a time range like 'next week' or 'this Friday', figure out which events apply and explain them clearly."
-            "If nothing else is specified, categorize the events per day of the week"
+            "If the question includes a time range like 'next week' or 'this Friday', figure out which events apply and explain them clearly. "
+            "If nothing else is specified, categorize the events per day of the week."
         )
 
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_msg},
@@ -200,7 +190,7 @@ async def what_command(interaction: discord.Interaction, query: str):
                 last_edit = now
 
         for chunk in response:
-            delta = chunk["choices"][0]["delta"].get("content", "")
+            delta = chunk.choices[0].delta.content or ""
             buffer += delta
             await maybe_edit()
 
@@ -210,8 +200,6 @@ async def what_command(interaction: discord.Interaction, query: str):
     except Exception as e:
         log.exception("[ASK Command] Error while generating response")
         await message.edit(content=f"[Error streaming response] {e}")
-
-
 
 @bot.tree.command(name="uwu", description="Generate a cringe catgirl greeting for today's events.")
 async def uwu_command(interaction: discord.Interaction):
