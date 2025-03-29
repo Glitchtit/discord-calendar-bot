@@ -291,6 +291,8 @@ async def on_ready():
     await post_weeks_happenings()
     await post_todays_happenings(include_greeting=True)
     schedule_daily_posts.start()
+    watch_for_event_changes.start()
+
 
 @tasks.loop(minutes=1)
 async def schedule_daily_posts():
@@ -299,6 +301,31 @@ async def schedule_daily_posts():
         await post_weeks_happenings()
     if now.hour == 8 and now.minute == 1:
         await post_todays_happenings(include_greeting=True)
+
+@tasks.loop(seconds=20)
+async def watch_for_event_changes():
+    now = datetime.now(tz=tz.tzlocal()).date()
+    monday = now - timedelta(days=now.weekday())
+
+    for tag, calendars in GROUPED_CALENDARS.items():
+        end = monday + timedelta(days=6)
+        current_events = []
+
+        for meta in calendars:
+            current_events += get_events(meta, monday, end)
+
+        current_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
+        key = f"{tag}_{monday.isoformat()}"
+
+        from events import load_previous_events, save_current_events_for_key
+
+        previous = load_previous_events().get(key, [])
+
+        if current_events != previous:
+            logger.info(f"Detected calendar change for tag {tag}, posting updated week.")
+            await post_tagged_week(tag, monday)
+            save_current_events_for_key(key, current_events)
+
 
 if __name__ == "__main__":
     if not DISCORD_BOT_TOKEN:
