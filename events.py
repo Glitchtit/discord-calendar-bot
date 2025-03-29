@@ -2,26 +2,13 @@ import os
 import json
 import hashlib
 import requests
-import logging
 from datetime import datetime
 from dateutil import tz
 from ics import Calendar as ICS_Calendar
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from environ import GOOGLE_APPLICATION_CREDENTIALS, CALENDAR_SOURCES
-from rich.logging import RichHandler
-
-# Setup logging
-os.makedirs("/data/logs", exist_ok=True)
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        RichHandler(rich_tracebacks=True),
-        logging.FileHandler("/data/logs/bot.log", encoding="utf-8"),
-    ]
-)
-log = logging.getLogger("calendarbot")
+from log import log  # Centralized logging
 
 SERVICE_ACCOUNT_FILE = GOOGLE_APPLICATION_CREDENTIALS
 SCOPES = ["https://www.googleapis.com/auth/calendar"]

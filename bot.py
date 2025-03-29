@@ -1,6 +1,5 @@
 import schedule
 import time
-import logging
 import os
 from datetime import datetime, timedelta
 from dateutil import tz
@@ -16,21 +15,7 @@ from ai import post_greeting_to_discord
 import requests
 import json
 from environ import DISCORD_WEBHOOK_URL
-from rich.logging import RichHandler
-
-# Ensure logs directory exists
-os.makedirs("/data/logs", exist_ok=True)
-
-# Logging config
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        RichHandler(rich_tracebacks=True),
-        logging.FileHandler("/data/logs/bot.log", encoding="utf-8"),
-    ]
-)
-log = logging.getLogger("calendarbot")
+from log import log  # Use centralized logger
 
 def format_event(event) -> str:
     start = event["start"].get("dateTime", event["start"].get("date"))

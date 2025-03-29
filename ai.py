@@ -3,23 +3,10 @@ import random
 import requests
 import json
 import os
-import logging
 from datetime import datetime
 from openai import OpenAI
 from environ import DISCORD_WEBHOOK_URL, OPENAI_API_KEY
-from rich.logging import RichHandler
-
-# Setup logging
-os.makedirs("/data/logs", exist_ok=True)
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        RichHandler(rich_tracebacks=True),
-        logging.FileHandler("/data/logs/bot.log", encoding="utf-8"),
-    ]
-)
-log = logging.getLogger("calendarbot")
+from log import log  # <--- Unified logging
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
