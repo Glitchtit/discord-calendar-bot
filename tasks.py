@@ -87,8 +87,10 @@ async def watch_for_event_changes(bot):
                 "\n".join(lines),
                 get_color_for_tag(tag)
             )
-
-        save_current_events_for_key(key, all_events)
+            logger.info(f"Detected changes for '{tag}', snapshot updated.")
+            save_current_events_for_key(key, all_events)
+        else:
+            logger.debug(f"No changes for '{tag}'. Snapshot unchanged.")
 
 
 async def post_todays_happenings(bot, include_greeting: bool = False):
@@ -128,5 +130,6 @@ async def initialize_event_snapshots():
             all_events += get_events(meta, earliest, latest)
         all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
         save_current_events_for_key(f"{tag}_full", all_events)
+        logger.debug(f"Initial snapshot saved for '{tag}'")
 
     logger.info("Initial snapshot complete.")
