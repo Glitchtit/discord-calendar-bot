@@ -324,7 +324,7 @@ async def schedule_daily_posts():
     if now.hour == 8 and now.minute == 1:
         await post_todays_happenings(include_greeting=True)
 
-@tasks.loop(seconds=20)
+@tasks.loop(seconds=10)
 async def watch_for_event_changes():
     now = datetime.now(tz=tz.tzlocal()).date()
     current_monday = now - timedelta(days=now.weekday())
