@@ -2,7 +2,7 @@ name: Docker Build & Push - botbot
 
 on:
   push:
-    branches: [ "botbot" ]  # triggers builds on main branch pushes
+    branches: [ "AI-bot" ]  # triggers builds on main branch pushes
   workflow_dispatch:     # lets you manually trigger builds
 
 jobs:
@@ -27,4 +27,4 @@ jobs:
       with:
         push: true
         tags: |
-          ${{ secrets.DOCKERHUB_USERNAME }}/gcalendar-discord-bot:botbot
+          ${{ secrets.DOCKERHUB_USERNAME }}/gcalendar-discord-bot:AI-bot
