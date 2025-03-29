@@ -305,26 +305,60 @@ async def schedule_daily_posts():
 @tasks.loop(seconds=20)
 async def watch_for_event_changes():
     now = datetime.now(tz=tz.tzlocal()).date()
-    monday = now - timedelta(days=now.weekday())
+    current_monday = now - timedelta(days=now.weekday())
+    current_week_range = [current_monday + timedelta(days=i) for i in range(7)]
+
+    from events import load_previous_events, save_current_events_for_key, compute_event_fingerprint
 
     for tag, calendars in GROUPED_CALENDARS.items():
-        end = monday + timedelta(days=6)
-        current_events = []
+        # Build a snapshot across all future and recent events
+        earliest = now - timedelta(days=30)
+        latest = now + timedelta(days=90)
 
+        all_events = []
         for meta in calendars:
-            current_events += get_events(meta, monday, end)
+            all_events += get_events(meta, earliest, latest)
 
-        current_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
-        key = f"{tag}_{monday.isoformat()}"
+        all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
+        key = f"{tag}_full"
 
-        from events import load_previous_events, save_current_events_for_key
+        prev_snapshot = load_previous_events().get(key, [])
+        prev_fps = {compute_event_fingerprint(e): e for e in prev_snapshot}
+        curr_fps = {compute_event_fingerprint(e): e for e in all_events}
 
-        previous = load_previous_events().get(key, [])
+        added = [e for fp, e in curr_fps.items() if fp not in prev_fps]
+        removed = [e for fp, e in prev_fps.items() if fp not in curr_fps]
 
-        if current_events != previous:
-            logger.info(f"Detected calendar change for tag {tag}, posting updated week.")
-            await post_tagged_week(tag, monday)
-            save_current_events_for_key(key, current_events)
+        # Only report if any of the changed events occur this week
+        def is_in_current_week(event):
+            start_str = event["start"].get("dateTime", event["start"].get("date"))
+            dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
+            return dt.date() in current_week_range
+
+        added_week = [e for e in added if is_in_current_week(e)]
+        removed_week = [e for e in removed if is_in_current_week(e)]
+
+        if added_week or removed_week:
+            lines = []
+
+            if added_week:
+                lines.append("**📥 Added Events This Week:**")
+                lines += [f"➕ {format_event(e)}" for e in added_week]
+
+            if removed_week:
+                lines.append("**📤 Removed Events This Week:**")
+                lines += [f"➖ {format_event(e)}" for e in removed_week]
+
+            await send_embed(
+                f"📣 Event Changes – {get_name_for_tag(tag)}",
+                "\n".join(lines),
+                get_color_for_tag(tag)
+            )
+
+        # Save full snapshot regardless
+        save_current_events_for_key(key, all_events)
+
+
 
 
 if __name__ == "__main__":

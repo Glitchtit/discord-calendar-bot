@@ -157,3 +157,13 @@ def get_events(source_meta, start_date, end_date):
     elif source_meta["type"] == "ics":
         return get_ics_events(start_date, end_date, source_meta["id"])
     return []
+
+def compute_event_fingerprint(event: dict) -> str:
+    relevant = (
+        event.get("summary", "") +
+        event["start"].get("dateTime", event["start"].get("date", "")) +
+        event["end"].get("dateTime", event["end"].get("date", "")) +
+        event.get("location", "") +
+        event.get("description", "")
+    )
+    return hashlib.md5(relevant.encode("utf-8")).hexdigest()
