@@ -1,5 +1,6 @@
 import os
 import time
+import random
 import requests
 from datetime import datetime
 from openai import OpenAI
@@ -11,42 +12,75 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-def generate_greeting(event_titles: list[str]) -> str | None:
+def generate_greeting(event_titles: list[str]) -> tuple[str | None, str]:
     try:
         today = datetime.now().strftime("%A, %B %d")
-        event_summary = ", ".join(event_titles) if event_titles else "no special events"
+        event_summary = ", ".join(event_titles) if event_titles else "no notable engagements"
 
-        prompt = (
-            f"H-hewwo~! It's {today}, and we've got some *extra thicc* scheduluwus coming up: {event_summary}~ (⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)💦 "
-            f"Write a shamelessly flirty, deranged anime-catgirl hybrid greeting, dripping with unfiltered 'owo what's this' energy. "
-            f"It should sound like it was written by a Discord mod in a maid suit who’s late for their world of warcraft guild meetup. "
-            f"Include unhinged reactions to the events, questionable sound effects, and emojis that make people uncomfortable. "
-            f"Use 'uwu', 'nya~', sparkles ✨, and tail-wagging noises. Limit to 80 words of raw degeneracy. Must still be safe for work."
-        )
+        style = random.choice(["butler", "bard", "alchemist", "decree"])
+
+        persona_names = {
+            "butler": "Sir Reginald the Butler",
+            "bard": "Lyricus the Bard",
+            "alchemist": "Elarion the Alchemist",
+            "decree": "Herald of the Crown"
+        }
+        persona = persona_names[style]
+
+        if style == "butler":
+            prompt = (
+                f"Good morrow, my liege. It is {today}, and the court's agenda doth include the following: {event_summary}.\n"
+                f"Compose a formal morning address in the voice of a loyal medieval butler. Use ornate, old-fashioned English, courtly manners, and a tone of utmost reverence and decorum."
+                f" The message should be concise, under 80 words, and should delight a noble audience accustomed to morning proclamations and gentle pleasantries."
+            )
+            system_msg = (
+                "You are a deeply loyal medieval butler speaking in refined and formal Elizabethan-style English. "
+                "You address your noble liege or lady with the utmost respect, grace, and flowery language."
+            )
+
+        elif style == "bard":
+            prompt = (
+                f"Hark, fair folk! On this fine morn of {today}, tales of {event_summary} doth stir the winds of destiny!\n"
+                f"Write a poetic and musical announcement in the style of a wandering bard. Let it rhyme or sing, and be merry and dramatic, under 80 words."
+            )
+            system_msg = (
+                "You are a jovial, poetic bard who speaks in rhyming couplets and singsongs, always with flair and drama."
+            )
+
+        elif style == "alchemist":
+            prompt = (
+                f"Verily, {today} brings forth a confluence of curious catalysts: {event_summary}.\n"
+                f"Craft a cryptic, mystical morning missive from the perspective of a half-mad alchemist. Mix metaphor, magical terminology, and prophetic overtones in fewer than 80 words."
+            )
+            system_msg = (
+                "You are a prophetic, eccentric medieval alchemist who speaks in riddles, magical metaphors, and scholarly riddles."
+            )
+
+        elif style == "decree":
+            prompt = (
+                f"Hear ye! On this {today}, let it be known that the following matters of state shall unfold: {event_summary}.\n"
+                f"Write a royal decree as if issued from a medieval king’s herald. It must be bold, official, and under 80 words."
+            )
+            system_msg = (
+                "You are a royal herald declaring official messages with bold, sweeping authority, using the style of medieval proclamations."
+            )
 
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You're an unhinged but SFW japanese anime-catgirl assistant speaking in maximum uwu-style cringe. "
-                        "You are flirty, chaotic, and overly affectionate, but never explicit. "
-                        "You have a thick japanese accent."
-                    )
-                },
+                {"role": "system", "content": system_msg},
                 {"role": "user", "content": prompt},
             ],
             max_tokens=150,
         )
 
-        return response.choices[0].message.content.strip()
+        return response.choices[0].message.content.strip(), persona
     except Exception as e:
         print(f"[ERROR] Failed to generate greeting: {e}")
-        return None
+        return None, "Unknown Persona"
 
 def generate_image(prompt: str, max_retries: int = 3) -> str | None:
-    prompt += " — Studio Ghibli meets cottagecore, digital art"
+    prompt += " — medieval tapestry art style"
 
     for attempt in range(max_retries):
         try:
@@ -93,8 +127,8 @@ def post_greeting_to_discord(events: list[dict] = []):
         print("[DEBUG] No DISCORD_WEBHOOK_URL set.")
         return
 
-    event_titles = [e.get("summary", "mystewious scheduluwu~") for e in events]
-    greeting = generate_greeting(event_titles)
+    event_titles = [e.get("summary", "a most curious happening") for e in events]
+    greeting, persona = generate_greeting(event_titles)
     if not greeting:
         print("[ERROR] Skipping post due to greeting generation failure.")
         return
@@ -109,9 +143,9 @@ def post_greeting_to_discord(events: list[dict] = []):
         return
 
     embed = {
-        "title": "UwU Mowning Gweetings ✨🐾",
+        "title": f"The Morning Proclamation 📜 — {persona}",
         "description": greeting,
-        "color": 0xffb6c1
+        "color": 0xffe4b5
     }
     if image_path and os.path.exists(image_path):
         with open(image_path, "rb") as img_file:
