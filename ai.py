@@ -74,13 +74,22 @@ def generate_greeting(event_titles: list[str]) -> tuple[str | None, str]:
             max_tokens=150,
         )
 
-        return response.choices[0].message.content.strip(), persona
+        message = response.choices[0].message.content.strip()
+        message += f"\n\n— {persona}"
+        return message, persona
     except Exception as e:
         print(f"[ERROR] Failed to generate greeting: {e}")
         return None, "Unknown Persona"
 
-def generate_image(prompt: str, max_retries: int = 3) -> str | None:
-    prompt += " — medieval tapestry art style"
+def generate_image(prompt: str, persona: str, max_retries: int = 3) -> str | None:
+    persona_vibe = {
+        "Sir Reginald the Butler": "a dignified, well-dressed butler bowing in a candlelit medieval hallway",
+        "Lyricus the Bard": "a cheerful bard strumming a lute in a bustling medieval tavern",
+        "Elarion the Alchemist": "an eccentric alchemist surrounded by glowing potions in a cluttered tower",
+        "Herald of the Crown": "a royal herald on horseback with scrolls, in front of a castle courtyard"
+    }
+    visual_context = persona_vibe.get(persona, "medieval character")
+    prompt += f" — {visual_context}, medieval tapestry art style"
 
     for attempt in range(max_retries):
         try:
