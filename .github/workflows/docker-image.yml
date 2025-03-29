@@ -29,7 +29,6 @@ jobs:
         push: true
         tags: |
           ${{ secrets.DOCKERHUB_USERNAME }}/gcalendar-discord-bot:light-bot
-          ${{ secrets.DOCKERHUB_USERNAME }}/gcalendar-discord-bot:${{ github.sha }}
 
   build-and-push-dev:
     if: github.ref_name == 'dev'
@@ -54,4 +53,3 @@ jobs:
         push: true
         tags: |
           ${{ secrets.DOCKERHUB_USERNAME }}/gcalendar-discord-bot:dev
-          ${{ secrets.DOCKERHUB_USERNAME }}/gcalendar-discord-bot:${{ github.sha }}
