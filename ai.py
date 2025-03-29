@@ -5,10 +5,10 @@ import json
 import os
 from datetime import datetime
 from openai import OpenAI
-from environ import DISCORD_WEBHOOK_URL, OPENAI_API_KEY
 from log import logger
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 
 def generate_greeting(event_titles: list[str]) -> tuple[str | None, str]:
     try:
@@ -76,6 +76,7 @@ def generate_greeting(event_titles: list[str]) -> tuple[str | None, str]:
         logger.exception("Failed to generate greeting")
         return None, "Unknown Persona"
 
+
 def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | None:
     persona_vibe = {
         "Sir Reginald the Butler": "a dignified, well-dressed butler bowing in a candlelit medieval hallway",
@@ -131,47 +132,3 @@ def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | N
                     return None
 
     return None
-
-def post_greeting_to_discord(events: list[dict] = []):
-    if not DISCORD_WEBHOOK_URL:
-        logger.warning("DISCORD_WEBHOOK_URL not set. Skipping greeting post.")
-        return
-
-    event_titles = [e.get("summary", "a most curious happening") for e in events]
-    greeting, persona = generate_greeting(event_titles)
-    if not greeting:
-        logger.error("Greeting generation failed. Nothing will be posted.")
-        return
-
-    image_path = generate_image(greeting, persona)
-
-    if len(greeting) > 4000:
-        logger.error("Greeting too long for Discord. Skipping post.")
-        return
-
-    embed = {
-        "title": f"The Morning Proclamation 📜 — {persona}",
-        "description": greeting,
-        "color": 0xffe4b5
-    }
-
-    try:
-        if image_path and os.path.exists(image_path):
-            with open(image_path, "rb") as img_file:
-                files = {"file": ("generated_image.png", img_file, "image/png")}
-                embed["image"] = {"url": "attachment://generated_image.png"}
-                payload = {"embeds": [embed]}
-                resp = requests.post(DISCORD_WEBHOOK_URL, data={"payload_json": json.dumps(payload)}, files=files)
-        else:
-            payload = {"embeds": [embed]}
-            resp = requests.post(DISCORD_WEBHOOK_URL, json=payload)
-
-        if resp.status_code not in [200, 204]:
-            logger.error(f"Discord post failed: {resp.status_code} {resp.text}")
-        else:
-            logger.info("Discord greeting post successful.")
-    except Exception:
-        logger.exception("Failed to post greeting to Discord.")
-
-if __name__ == "__main__":
-    post_greeting_to_discord()
