@@ -2,7 +2,7 @@ import os
 import json
 import time
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from dateutil import tz
 from openai import OpenAI
 from embeddings import embed_text, cosine_similarity, EventEmbeddingStore
@@ -13,27 +13,31 @@ store = EventEmbeddingStore()
 
 def ask_ai_any_question(user_query: str, top_k: int = 5) -> str:
     from calendar_tasks import load_previous_events, ALL_EVENTS_KEY
+    import re
 
     now_dt = datetime.now(tz=tz.tzlocal())
     now_str = now_dt.strftime("%A, %B %d, %Y")
-    q = user_query.lower().strip()
+    q = re.sub(r"[^\w\s]", "", user_query.lower().strip())
 
     if q in {
-        "what is today", "what's today", "what day is today",
-        "what's the date", "today's date", "what day is it", "what date is it"
+        "what is today", "whats today", "what day is today",
+        "whats the date", "todays date", "what day is it", "what date is it"
     }:
         return f"Today is {now_str}!"
 
     date_range = extract_date_range_from_query(user_query)
     if date_range:
         start, end = date_range
+        buffered_start = start.replace(hour=0, minute=0) - timedelta(hours=1)
+        buffered_end = end.replace(hour=23, minute=59) + timedelta(hours=1)
+
         all_events = load_previous_events().get(ALL_EVENTS_KEY, [])
         matched = []
         for e in all_events:
             start_str = e["start"].get("dateTime", e["start"].get("date"))
             try:
                 dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")).astimezone(tz=tz.tzlocal())
-                if start <= dt <= end:
+                if buffered_start <= dt <= buffered_end:
                     matched.append(f"- {e.get('summary')} ({dt.strftime('%A, %B %d %H:%M')})")
             except Exception:
                 continue
@@ -44,7 +48,7 @@ def ask_ai_any_question(user_query: str, top_k: int = 5) -> str:
                 + "\n".join(matched)
             )
         else:
-            return f"\U0001F4ED No events found between {start.strftime('%A %B %d')} and {end.strftime('%A %B %d')}."
+            return f"\U0001F4ED No events found between {start.strftime('%A %B %d')} and {end.strftime('%A %B %d')} ."
 
     top_events = store.query(user_query, top_k=top_k)
     if not top_events:
@@ -67,7 +71,7 @@ def ask_ai_any_question(user_query: str, top_k: int = 5) -> str:
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_query},
+                {"role": "user", "content": "what " + user_query},
             ],
             max_tokens=900,
             temperature=0.7,
