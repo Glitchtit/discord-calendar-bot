@@ -9,8 +9,7 @@ from log import logger
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-
-def generate_greeting(event_titles: list[str]) -> tuple[str | None, str]:
+def generate_greeting(event_titles: list[str], user_names: list[str] = []) -> tuple[str | None, str]:
     try:
         today = datetime.now().strftime("%A, %B %d")
         event_summary = ", ".join(event_titles) if event_titles else "no notable engagements"
@@ -32,24 +31,29 @@ def generate_greeting(event_titles: list[str]) -> tuple[str | None, str]:
             "Use 'thou', 'dost', 'hath', and other appropriate forms. Do not use any modern phrasing."
         )
 
+        names_clause = ""
+        if user_names:
+            present_names = ", ".join(user_names)
+            names_clause = f"\nThese nobles are present today: {present_names}."
+
         prompts = {
             "butler": (
-                f"Good morrow, my liege. 'Tis {today}, and the courtly matters doth include: {event_summary}.\n"
+                f"Good morrow, my liege. 'Tis {today}, and the courtly matters doth include: {event_summary}.{names_clause}\n"
                 f"Compose a morning address in the voice of a loyal medieval butler, under 80 words.",
                 "Thou art a deeply loyal medieval butler who speaketh in reverent, formal Elizabethan English."
             ),
             "bard": (
-                f"Hark, noble kin! This fine morn of {today} bringeth tidings of: {event_summary}.\n"
+                f"Hark, noble kin! This fine morn of {today} bringeth tidings of: {event_summary}.{names_clause}\n"
                 f"Craft a poetic morning verse as a merry bard would, within 80 words.",
                 "Thou art a poetic bard, who doth speak in rhymes and jests and singsongs of yore."
             ),
             "alchemist": (
-                f"Verily, on {today}, the ether shall swirl with: {event_summary}.\n"
+                f"Verily, on {today}, the ether shall swirl with: {event_summary}.{names_clause}\n"
                 f"Speaketh a morning prophecy in the tongue of a raving alchemist, fewer than 80 words.",
                 "Thou art an eccentric and prophetic alchemist, rambling in visions and olde-tongue riddles."
             ),
             "decree": (
-                f"Hearken ye! Upon this {today}, the realm shall see: {event_summary}.\n"
+                f"Hearken ye! Upon this {today}, the realm shall see: {event_summary}.{names_clause}\n"
                 f"Pronounce a royal decree in bold tone, beneath 80 words.",
                 "Thou art the herald of the crown, proclaiming stately decrees in archaic, noble tongue."
             )
@@ -75,7 +79,6 @@ def generate_greeting(event_titles: list[str]) -> tuple[str | None, str]:
     except Exception:
         logger.exception("Failed to generate greeting")
         return None, "Unknown Persona"
-
 
 def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | None:
     persona_vibe = {

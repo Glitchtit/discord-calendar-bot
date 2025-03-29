@@ -128,12 +128,21 @@ async def post_todays_happenings(include_greeting: bool = False):
             all_events_for_greeting += all_events
 
     if include_greeting or last_greeting_date != today:
+        guild = discord.utils.get(bot.guilds)
+        user_names = [
+            member.nick or member.display_name
+            for member in guild.members
+            if not member.bot
+        ]
+
         event_titles = [e.get("summary", "a most curious happening") for e in all_events_for_greeting]
-        greeting, persona = generate_greeting(event_titles)
+        greeting, persona = generate_greeting(event_titles, user_names)
+
         if greeting:
             image_path = generate_image(greeting, persona)
             await send_embed(f"The Morning Proclamation 📜 — {persona}", greeting, color=0xffe4b5, image_path=image_path)
             last_greeting_date = today
+
 
 async def post_weeks_happenings():
     now = datetime.now(tz=tz.tzlocal()).date()
