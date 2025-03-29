@@ -124,6 +124,39 @@ async def post_weeks_happenings():
         )
 
 
+async def post_next_weeks_happenings():
+    logger.info("Posting next week's happenings.")
+    next_monday = datetime.now(tz=tz.tzlocal()).date() + timedelta(days=7 - datetime.now(tz=tz.tzlocal()).weekday())
+    next_sunday = next_monday + timedelta(days=6)
+    for tag, calendars in GROUPED_CALENDARS.items():
+        all_events = []
+        for meta in calendars:
+            logger.debug(f"[{tag}] Getting next week's events from: {meta['name']}")
+            all_events += get_events(meta, next_monday, next_sunday)
+        if not all_events:
+            logger.debug(f"[{tag}] No events found for next week.")
+            continue
+        events_by_day = {}
+        for e in all_events:
+            start_str = e["start"].get("dateTime", e["start"].get("date"))
+            dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
+            day = dt.date()
+            events_by_day.setdefault(day, []).append(e)
+        lines = []
+        for i in range(7):
+            day = next_monday + timedelta(days=i)
+            if day in events_by_day:
+                lines.append(f"**{day.strftime('%A')}**")
+                day_events = sorted(events_by_day[day], key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
+                lines.extend(format_event(e) for e in day_events)
+                lines.append("")
+        await send_embed(
+            f"Next Week’s Happenings for {get_name_for_tag(tag)}",
+            "\n".join(lines),
+            get_color_for_tag(tag)
+        )
+
+
 @bot.event
 async def on_ready():
     logger.info(f"Logged in as {bot.user}")
@@ -140,10 +173,10 @@ async def on_ready():
 @tasks.loop(minutes=1)
 async def schedule_daily_posts():
     now = datetime.now(tz=tz.tzlocal())
-    if now.hour == 8 and now.minute == 1:
-        asyncio.create_task(post_todays_happenings(include_greeting=True))
     if now.weekday() == 0 and now.hour == 8 and now.minute == 0:
         asyncio.create_task(post_weeks_happenings())
+    if now.hour == 8 and now.minute == 1:
+        asyncio.create_task(post_todays_happenings(include_greeting=True))
 
 
 @bot.tree.command(name="today", description="Post today's events")
@@ -160,6 +193,14 @@ async def week_command(interaction: discord.Interaction):
     await interaction.response.defer()
     await post_weeks_happenings()
     await interaction.followup.send("Posted this week's events.")
+
+
+@bot.tree.command(name="next", description="Post next week's events")
+async def next_command(interaction: discord.Interaction):
+    logger.info(f"/next used by {interaction.user} in {interaction.channel}")
+    await interaction.response.defer()
+    await post_next_weeks_happenings()
+    await interaction.followup.send("Posted next week's events.")
 
 
 @bot.tree.command(name="greet", description="Post the morning greeting with image")
