@@ -1,0 +1,27 @@
+version: "3.9"
+
+services:
+  calendarbot:
+    build: .
+    container_name: calendarbot
+    restart: unless-stopped
+
+    # Load environment variables from .env file
+    env_file:
+      - .env
+
+    # Mount persistent data + Google credentials
+    volumes:
+      - ./data:/data
+      - ./service_account.json:/app/service_account.json:ro
+
+    # Log rotation settings
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Optional: expose port if you add a web server later
+    # ports:
+    #   - "8080:8080"

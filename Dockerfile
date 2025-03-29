@@ -1,25 +1,22 @@
+# Use an official lightweight Python image
 FROM python:3.11-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Create working directory
+# Create app directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    build-essential \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies
+# Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy project files
+# Copy source code
 COPY . .
 
-# Entrypoint (runs the bot)
-CMD ["python", "bot.py"]
+# Create folders for persistent data
+RUN mkdir -p /data/logs /data/art
+
+# Default entrypoint
+CMD ["python", "main.py"]
