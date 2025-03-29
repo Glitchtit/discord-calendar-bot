@@ -88,7 +88,7 @@ def generate_greeting(event_titles: list[str]) -> tuple[str | None, str]:
         print(f"[ERROR] Failed to generate greeting: {e}")
         return None, "Unknown Persona"
 
-def generate_image(prompt: str, persona: str, max_retries: int = 3) -> str | None:
+def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | None:
     persona_vibe = {
         "Sir Reginald the Butler": "a dignified, well-dressed butler bowing in a candlelit medieval hallway",
         "Lyricus the Bard": "a cheerful bard strumming a lute in a bustling medieval tavern",
@@ -96,9 +96,10 @@ def generate_image(prompt: str, persona: str, max_retries: int = 3) -> str | Non
         "Herald of the Crown": "a royal herald on horseback with scrolls, in front of a castle courtyard"
     }
     visual_context = persona_vibe.get(persona, "medieval character")
-    prompt += (
-        f". Depict {visual_context}, illustrated in the style of the Bayeux Tapestry, "
-        f"with humorous medieval cartoon characters, textured linen background, and stitched-looking text"
+    prompt = (
+        f"Scene inspired by the following proclamation: '{greeting}'\n"
+        f"Depict {visual_context}, illustrated in the style of the Bayeux Tapestry, "
+        f"with humorous medieval cartoon characters, textured linen background, and stitched-looking text."
     )
 
     for attempt in range(max_retries):
@@ -140,6 +141,7 @@ def generate_image(prompt: str, persona: str, max_retries: int = 3) -> str | Non
                     return None
 
     return None
+
 
 def post_greeting_to_discord(events: list[dict] = []):
     if not DISCORD_WEBHOOK_URL:
