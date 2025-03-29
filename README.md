@@ -93,6 +93,8 @@ tail -f ./data/logs/bot.log
 
 ## 🖼️ Generated Example
 
+<img src="example.png" width="400"/>
+
 > _“Hark, noble kin! The morrow bringeth study, questing, and banquet at sundown.”_
 
 ---
@@ -103,5 +105,3 @@ tail -f ./data/logs/bot.log
 - Uses `discord.py`, `openai`, `google-api-python-client`, `ics`, `colorlog`, `dateparser`, etc.
 - Add new commands in `bot.py` and `commands.py`
 - Customize greeting styles in `ai.py`
-
----
