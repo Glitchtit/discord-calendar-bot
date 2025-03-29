@@ -4,7 +4,15 @@ from discord.ext import commands, tasks
 from discord import app_commands
 from datetime import datetime, timedelta
 from dateutil import tz
-from events import GROUPED_CALENDARS, get_events, get_color_for_tag, get_name_for_tag
+from events import (
+    GROUPED_CALENDARS,
+    get_events,
+    get_name_for_tag,
+    get_color_for_tag,
+    USER_TAG_MAP,
+    TAG_NAMES,
+    TAG_COLORS
+)
 from ai import generate_greeting, generate_image
 from environ import DISCORD_BOT_TOKEN, ANNOUNCEMENT_CHANNEL_ID
 from log import logger
@@ -12,9 +20,9 @@ import os
 import dateparser
 
 intents = discord.Intents.default()
+intents.members = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 last_greeting_date = None
-
 
 def format_event(event) -> str:
     start = event["start"].get("dateTime", event["start"].get("date"))
@@ -33,7 +41,6 @@ def format_event(event) -> str:
         end_str = end
     return f"- {title} ({start_str} to {end_str}" + (f", at {location})" if location else ")")
 
-
 async def send_embed(title: str, description: str, color: int = 5814783, image_path: str | None = None):
     if not ANNOUNCEMENT_CHANNEL_ID:
         logger.warning("ANNOUNCEMENT_CHANNEL_ID not set.")
@@ -50,10 +57,8 @@ async def send_embed(title: str, description: str, color: int = 5814783, image_p
     else:
         await channel.send(embed=embed)
 
-
 def get_known_tags():
     return list(GROUPED_CALENDARS.keys())
-
 
 async def post_tagged_events(tag: str, day: datetime.date):
     calendars = GROUPED_CALENDARS.get(tag)
@@ -77,7 +82,6 @@ async def post_tagged_events(tag: str, day: datetime.date):
             "No events on this day.",
             get_color_for_tag(tag)
         )
-
 
 async def post_tagged_week(tag: str, monday: datetime.date):
     calendars = GROUPED_CALENDARS.get(tag)
@@ -106,7 +110,6 @@ async def post_tagged_week(tag: str, monday: datetime.date):
             lines.append("")
     await send_embed(f"Herald’s Week – {get_name_for_tag(tag)}", "\n".join(lines), get_color_for_tag(tag))
 
-
 async def post_todays_happenings(include_greeting: bool = False):
     global last_greeting_date
     today = datetime.now(tz=tz.tzlocal()).date()
@@ -131,33 +134,38 @@ async def post_todays_happenings(include_greeting: bool = False):
             await send_embed(f"The Morning Proclamation 📜 — {persona}", greeting, color=0xffe4b5, image_path=image_path)
             last_greeting_date = today
 
-
 async def post_weeks_happenings():
     now = datetime.now(tz=tz.tzlocal()).date()
     monday = now - timedelta(days=now.weekday())
-    end = monday + timedelta(days=6)
     for tag in GROUPED_CALENDARS:
         await post_tagged_week(tag, monday)
-
 
 async def post_next_weeks_happenings():
     next_monday = datetime.now(tz=tz.tzlocal()).date() + timedelta(days=7 - datetime.now(tz=tz.tzlocal()).weekday())
     for tag in GROUPED_CALENDARS:
         await post_tagged_week(tag, next_monday)
 
-
 @bot.event
 async def on_ready():
     logger.info(f"Logged in as {bot.user}")
     try:
+        guild = discord.utils.get(bot.guilds)
+        for user_id, tag in USER_TAG_MAP.items():
+            member = guild.get_member(user_id)
+            if member:
+                TAG_NAMES[tag] = member.nick or member.display_name
+                role_color = next((r.color.value for r in member.roles if r.color.value != 0), 0x95a5a6)
+                TAG_COLORS[tag] = role_color
+                logger.info(f"Assigned {tag}: name={TAG_NAMES[tag]}, color=#{role_color:06X}")
+            else:
+                logger.warning(f"Could not resolve Discord member for ID {user_id}")
         synced = await bot.tree.sync()
         logger.info(f"Synced {len(synced)} commands.")
     except Exception:
-        logger.exception("Failed to sync slash commands.")
+        logger.exception("Failed during on_ready or slash sync.")
     await post_weeks_happenings()
     await post_todays_happenings(include_greeting=True)
     schedule_daily_posts.start()
-
 
 @tasks.loop(minutes=1)
 async def schedule_daily_posts():
@@ -167,13 +175,11 @@ async def schedule_daily_posts():
     if now.hour == 8 and now.minute == 1:
         await post_todays_happenings(include_greeting=True)
 
-
 @bot.tree.command(name="today", description="Post today's events")
 async def today_command(interaction: discord.Interaction):
     await interaction.response.defer()
     await post_todays_happenings(include_greeting=False)
     await interaction.followup.send("Posted today's events.")
-
 
 @bot.tree.command(name="week", description="Post this week's events")
 async def week_command(interaction: discord.Interaction):
@@ -181,20 +187,17 @@ async def week_command(interaction: discord.Interaction):
     await post_weeks_happenings()
     await interaction.followup.send("Posted this week's events.")
 
-
 @bot.tree.command(name="next", description="Post next week's events")
 async def next_command(interaction: discord.Interaction):
     await interaction.response.defer()
     await post_next_weeks_happenings()
     await interaction.followup.send("Posted next week's events.")
 
-
 @bot.tree.command(name="greet", description="Post the morning greeting with image")
 async def greet_command(interaction: discord.Interaction):
     await interaction.response.defer()
     await post_todays_happenings(include_greeting=True)
     await interaction.followup.send("Greeting and image posted.")
-
 
 @bot.tree.command(name="agenda", description="Show events for a specific date")
 @app_commands.describe(date="A natural language date (e.g. 'tomorrow', 'March 28')")
@@ -208,7 +211,6 @@ async def agenda_command(interaction: discord.Interaction, date: str):
     for tag in GROUPED_CALENDARS:
         await post_tagged_events(tag, day)
     await interaction.followup.send(f"Agenda posted for {day.strftime('%A, %B %d')}.")
-
 
 @bot.tree.command(name="herald", description="Post daily or weekly events for a tag")
 @app_commands.describe(tag="Calendar tag", range="today or week")
@@ -225,14 +227,12 @@ async def herald_command(interaction: discord.Interaction, tag: str, range: str 
         await post_tagged_events(tag, datetime.now(tz=tz.tzlocal()).date())
     await interaction.followup.send(f"Herald posted for {tag} ({range}).")
 
-
 @bot.tree.command(name="reload", description="Reload calendar configuration")
 async def reload_command(interaction: discord.Interaction):
     from events import load_calendar_sources
     await interaction.response.defer()
     load_calendar_sources()
     await interaction.followup.send("Calendar sources reloaded.")
-
 
 if __name__ == "__main__":
     if not DISCORD_BOT_TOKEN:
