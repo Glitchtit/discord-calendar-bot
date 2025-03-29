@@ -199,18 +199,42 @@ async def greet_command(interaction: discord.Interaction):
     await post_todays_happenings(include_greeting=True)
     await interaction.followup.send("Greeting and image posted.")
 
-@bot.tree.command(name="agenda", description="Show events for a specific date")
-@app_commands.describe(date="A natural language date (e.g. 'tomorrow', 'March 28')")
-async def agenda_command(interaction: discord.Interaction, date: str):
+@bot.tree.command(name="agenda", description="Show events for a specific date and optional tag/user")
+@app_commands.describe(
+    date="A natural language date (e.g. 'tomorrow', 'March 28')",
+    target="Optional tag or user (e.g. T or Thomas)"
+)
+async def agenda_command(interaction: discord.Interaction, date: str, target: str = ""):
     await interaction.response.defer()
     parsed = dateparser.parse(date)
     if not parsed:
         await interaction.followup.send("Could not understand the date. Try 'tomorrow', 'next monday', or '2025-03-28'.")
         return
     day = parsed.date()
-    for tag in GROUPED_CALENDARS:
-        await post_tagged_events(tag, day)
-    await interaction.followup.send(f"Agenda posted for {day.strftime('%A, %B %d')}.")
+
+    tag_to_match = None
+    target_normalized = target.strip().lower()
+
+    # Try to match to a tag
+    if target_normalized.upper() in GROUPED_CALENDARS:
+        tag_to_match = target_normalized.upper()
+    else:
+        # Match against known names
+        for tag, name in TAG_NAMES.items():
+            if name.lower() == target_normalized:
+                tag_to_match = tag
+                break
+
+    if tag_to_match:
+        await post_tagged_events(tag_to_match, day)
+        label = get_name_for_tag(tag_to_match)
+    else:
+        for tag in GROUPED_CALENDARS:
+            await post_tagged_events(tag, day)
+        label = "everyone"
+
+    await interaction.followup.send(f"Agenda posted for {label} on {day.strftime('%A, %B %d')}.")
+
 
 @bot.tree.command(name="herald", description="Post daily or weekly events for a tag")
 @app_commands.describe(tag="Calendar tag", range="today or week")
