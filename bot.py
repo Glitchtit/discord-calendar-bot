@@ -12,8 +12,8 @@ from events import (
 )
 from ai import post_greeting_to_discord
 import requests
-import os
 import json
+from environ import DISCORD_WEBHOOK_URL
 
 def format_event(event) -> str:
     start = event["start"].get("dateTime", event["start"].get("date"))
@@ -33,8 +33,7 @@ def format_event(event) -> str:
     return f"- {title} ({start_str} to {end_str}" + (f", at {location})" if location else ")")
 
 def post_embed_to_discord(title: str, description: str, color: int = 5814783):
-    webhook = os.environ.get("DISCORD_WEBHOOK_URL")
-    if not webhook:
+    if not DISCORD_WEBHOOK_URL:
         print("[DEBUG] No DISCORD_WEBHOOK_URL set.")
         return
     payload = {
@@ -46,7 +45,7 @@ def post_embed_to_discord(title: str, description: str, color: int = 5814783):
             }
         ]
     }
-    resp = requests.post(webhook, json=payload)
+    resp = requests.post(DISCORD_WEBHOOK_URL, json=payload)
     if resp.status_code not in [200, 204]:
         print(f"[DEBUG] Discord post failed: {resp.status_code} {resp.text}")
     else:

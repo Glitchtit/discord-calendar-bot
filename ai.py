@@ -1,14 +1,11 @@
-import os
 import time
 import random
 import requests
 from datetime import datetime
 from openai import OpenAI
 import json
-
-# Load environment variables
-DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+import os
+from environ import DISCORD_WEBHOOK_URL, OPENAI_API_KEY
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -141,7 +138,6 @@ def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | N
                     return None
 
     return None
-
 
 def post_greeting_to_discord(events: list[dict] = []):
     if not DISCORD_WEBHOOK_URL:

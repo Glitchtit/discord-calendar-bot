@@ -7,8 +7,9 @@ from dateutil import tz
 from ics import Calendar as ICS_Calendar
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from environ import GOOGLE_APPLICATION_CREDENTIALS, CALENDAR_SOURCES
 
-SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "service_account.json")
+SERVICE_ACCOUNT_FILE = GOOGLE_APPLICATION_CREDENTIALS
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 EVENTS_FILE = "/data/events.json"
 
@@ -32,9 +33,8 @@ def get_name_for_tag(tag):
     }.get(tag, "Unknown")
 
 def parse_calendar_sources():
-    sources = os.environ.get("CALENDAR_SOURCES", "")
     parsed = []
-    for entry in sources.split(","):
+    for entry in CALENDAR_SOURCES.split(","):
         entry = entry.strip()
         if entry.startswith("google:") or entry.startswith("ics:"):
             prefix, rest = entry.split(":", 1)

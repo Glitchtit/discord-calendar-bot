@@ -1,0 +1,6 @@
+import os
+
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+GOOGLE_APPLICATION_CREDENTIALS = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "service_account.json")
+CALENDAR_SOURCES = os.environ.get("CALENDAR_SOURCES", "")
