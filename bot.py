@@ -132,27 +132,30 @@ def detect_changes(old_events, new_events):
     return changes
 
 def check_for_changes():
-    log.info("Checking for event changes.")
     today = datetime.now(tz=tz.tzlocal()).date()
     monday = today - timedelta(days=today.weekday())
     end = monday + timedelta(days=6)
     now = datetime.now(tz=tz.tzlocal())
     scheduled_time = now.replace(hour=8, minute=1, second=0, microsecond=0)
     delta = abs((now - scheduled_time).total_seconds())
+
     for tag, calendars in GROUPED_CALENDARS.items():
         key = f"WEEK_{tag}_{monday}"
         all_previous = load_previous_events()
         is_first_time = key not in all_previous
         old_events = all_previous.get(key, [])
         new_events = []
+
         for meta in calendars:
             new_events += get_events(meta, monday, end)
+
         changes = detect_changes(old_events, new_events)
+
         if is_first_time:
-            log.info(f"Initial event snapshot for {tag} — storing without posting.")
+            log.info(f"[{tag}] Initial snapshot — storing {len(new_events)} events.")
             save_current_events_for_key(key, new_events)
         elif changes and delta > 180:
-            log.info(f"Changes detected for {tag}. Posting updates.")
+            log.info(f"[{tag}] Detected {len(changes)} changes — posting update.")
             post_embed_to_discord(
                 f"Changes Detected – For {get_name_for_tag(tag)}",
                 "\n".join(changes),
@@ -160,8 +163,12 @@ def check_for_changes():
             )
             save_current_events_for_key(key, new_events)
         elif changes:
-            log.info(f"Suppressed weekly change post for {tag} due to ±3 min timing window.")
+            log.info(f"[{tag}] Changes detected but suppressed due to ±3 min timing.")
             save_current_events_for_key(key, new_events)
+        else:
+            # Silent if no changes — keep logs clean
+            pass
+
 
 def fetch_and_store_future_events():
     log.info("Fetching 6 months of future events.")
