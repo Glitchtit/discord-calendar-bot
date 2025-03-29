@@ -15,7 +15,7 @@ from ai import post_greeting_to_discord
 import requests
 import json
 from environ import DISCORD_WEBHOOK_URL
-from log import log  # Use centralized logger
+from log import logger  # Shared logger instance
 
 def format_event(event) -> str:
     start = event["start"].get("dateTime", event["start"].get("date"))
@@ -36,7 +36,7 @@ def format_event(event) -> str:
 
 def post_embed_to_discord(title: str, description: str, color: int = 5814783):
     if not DISCORD_WEBHOOK_URL:
-        log.warning("No DISCORD_WEBHOOK_URL set. Skipping post.")
+        logger.warning("No DISCORD_WEBHOOK_URL set. Skipping post.")
         return
     payload = {
         "embeds": [
@@ -49,19 +49,19 @@ def post_embed_to_discord(title: str, description: str, color: int = 5814783):
     }
     resp = requests.post(DISCORD_WEBHOOK_URL, json=payload)
     if resp.status_code not in [200, 204]:
-        log.error(f"Discord post failed: {resp.status_code} {resp.text}")
+        logger.error(f"Discord post failed: {resp.status_code} {resp.text}")
     else:
-        log.info(f"Posted embed: {title}")
+        logger.info(f"Posted embed: {title}")
 
 def post_todays_happenings():
-    log.info("Posting today's happenings.")
+    logger.info("Posting today's happenings.")
     today = datetime.now(tz=tz.tzlocal()).date()
     weekday_name = today.strftime("%A")
     all_events_for_greeting = []
     for tag, calendars in GROUPED_CALENDARS.items():
         all_events = []
         for meta in calendars:
-            log.debug(f"Fetching today's events for {meta['name']} ({tag})")
+            logger.debug(f"Fetching today's events for {meta['name']} ({tag})")
             all_events += get_events(meta, today, today)
         if all_events:
             all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
@@ -75,14 +75,14 @@ def post_todays_happenings():
     post_greeting_to_discord(all_events_for_greeting)
 
 def post_weeks_happenings():
-    log.info("Posting this week's happenings.")
+    logger.info("Posting this week's happenings.")
     now = datetime.now(tz=tz.tzlocal()).date()
     monday = now - timedelta(days=now.weekday())
     end = monday + timedelta(days=6)
     for tag, calendars in GROUPED_CALENDARS.items():
         all_events = []
         for meta in calendars:
-            log.debug(f"Fetching weekly events for {meta['name']} ({tag})")
+            logger.debug(f"Fetching weekly events for {meta['name']} ({tag})")
             all_events += get_events(meta, monday, end)
         if not all_events:
             continue
@@ -116,7 +116,6 @@ def extract_comparable_fields(event):
     )
 
 def detect_changes(old_events, new_events):
-    log.debug("Detecting event changes.")
     changes = []
     old_dict = {e["id"]: e for e in old_events}
     new_dict = {e["id"]: e for e in new_events}
@@ -152,10 +151,10 @@ def check_for_changes():
         changes = detect_changes(old_events, new_events)
 
         if is_first_time:
-            log.info(f"[{tag}] Initial snapshot — storing {len(new_events)} events.")
+            logger.info(f"[{tag}] Initial snapshot — storing {len(new_events)} events.")
             save_current_events_for_key(key, new_events)
         elif changes and delta > 180:
-            log.info(f"[{tag}] Detected {len(changes)} changes — posting update.")
+            logger.info(f"[{tag}] Detected {len(changes)} changes — posting update.")
             post_embed_to_discord(
                 f"Changes Detected – For {get_name_for_tag(tag)}",
                 "\n".join(changes),
@@ -163,15 +162,14 @@ def check_for_changes():
             )
             save_current_events_for_key(key, new_events)
         elif changes:
-            log.info(f"[{tag}] Changes detected but suppressed due to ±3 min timing.")
+            logger.info(f"[{tag}] Changes detected but suppressed due to ±3 min timing.")
             save_current_events_for_key(key, new_events)
         else:
-            # Silent if no changes — keep logs clean
+            # No log if nothing changed
             pass
 
-
 def fetch_and_store_future_events():
-    log.info("Fetching 6 months of future events.")
+    logger.info("Fetching 6 months of future events.")
     today = datetime.now(tz=tz.tzlocal()).date()
     end = today + timedelta(days=180)
     for tag, calendars in GROUPED_CALENDARS.items():
@@ -181,15 +179,15 @@ def fetch_and_store_future_events():
             all_events += get_events(meta, today, end)
         if all_events:
             save_current_events_for_key(key, all_events)
-        log.info(f"Stored {len(all_events)} events for {get_name_for_tag(tag)} ({tag}) from {today} to {end}")
+        logger.info(f"Stored {len(all_events)} events for {get_name_for_tag(tag)} ({tag}) from {today} to {end}")
 
 if __name__ == "__main__":
-    log.info("Bot started.")
+    logger.info("Bot started.")
     fetch_and_store_future_events()
     check_for_changes()
     post_weeks_happenings()
     post_todays_happenings()
-    log.info("Entering schedule loop.")
+    logger.info("Entering schedule loop.")
     schedule.every().day.at("08:01").do(post_todays_happenings)
     schedule.every().monday.at("08:00").do(post_weeks_happenings)
     while True:
