@@ -7,12 +7,13 @@ from dateutil import tz
 from openai import OpenAI
 from embeddings import embed_text, cosine_similarity, EventEmbeddingStore
 from date_utils import extract_date_range_from_query
-from calendar_tasks import load_previous_events, ALL_EVENTS_KEY
 
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 store = EventEmbeddingStore()
 
 def ask_ai_any_question(user_query: str, top_k: int = 5) -> str:
+    from calendar_tasks import load_previous_events, ALL_EVENTS_KEY
+
     now_dt = datetime.now(tz=tz.tzlocal())
     now_str = now_dt.strftime("%A, %B %d, %Y")
     q = user_query.lower().strip()
