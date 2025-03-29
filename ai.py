@@ -41,21 +41,6 @@ def generate_greeting(event_titles: list[str]) -> str:
 
     return response.choices[0].message.content.strip()
 
-
-def generate_image_prompt(event_titles: list[str]) -> str:
-    today = datetime.now().strftime("%A")
-    event_summary = ", ".join(event_titles) if event_titles else "no important events"
-
-    return (
-        f"A highly detailed, blushy, overly excited anime-like catgirl in a pastel maid dress and thigh-high socks, "
-        f"surrounded by floating emojis and sparkles, preparing emotionally (and questionably) for: {event_summary}. "
-        f"The {today} morning setting includes plushies, gamer gear, and questionable magical artifacts. "
-        f"The character is dramatically sipping latte from a 'UwU Boss Mode' mug while posing like they're about to attend a cosplay RP meetup. "
-        f"Make it painfully cute, degenerate, and slightly chaotic—but keep it safe-for-work in tone and composition. "
-        f"Imagine DeviantArt circa 2008 meets modern weeb Twitter, with an unholy sprinkle of con-crunch energy."
-    )
-
-
 def generate_image(prompt: str, max_retries: int = 3) -> str:
     for attempt in range(max_retries):
         try:
@@ -96,7 +81,6 @@ def generate_image(prompt: str, max_retries: int = 3) -> str:
 
     raise RuntimeError("Image generation failed after retries.")
 
-
 def post_greeting_to_discord(events: list[dict] = []):
     if not DISCORD_WEBHOOK_URL:
         print("[DEBUG] No DISCORD_WEBHOOK_URL set.")
@@ -104,8 +88,7 @@ def post_greeting_to_discord(events: list[dict] = []):
 
     event_titles = [e.get("summary", "mystewious scheduluwu~") for e in events]
     greeting = generate_greeting(event_titles)
-    image_prompt = generate_image_prompt(event_titles)
-    image_path = generate_image(image_prompt)
+    image_path = generate_image(greeting)
 
     print("[DEBUG] Greeting:", greeting)
     print("[DEBUG] Image Path:", image_path)
@@ -135,7 +118,6 @@ def post_greeting_to_discord(events: list[dict] = []):
                 print("[DEBUG] Discord embed post successful.")
     else:
         print("[ERROR] Image file is missing or invalid.")
-
 
 if __name__ == "__main__":
     post_greeting_to_discord()

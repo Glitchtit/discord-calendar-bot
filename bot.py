@@ -170,6 +170,7 @@ def fetch_and_store_future_events():
 if __name__ == "__main__":
     print("[DEBUG] Bot started. Fetching 6 months of future events now.")
     fetch_and_store_future_events()
+    check_for_changes()
     print("[DEBUG] Posting weekly + daily events now.")
     post_weeks_happenings()
     post_todays_happenings()
