@@ -11,7 +11,8 @@ from events import (
     get_color_for_tag,
     USER_TAG_MAP,
     TAG_NAMES,
-    TAG_COLORS
+    TAG_COLORS,
+    load_calendar_sources
 )
 from ai import generate_greeting, generate_image
 from environ import DISCORD_BOT_TOKEN, ANNOUNCEMENT_CHANNEL_ID
@@ -145,35 +146,89 @@ async def post_next_weeks_happenings():
     for tag in GROUPED_CALENDARS:
         await post_tagged_week(tag, next_monday)
 
-@bot.event
-async def on_ready():
-    logger.info(f"Logged in as {bot.user}")
-    try:
-        guild = discord.utils.get(bot.guilds)
-        for user_id, tag in USER_TAG_MAP.items():
-            member = guild.get_member(user_id)
-            if member:
-                TAG_NAMES[tag] = member.nick or member.display_name
-                role_color = next((r.color.value for r in member.roles if r.color.value != 0), 0x95a5a6)
-                TAG_COLORS[tag] = role_color
-                logger.info(f"Assigned {tag}: name={TAG_NAMES[tag]}, color=#{role_color:06X}")
-            else:
-                logger.warning(f"Could not resolve Discord member for ID {user_id}")
-        synced = await bot.tree.sync()
-        logger.info(f"Synced {len(synced)} commands.")
-    except Exception:
-        logger.exception("Failed during on_ready or slash sync.")
-    await post_weeks_happenings()
-    await post_todays_happenings(include_greeting=True)
-    schedule_daily_posts.start()
+async def autocomplete_tag(interaction: discord.Interaction, current: str):
+    return [
+        app_commands.Choice(name=tag, value=tag)
+        for tag in get_known_tags()
+        if current.lower() in tag.lower()
+    ]
 
-@tasks.loop(minutes=1)
-async def schedule_daily_posts():
-    now = datetime.now(tz=tz.tzlocal())
-    if now.weekday() == 0 and now.hour == 8 and now.minute == 0:
-        await post_weeks_happenings()
-    if now.hour == 8 and now.minute == 1:
-        await post_todays_happenings(include_greeting=True)
+async def autocomplete_range(interaction: discord.Interaction, current: str):
+    return [
+        app_commands.Choice(name=r, value=r)
+        for r in ["today", "week"]
+        if current.lower() in r
+    ]
+
+async def autocomplete_agenda_target(interaction: discord.Interaction, current: str):
+    suggestions = list(set(get_known_tags() + list(TAG_NAMES.values())))
+    return [
+        app_commands.Choice(name=s, value=s)
+        for s in suggestions if current.lower() in s.lower()
+    ][:25]
+
+def resolve_input_to_tags(input_str: str) -> list[str]:
+    requested = [s.strip().lower() for s in input_str.split(",") if s.strip()]
+    matched = set()
+    for item in requested:
+        if item.upper() in GROUPED_CALENDARS:
+            matched.add(item.upper())
+        else:
+            for tag, name in TAG_NAMES.items():
+                if name.lower() == item:
+                    matched.add(tag)
+    return list(matched)
+
+@bot.tree.command(name="agenda", description="Show events for a specific date and optional tags/users")
+@app_commands.describe(date="Natural date (e.g. 'tomorrow')", target="Tag(s) or name(s), comma-separated")
+@app_commands.autocomplete(target=autocomplete_agenda_target)
+async def agenda_command(interaction: discord.Interaction, date: str, target: str = ""):
+    await interaction.response.defer()
+    parsed = dateparser.parse(date)
+    if not parsed:
+        await interaction.followup.send("Could not parse the date. Try 'tomorrow' or '2025-04-01'.")
+        return
+    day = parsed.date()
+
+    if target.strip():
+        tags = resolve_input_to_tags(target)
+    else:
+        tags = list(GROUPED_CALENDARS.keys())
+
+    if not tags:
+        await interaction.followup.send("No matching tags or names found.")
+        return
+
+    for tag in tags:
+        await post_tagged_events(tag, day)
+
+    names = ", ".join(get_name_for_tag(t) for t in tags)
+    await interaction.followup.send(f"Agenda posted for {names} on {day.strftime('%A, %B %d')}.")
+
+@bot.tree.command(name="who", description="List calendar tags and their assigned users")
+async def who_command(interaction: discord.Interaction):
+    await interaction.response.defer()
+    lines = [f"**{tag}** → {get_name_for_tag(tag)}" for tag in sorted(GROUPED_CALENDARS)]
+    await interaction.followup.send("**Calendar Tags:**\n" + "\n".join(lines))
+
+@bot.tree.command(name="herald", description="Post daily or weekly events for a tag")
+@app_commands.describe(tag="Calendar tag", range="today or week")
+@app_commands.autocomplete(tag=autocomplete_tag, range=autocomplete_range)
+async def herald_command(interaction: discord.Interaction, tag: str, range: str = "today"):
+    await interaction.response.defer()
+    if range == "week":
+        monday = datetime.now(tz=tz.tzlocal()).date() - timedelta(days=datetime.now(tz=tz.tzlocal()).weekday())
+        await post_tagged_week(tag, monday)
+    else:
+        await post_tagged_events(tag, datetime.now(tz=tz.tzlocal()).date())
+    await interaction.followup.send(f"Herald posted for {tag} ({range}).")
+
+@bot.tree.command(name="reload", description="Reload calendar sources and tag-user mappings")
+async def reload_command(interaction: discord.Interaction):
+    await interaction.response.defer()
+    load_calendar_sources()
+    await resolve_tag_mappings()
+    await interaction.followup.send("Reloaded calendar sources and tag mappings.")
 
 @bot.tree.command(name="today", description="Post today's events")
 async def today_command(interaction: discord.Interaction):
@@ -199,64 +254,42 @@ async def greet_command(interaction: discord.Interaction):
     await post_todays_happenings(include_greeting=True)
     await interaction.followup.send("Greeting and image posted.")
 
-@bot.tree.command(name="agenda", description="Show events for a specific date and optional tag/user")
-@app_commands.describe(
-    date="A natural language date (e.g. 'tomorrow', 'March 28')",
-    target="Optional tag or user (e.g. T or Thomas)"
-)
-async def agenda_command(interaction: discord.Interaction, date: str, target: str = ""):
-    await interaction.response.defer()
-    parsed = dateparser.parse(date)
-    if not parsed:
-        await interaction.followup.send("Could not understand the date. Try 'tomorrow', 'next monday', or '2025-03-28'.")
+async def resolve_tag_mappings():
+    logger.info("Resolving Discord tag-to-name mappings...")
+    guild = discord.utils.get(bot.guilds)
+    if not guild:
+        logger.warning("No guild found.")
         return
-    day = parsed.date()
+    for user_id, tag in USER_TAG_MAP.items():
+        member = guild.get_member(user_id)
+        if member:
+            TAG_NAMES[tag] = member.nick or member.display_name
+            role_color = next((r.color.value for r in member.roles if r.color.value != 0), 0x95a5a6)
+            TAG_COLORS[tag] = role_color
+            logger.info(f"Assigned {tag}: name={TAG_NAMES[tag]}, color=#{role_color:06X}")
+        else:
+            logger.warning(f"Could not resolve Discord member for ID {user_id}")
 
-    tag_to_match = None
-    target_normalized = target.strip().lower()
+@bot.event
+async def on_ready():
+    logger.info(f"Logged in as {bot.user}")
+    try:
+        await resolve_tag_mappings()
+        synced = await bot.tree.sync()
+        logger.info(f"Synced {len(synced)} commands.")
+    except Exception:
+        logger.exception("Failed during on_ready or slash sync.")
+    await post_weeks_happenings()
+    await post_todays_happenings(include_greeting=True)
+    schedule_daily_posts.start()
 
-    # Try to match to a tag
-    if target_normalized.upper() in GROUPED_CALENDARS:
-        tag_to_match = target_normalized.upper()
-    else:
-        # Match against known names
-        for tag, name in TAG_NAMES.items():
-            if name.lower() == target_normalized:
-                tag_to_match = tag
-                break
-
-    if tag_to_match:
-        await post_tagged_events(tag_to_match, day)
-        label = get_name_for_tag(tag_to_match)
-    else:
-        for tag in GROUPED_CALENDARS:
-            await post_tagged_events(tag, day)
-        label = "everyone"
-
-    await interaction.followup.send(f"Agenda posted for {label} on {day.strftime('%A, %B %d')}.")
-
-
-@bot.tree.command(name="herald", description="Post daily or weekly events for a tag")
-@app_commands.describe(tag="Calendar tag", range="today or week")
-@app_commands.autocomplete(
-    tag=lambda _: [app_commands.Choice(name=t, value=t) for t in get_known_tags()],
-    range=lambda _: [app_commands.Choice(name=r, value=r) for r in ["today", "week"]]
-)
-async def herald_command(interaction: discord.Interaction, tag: str, range: str = "today"):
-    await interaction.response.defer()
-    if range == "week":
-        monday = datetime.now(tz=tz.tzlocal()).date() - timedelta(days=datetime.now(tz=tz.tzlocal()).weekday())
-        await post_tagged_week(tag, monday)
-    else:
-        await post_tagged_events(tag, datetime.now(tz=tz.tzlocal()).date())
-    await interaction.followup.send(f"Herald posted for {tag} ({range}).")
-
-@bot.tree.command(name="reload", description="Reload calendar configuration")
-async def reload_command(interaction: discord.Interaction):
-    from events import load_calendar_sources
-    await interaction.response.defer()
-    load_calendar_sources()
-    await interaction.followup.send("Calendar sources reloaded.")
+@tasks.loop(minutes=1)
+async def schedule_daily_posts():
+    now = datetime.now(tz=tz.tzlocal())
+    if now.weekday() == 0 and now.hour == 8 and now.minute == 0:
+        await post_weeks_happenings()
+    if now.hour == 8 and now.minute == 1:
+        await post_todays_happenings(include_greeting=True)
 
 if __name__ == "__main__":
     if not DISCORD_BOT_TOKEN:
