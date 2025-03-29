@@ -3,7 +3,6 @@ import json
 import hashlib
 import requests
 from datetime import datetime
-from dateutil import tz
 from ics import Calendar as ICS_Calendar
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -14,12 +13,12 @@ SERVICE_ACCOUNT_FILE = GOOGLE_APPLICATION_CREDENTIALS
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 EVENTS_FILE = "/data/events.json"
 
+logger.debug(f"Loading Google credentials from: {SERVICE_ACCOUNT_FILE}")
 credentials = service_account.Credentials.from_service_account_file(
     SERVICE_ACCOUNT_FILE, scopes=SCOPES
 )
 service = build("calendar", "v3", credentials=credentials)
 logger.info("Google Calendar service initialized.")
-
 
 def get_color_for_tag(tag):
     return {
@@ -28,14 +27,12 @@ def get_color_for_tag(tag):
         "B": 0x9b59b6,
     }.get(tag, 0x95a5a6)
 
-
 def get_name_for_tag(tag):
     return {
         "T": "Thomas",
         "A": "Anniina",
         "B": "Both",
     }.get(tag, "Unknown")
-
 
 def parse_calendar_sources():
     parsed = []
@@ -46,8 +43,8 @@ def parse_calendar_sources():
             if ":" in rest:
                 id_or_url, tag = rest.rsplit(":", 1)
                 parsed.append((prefix, id_or_url.strip(), tag.strip().upper()))
+                logger.debug(f"Parsed calendar source: {prefix}:{id_or_url.strip()} (tag={tag.strip().upper()})")
     return parsed
-
 
 def fetch_google_calendar_metadata(calendar_id):
     try:
@@ -59,15 +56,15 @@ def fetch_google_calendar_metadata(calendar_id):
         cal = service.calendarList().get(calendarId=calendar_id).execute()
         name = cal.get("summaryOverride") or cal.get("summary") or calendar_id
     except Exception as e:
-        logger.warning(f"Couldn't get calendar metadata for {calendar_id}: {e}")
+        logger.warning(f"Couldn't get metadata for Google calendar {calendar_id}: {e}")
         name = calendar_id
+    logger.debug(f"Loaded Google calendar metadata: {name}")
     return {"type": "google", "id": calendar_id, "name": name}
-
 
 def fetch_ics_calendar_metadata(url):
     name = url.split("/")[-1].split("?")[0] or "ICS Calendar"
+    logger.debug(f"Loaded ICS calendar metadata: {name}")
     return {"type": "ics", "id": url, "name": name}
-
 
 def load_calendar_sources():
     logger.info("Loading calendar sources...")
@@ -76,34 +73,34 @@ def load_calendar_sources():
         meta = fetch_google_calendar_metadata(cid) if ctype == "google" else fetch_ics_calendar_metadata(cid)
         meta["tag"] = tag
         grouped.setdefault(tag, []).append(meta)
+        logger.debug(f"Calendar loaded: {meta}")
     return grouped
-
 
 GROUPED_CALENDARS = load_calendar_sources()
 
-
 def load_previous_events():
     if os.path.exists(EVENTS_FILE):
-        with open(EVENTS_FILE, "r", encoding="utf-8") as f:
-            try:
+        try:
+            with open(EVENTS_FILE, "r", encoding="utf-8") as f:
+                logger.debug("Loaded previous event snapshot from disk.")
                 return json.load(f)
-            except json.JSONDecodeError:
-                logger.warning("Failed to decode previous events file. Returning empty.")
+        except json.JSONDecodeError:
+            logger.warning("Previous events file corrupted. Starting fresh.")
     return {}
 
-
 def save_current_events_for_key(key, events):
+    logger.debug(f"Saving {len(events)} events under key: {key}")
     all_data = load_previous_events()
     all_data[key] = events
     with open(EVENTS_FILE, "w", encoding="utf-8") as f:
         json.dump(all_data, f, ensure_ascii=False)
-        logger.info(f"Saved events for key '{key}' to {EVENTS_FILE}")
-
+    logger.info(f"Saved events for key '{key}'.")
 
 def get_google_events(start_date, end_date, calendar_id):
     try:
         start_utc = start_date.isoformat() + "T00:00:00Z"
         end_utc = end_date.isoformat() + "T23:59:59Z"
+        logger.debug(f"Fetching Google events for calendar {calendar_id} from {start_utc} to {end_utc}")
         result = service.events().list(
             calendarId=calendar_id,
             timeMin=start_utc,
@@ -111,14 +108,16 @@ def get_google_events(start_date, end_date, calendar_id):
             singleEvents=True,
             orderBy="startTime"
         ).execute()
-        return result.get("items", [])
+        items = result.get("items", [])
+        logger.debug(f"Fetched {len(items)} Google events for {calendar_id}")
+        return items
     except Exception as e:
-        logger.exception(f"Error fetching Google events for calendar {calendar_id}")
+        logger.exception(f"Error fetching Google events from calendar {calendar_id}")
         return []
-
 
 def get_ics_events(start_date, end_date, url):
     try:
+        logger.debug(f"Fetching ICS events from {url}")
         response = requests.get(url)
         response.encoding = 'utf-8'
         cal = ICS_Calendar(response.text)
@@ -135,13 +134,14 @@ def get_ics_events(start_date, end_date, url):
                     "description": e.description or "",
                     "id": event_id
                 })
+        logger.debug(f"Fetched {len(events)} ICS events from {url}")
         return events
     except Exception as e:
-        logger.exception(f"Could not fetch or parse ICS calendar: {url}")
+        logger.exception(f"Error fetching/parsing ICS calendar: {url}")
         return []
 
-
 def get_events(source_meta, start_date, end_date):
+    logger.debug(f"Getting events from source: {source_meta['name']} ({source_meta['type']})")
     if source_meta["type"] == "google":
         return get_google_events(start_date, end_date, source_meta["id"])
     elif source_meta["type"] == "ics":

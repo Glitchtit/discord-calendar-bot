@@ -48,6 +48,7 @@ def post_embed_to_discord(title: str, description: str, color: int = 5814783):
             }
         ]
     }
+    logger.debug(f"Posting embed to Discord: {title}")
     resp = requests.post(DISCORD_WEBHOOK_URL, json=payload)
     if resp.status_code not in [200, 204]:
         logger.error(f"Discord post failed: {resp.status_code} {resp.text}")
@@ -63,6 +64,7 @@ def post_todays_happenings():
     for tag, calendars in GROUPED_CALENDARS.items():
         all_events = []
         for meta in calendars:
+            logger.debug(f"[{tag}] Getting today's events from: {meta['name']}")
             all_events += get_events(meta, today, today)
         if all_events:
             all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
@@ -84,8 +86,10 @@ def post_weeks_happenings():
     for tag, calendars in GROUPED_CALENDARS.items():
         all_events = []
         for meta in calendars:
+            logger.debug(f"[{tag}] Getting weekly events from: {meta['name']}")
             all_events += get_events(meta, monday, end)
         if not all_events:
+            logger.debug(f"[{tag}] No weekly events found.")
             continue
         events_by_day = {}
         for e in all_events:
@@ -119,6 +123,7 @@ def extract_comparable_fields(event):
 
 
 def detect_changes(old_events, new_events):
+    logger.debug("Detecting changes between old and new events...")
     changes = []
     old_dict = {e["id"]: e for e in old_events}
     new_dict = {e["id"]: e for e in new_events}
@@ -131,6 +136,7 @@ def detect_changes(old_events, new_events):
             changes.append(
                 f"Event changed:\nOLD: {format_event(old_dict[eid])}\nNEW: {format_event(new_dict[eid])}"
             )
+    logger.debug(f"Detected {len(changes)} changes.")
     return changes
 
 
@@ -144,12 +150,14 @@ def check_for_changes():
 
     for tag, calendars in GROUPED_CALENDARS.items():
         key = f"WEEK_{tag}_{monday}"
+        logger.debug(f"Checking changes for tag: {tag}")
         all_previous = load_previous_events()
         is_first_time = key not in all_previous
         old_events = all_previous.get(key, [])
         new_events = []
 
         for meta in calendars:
+            logger.debug(f"Getting weekly events for change detection from: {meta['name']}")
             new_events += get_events(meta, monday, end)
 
         changes = detect_changes(old_events, new_events)
@@ -169,8 +177,7 @@ def check_for_changes():
             logger.info(f"[{tag}] Changes detected but suppressed due to ±3 min timing.")
             save_current_events_for_key(key, new_events)
         else:
-            # Silent if nothing changed
-            pass
+            logger.debug(f"[{tag}] No changes detected.")
 
 
 def fetch_and_store_future_events():
@@ -181,6 +188,7 @@ def fetch_and_store_future_events():
         key = f"FUTURE_{tag}_{today}"
         all_events = []
         for meta in calendars:
+            logger.debug(f"Fetching future events for: {meta['name']}")
             all_events += get_events(meta, today, end)
         if all_events:
             save_current_events_for_key(key, all_events)

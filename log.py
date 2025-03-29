@@ -1,28 +1,21 @@
 import logging
 import os
 from colorlog import ColoredFormatter
+from environ import DEBUG
 
-# Directory and file path for logs
 LOG_DIR = "/data/logs"
 LOG_FILE = os.path.join(LOG_DIR, "bot.log")
-
-# Ensure the log directory exists
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# Create the logger
 logger = logging.getLogger("calendarbot")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.DEBUG if DEBUG else logging.INFO)
 
-# Prevent adding handlers multiple times
 if not logger.handlers:
-
-    # File formatter (plain text)
     file_formatter = logging.Formatter(
         "[%(asctime)s] %(levelname)s in %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S"
     )
 
-    # Console formatter (colored output)
     console_formatter = ColoredFormatter(
         "%(log_color)s[%(asctime)s] %(levelname)s in %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
@@ -35,14 +28,13 @@ if not logger.handlers:
         }
     )
 
-    # File handler
     file_handler = logging.FileHandler(LOG_FILE)
     file_handler.setFormatter(file_formatter)
+    file_handler.setLevel(logging.DEBUG if DEBUG else logging.INFO)
 
-    # Console handler
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(console_formatter)
+    console_handler.setLevel(logging.DEBUG if DEBUG else logging.INFO)
 
-    # Attach handlers to the logger
-    logger.addHandler(file_handler)
     logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
