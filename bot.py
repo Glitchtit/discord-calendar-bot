@@ -279,6 +279,24 @@ async def resolve_tag_mappings():
         else:
             logger.warning(f"Could not resolve Discord member for ID {user_id}")
 
+async def initialize_event_snapshots():
+    from events import save_current_events_for_key, compute_event_fingerprint
+    logger.info("Performing initial silent snapshot of all calendars...")
+
+    now = datetime.now(tz=tz.tzlocal()).date()
+    earliest = now - timedelta(days=30)
+    latest = now + timedelta(days=90)
+
+    for tag, calendars in GROUPED_CALENDARS.items():
+        all_events = []
+        for meta in calendars:
+            all_events += get_events(meta, earliest, latest)
+        all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
+        save_current_events_for_key(f"{tag}_full", all_events)
+
+    logger.info("Initial snapshot complete.")
+
+
 @bot.event
 async def on_ready():
     logger.info(f"Logged in as {bot.user}")
@@ -288,10 +306,14 @@ async def on_ready():
         logger.info(f"Synced {len(synced)} commands.")
     except Exception:
         logger.exception("Failed during on_ready or slash sync.")
+
     await post_weeks_happenings()
     await post_todays_happenings(include_greeting=True)
+
+    await initialize_event_snapshots()
     schedule_daily_posts.start()
     watch_for_event_changes.start()
+
 
 
 @tasks.loop(minutes=1)
