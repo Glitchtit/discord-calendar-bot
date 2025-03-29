@@ -11,38 +11,41 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-def generate_greeting(event_titles: list[str]) -> str:
-    today = datetime.now().strftime("%A, %B %d")
-    event_summary = ", ".join(event_titles) if event_titles else "no special events"
+def generate_greeting(event_titles: list[str]) -> str | None:
+    try:
+        today = datetime.now().strftime("%A, %B %d")
+        event_summary = ", ".join(event_titles) if event_titles else "no special events"
 
-    prompt = (
-        f"H-hewwo~! It's {today}, and we've got some *extra thicc* scheduluwus coming up: {event_summary}~ (⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)💦 "
-        f"Write a shamelessly flirty, deranged anime-catgirl hybrid greeting, dripping with unfiltered 'owo what's this' energy. "
-        f"It should sound like it was written by a Discord mod in a maid suit who’s late for their world of warcraft guild meetup. "
-        f"Include unhinged reactions to the events, questionable sound effects, and emojis that make people uncomfortable. "
-        f"Use 'uwu', 'nya~', sparkles ✨, and tail-wagging noises. Limit to 80 words of raw degeneracy. Must still be safe for work."
-    )
+        prompt = (
+            f"H-hewwo~! It's {today}, and we've got some *extra thicc* scheduluwus coming up: {event_summary}~ (⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)💦 "
+            f"Write a shamelessly flirty, deranged anime-catgirl hybrid greeting, dripping with unfiltered 'owo what's this' energy. "
+            f"It should sound like it was written by a Discord mod in a maid suit who’s late for their world of warcraft guild meetup. "
+            f"Include unhinged reactions to the events, questionable sound effects, and emojis that make people uncomfortable. "
+            f"Use 'uwu', 'nya~', sparkles ✨, and tail-wagging noises. Limit to 80 words of raw degeneracy. Must still be safe for work."
+        )
 
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You're an unhinged but SFW japanese anime-catgirl assistant speaking in maximum uwu-style cringe. "
-                    "You are flirty, chaotic, and overly affectionate, but never explicit. "
-                    "You have a thick japanese accent."
-                )
-            },
-            {"role": "user", "content": prompt},
-        ],
-        max_tokens=150,
-    )
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You're an unhinged but SFW japanese anime-catgirl assistant speaking in maximum uwu-style cringe. "
+                        "You are flirty, chaotic, and overly affectionate, but never explicit. "
+                        "You have a thick japanese accent."
+                    )
+                },
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=150,
+        )
 
-    return response.choices[0].message.content.strip()
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"[ERROR] Failed to generate greeting: {e}")
+        return None
 
-def generate_image(prompt: str, max_retries: int = 3) -> str:
-    # Append vibe description to the prompt
+def generate_image(prompt: str, max_retries: int = 3) -> str | None:
     prompt += " — Studio Ghibli meets cottagecore, digital art"
 
     for attempt in range(max_retries):
@@ -57,7 +60,6 @@ def generate_image(prompt: str, max_retries: int = 3) -> str:
             )
             image_url = response.data[0].url
 
-            # Download and save the image
             image_response = requests.get(image_url)
             image_response.raise_for_status()
 
@@ -76,13 +78,15 @@ def generate_image(prompt: str, max_retries: int = 3) -> str:
                     time.sleep(1)
                     continue
                 else:
-                    raise RuntimeError("Image prompt blocked by content filter after multiple attempts.")
+                    print("[ERROR] Image prompt blocked after multiple attempts. Skipping image.")
+                    return None
             else:
                 print(f"[ERROR] Unexpected error on image generation: {e}")
                 if attempt + 1 == max_retries:
-                    raise
+                    print("[ERROR] Max retries hit. Skipping image.")
+                    return None
 
-    raise RuntimeError("Image generation failed after retries.")
+    return None
 
 def post_greeting_to_discord(events: list[dict] = []):
     if not DISCORD_WEBHOOK_URL:
@@ -91,36 +95,38 @@ def post_greeting_to_discord(events: list[dict] = []):
 
     event_titles = [e.get("summary", "mystewious scheduluwu~") for e in events]
     greeting = generate_greeting(event_titles)
+    if not greeting:
+        print("[ERROR] Skipping post due to greeting generation failure.")
+        return
+
     image_path = generate_image(greeting)
 
     print("[DEBUG] Greeting:", greeting)
     print("[DEBUG] Image Path:", image_path)
 
-    if not greeting or len(greeting) > 4000:
-        print("[ERROR] Greeting is invalid or too long.")
+    if len(greeting) > 4000:
+        print("[ERROR] Greeting is too long.")
         return
 
-    # Post embed with image
+    embed = {
+        "title": "UwU Mowning Gweetings ✨🐾",
+        "description": greeting,
+        "color": 0xffb6c1
+    }
     if image_path and os.path.exists(image_path):
         with open(image_path, "rb") as img_file:
             files = {"file": ("generated_image.png", img_file, "image/png")}
-            payload = {
-                "embeds": [
-                    {
-                        "title": "UwU Mowning Gweetings ✨🐾",
-                        "description": greeting,
-                        "image": {"url": "attachment://generated_image.png"},
-                        "color": 0xffb6c1
-                    }
-                ]
-            }
+            embed["image"] = {"url": "attachment://generated_image.png"}
+            payload = {"embeds": [embed]}
             resp = requests.post(DISCORD_WEBHOOK_URL, data={"payload_json": json.dumps(payload)}, files=files)
-            if resp.status_code not in [200, 204]:
-                print(f"[DEBUG] Discord embed post failed: {resp.status_code} {resp.text}")
-            else:
-                print("[DEBUG] Discord embed post successful.")
     else:
-        print("[ERROR] Image file is missing or invalid.")
+        payload = {"embeds": [embed]}
+        resp = requests.post(DISCORD_WEBHOOK_URL, json=payload)
+
+    if resp.status_code not in [200, 204]:
+        print(f"[DEBUG] Discord embed post failed: {resp.status_code} {resp.text}")
+    else:
+        print("[DEBUG] Discord embed post successful.")
 
 if __name__ == "__main__":
     post_greeting_to_discord()
