@@ -1,6 +1,7 @@
 import asyncio
 import discord
 from discord.ext import commands, tasks
+from discord import app_commands
 from datetime import datetime, timedelta
 from dateutil import tz
 from events import (
@@ -126,8 +127,13 @@ async def post_weeks_happenings():
 @bot.event
 async def on_ready():
     logger.info(f"Logged in as {bot.user}")
-    await post_todays_happenings(include_greeting=True)
-    await post_weeks_happenings()
+    try:
+        synced = await bot.tree.sync()
+        logger.info(f"Synced {len(synced)} commands.")
+    except Exception:
+        logger.exception("Failed to sync slash commands.")
+    asyncio.create_task(post_todays_happenings(include_greeting=True))
+    asyncio.create_task(post_weeks_happenings())
     schedule_daily_posts.start()
 
 
@@ -135,33 +141,33 @@ async def on_ready():
 async def schedule_daily_posts():
     now = datetime.now(tz=tz.tzlocal())
     if now.hour == 8 and now.minute == 1:
-        await post_todays_happenings(include_greeting=True)
+        asyncio.create_task(post_todays_happenings(include_greeting=True))
     if now.weekday() == 0 and now.hour == 8 and now.minute == 0:
-        await post_weeks_happenings()
+        asyncio.create_task(post_weeks_happenings())
 
 
-@bot.slash_command(name="today", description="Post today's events")
-async def today_command(ctx):
-    logger.info(f"/{ctx.command.name} used by {ctx.author} in {ctx.channel}")
-    await ctx.defer()
-    await post_todays_happenings(include_greeting=False)
-    await ctx.respond("Posted today's events.")
+@bot.tree.command(name="today", description="Post today's events")
+async def today_command(interaction: discord.Interaction):
+    logger.info(f"/today used by {interaction.user} in {interaction.channel}")
+    await interaction.response.defer()
+    asyncio.create_task(post_todays_happenings(include_greeting=False))
+    await interaction.followup.send("Posted today's events.")
 
 
-@bot.slash_command(name="week", description="Post this week's events")
-async def week_command(ctx):
-    logger.info(f"/{ctx.command.name} used by {ctx.author} in {ctx.channel}")
-    await ctx.defer()
+@bot.tree.command(name="week", description="Post this week's events")
+async def week_command(interaction: discord.Interaction):
+    logger.info(f"/week used by {interaction.user} in {interaction.channel}")
+    await interaction.response.defer()
     await post_weeks_happenings()
-    await ctx.respond("Posted this week's events.")
+    await interaction.followup.send("Posted this week's events.")
 
 
-@bot.slash_command(name="greet", description="Post the morning greeting with image")
-async def greet_command(ctx):
-    logger.info(f"/{ctx.command.name} used by {ctx.author} in {ctx.channel}")
-    await ctx.defer()
+@bot.tree.command(name="greet", description="Post the morning greeting with image")
+async def greet_command(interaction: discord.Interaction):
+    logger.info(f"/greet used by {interaction.user} in {interaction.channel}")
+    await interaction.response.defer()
     await post_todays_happenings(include_greeting=True)
-    await ctx.respond("Greeting and image posted.")
+    await interaction.followup.send("Greeting and image posted.")
 
 
 if __name__ == "__main__":
