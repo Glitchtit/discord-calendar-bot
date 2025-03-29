@@ -47,16 +47,23 @@ async def post_tagged_events(bot, tag: str, day: datetime.date):
     if not calendars:
         logger.warning(f"No calendars found for tag: {tag}")
         return
+
     all_events = []
     for meta in calendars:
         all_events += get_events(meta, day, day)
+
     if not all_events:
-        logger.debug(f"No events for tag '{tag}' on {day}")
-        return  # ⬅️ Skip empty posts
+        logger.debug(f"Skipping {tag} — no events for {day}")
+        return  # ✅ SKIP message completely if no events
 
     all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
     lines = [format_event(e) for e in all_events]
-    await send_embed(bot, f"Herald’s Scroll – {get_name_for_tag(tag)} on {day.strftime('%A')}", "\n".join(lines), get_color_for_tag(tag))
+    await send_embed(
+        bot,
+        f"Herald’s Scroll – {get_name_for_tag(tag)} on {day.strftime('%A')}",
+        "\n".join(lines),
+        get_color_for_tag(tag)
+    )
 
 
 async def post_tagged_week(bot, tag: str, monday: datetime.date):
@@ -64,20 +71,24 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
     if not calendars:
         logger.warning(f"No calendars for tag {tag}")
         return
+
     end = monday + timedelta(days=6)
     all_events = []
     for meta in calendars:
         all_events += get_events(meta, monday, end)
-    if not all_events:
-        logger.debug(f"No weekly events for tag '{tag}'")
-        return  # ⬅️ Skip empty weekly summaries
 
+    if not all_events:
+        logger.debug(f"Skipping {tag} — no weekly events from {monday} to {end}")
+        return  # ✅ SKIP message completely if no events
+
+    # Group by day
     events_by_day = {}
     for e in all_events:
         start_str = e["start"].get("dateTime", e["start"].get("date"))
         dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
         events_by_day.setdefault(dt.date(), []).append(e)
 
+    # Build formatted week
     lines = []
     for i in range(7):
         day = monday + timedelta(days=i)
@@ -86,7 +97,13 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
             day_events = sorted(events_by_day[day], key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
             lines.extend(format_event(e) for e in day_events)
             lines.append("")
-    await send_embed(bot, f"Herald’s Week – {get_name_for_tag(tag)}", "\n".join(lines), get_color_for_tag(tag))
+
+    await send_embed(
+        bot,
+        f"Herald’s Week – {get_name_for_tag(tag)}",
+        "\n".join(lines),
+        get_color_for_tag(tag)
+    )
 
 
 # ─────────────────────────────────────────────────────────────
