@@ -27,42 +27,49 @@ def generate_greeting(event_titles: list[str]) -> tuple[str | None, str]:
         }
         persona = persona_names[style]
 
+        base_instruction = (
+            "All responses must be written in archaic, Shakespearean English befitting the medieval age. "
+            "Use 'thou', 'dost', 'hath', and other appropriate forms. Do not use any modern phrasing."
+        )
+
         if style == "butler":
             prompt = (
-                f"Good morrow, my liege. It is {today}, and the court's agenda doth include the following: {event_summary}.\n"
-                f"Compose a formal morning address in the voice of a loyal medieval butler. Use ornate, old-fashioned English, courtly manners, and a tone of utmost reverence and decorum."
-                f" The message should be concise, under 80 words, and should delight a noble audience accustomed to morning proclamations and gentle pleasantries."
+                f"Good morrow, my liege. 'Tis {today}, and the courtly matters doth include: {event_summary}.\n"
+                f"Compose a morning address in the voice of a loyal medieval butler, under 80 words."
             )
             system_msg = (
-                "You are a deeply loyal medieval butler speaking in refined and formal Elizabethan-style English. "
-                "You address your noble liege or lady with the utmost respect, grace, and flowery language."
+                "Thou art a deeply loyal medieval butler who speaketh in reverent, formal Elizabethan English. "
+                + base_instruction
             )
 
         elif style == "bard":
             prompt = (
-                f"Hark, fair folk! On this fine morn of {today}, tales of {event_summary} doth stir the winds of destiny!\n"
-                f"Write a poetic and musical announcement in the style of a wandering bard. Let it rhyme or sing, and be merry and dramatic, under 80 words."
+                f"Hark, noble kin! This fine morn of {today} bringeth tidings of: {event_summary}.\n"
+                f"Craft a poetic morning verse as a merry bard would, within 80 words."
             )
             system_msg = (
-                "You are a jovial, poetic bard who speaks in rhyming couplets and singsongs, always with flair and drama."
+                "Thou art a poetic bard, who doth speak in rhymes and jests and singsongs of yore. "
+                + base_instruction
             )
 
         elif style == "alchemist":
             prompt = (
-                f"Verily, {today} brings forth a confluence of curious catalysts: {event_summary}.\n"
-                f"Craft a cryptic, mystical morning missive from the perspective of a half-mad alchemist. Mix metaphor, magical terminology, and prophetic overtones in fewer than 80 words."
+                f"Verily, on {today}, the ether shall swirl with: {event_summary}.\n"
+                f"Speaketh a morning prophecy in the tongue of a raving alchemist, fewer than 80 words."
             )
             system_msg = (
-                "You are a prophetic, eccentric medieval alchemist who speaks in riddles, magical metaphors, and scholarly riddles."
+                "Thou art an eccentric and prophetic alchemist, rambling in visions and olde-tongue riddles. "
+                + base_instruction
             )
 
         elif style == "decree":
             prompt = (
-                f"Hear ye! On this {today}, let it be known that the following matters of state shall unfold: {event_summary}.\n"
-                f"Write a royal decree as if issued from a medieval king’s herald. It must be bold, official, and under 80 words."
+                f"Hearken ye! Upon this {today}, the realm shall see: {event_summary}.\n"
+                f"Pronounce a royal decree in bold tone, beneath 80 words."
             )
             system_msg = (
-                "You are a royal herald declaring official messages with bold, sweeping authority, using the style of medieval proclamations."
+                "Thou art the herald of the crown, proclaiming stately decrees in archaic, noble tongue. "
+                + base_instruction
             )
 
         response = client.chat.completions.create(
@@ -90,10 +97,9 @@ def generate_image(prompt: str, persona: str, max_retries: int = 3) -> str | Non
     }
     visual_context = persona_vibe.get(persona, "medieval character")
     prompt += (
-    f". Depict {visual_context}, illustrated in the style of the Bayeux Tapestry, "
-    f"with humorous medieval cartoon characters, textured linen background, and stitched-looking text"
+        f". Depict {visual_context}, illustrated in the style of the Bayeux Tapestry, "
+        f"with humorous medieval cartoon characters, textured linen background, and stitched-looking text"
     )
-
 
     for attempt in range(max_retries):
         try:
