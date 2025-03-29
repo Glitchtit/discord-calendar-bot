@@ -42,6 +42,9 @@ def generate_greeting(event_titles: list[str]) -> str:
     return response.choices[0].message.content.strip()
 
 def generate_image(prompt: str, max_retries: int = 3) -> str:
+    # Append vibe description to the prompt
+    prompt += " — Studio Ghibli meets cottagecore, digital art"
+
     for attempt in range(max_retries):
         try:
             response = client.images.generate(
