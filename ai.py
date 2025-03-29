@@ -89,7 +89,11 @@ def generate_image(prompt: str, persona: str, max_retries: int = 3) -> str | Non
         "Herald of the Crown": "a royal herald on horseback with scrolls, in front of a castle courtyard"
     }
     visual_context = persona_vibe.get(persona, "medieval character")
-    prompt += f" — {visual_context}, medieval tapestry art style"
+    prompt += (
+    f". Depict {visual_context}, illustrated in the style of the Bayeux Tapestry, "
+    f"with humorous medieval cartoon characters, textured linen background, and stitched-looking text"
+    )
+
 
     for attempt in range(max_retries):
         try:
