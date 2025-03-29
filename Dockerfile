@@ -1,24 +1,25 @@
-# Use an official Python base image
-FROM python:3.10
+FROM python:3.11-slim
 
-# Create a working directory
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Create working directory
 WORKDIR /app
 
-# Copy requirements and install
-COPY requirements.txt /app/requirements.txt
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the source files into /app
-COPY . /app/
+# Copy project files
+COPY . .
 
-# Set environment variables (can be overridden at runtime)
-ENV GOOGLE_APPLICATION_CREDENTIALS="/app/service_account.json"
-ENV DISCORD_WEBHOOK_URL=""
-ENV CALENDAR_SOURCES=""
-ENV EVENTS_FILE="/data/events.json"
-
-# Ensure /data exists for volume mounting
-VOLUME ["/data"]
-
-# Default command
-CMD ["python3", "-u", "bot.py"]
+# Entrypoint (runs the bot)
+CMD ["python", "bot.py"]

@@ -3,7 +3,6 @@ import time
 import requests
 from datetime import datetime
 from openai import OpenAI
-import openai
 import json
 
 # Load environment variables
@@ -31,8 +30,8 @@ def generate_greeting(event_titles: list[str]) -> str:
                 "role": "system",
                 "content": (
                     "You're an unhinged but SFW japanese anime-catgirl assistant speaking in maximum uwu-style cringe. "
-                    "You are flirty, chaotic, and overly affectionate, but never explicit."
-                    "you have a thich japanese accent"
+                    "You are flirty, chaotic, and overly affectionate, but never explicit. "
+                    "You have a thick japanese accent."
                 )
             },
             {"role": "user", "content": prompt},
@@ -41,6 +40,7 @@ def generate_greeting(event_titles: list[str]) -> str:
     )
 
     return response.choices[0].message.content.strip()
+
 
 def generate_image_prompt(event_titles: list[str]) -> str:
     today = datetime.now().strftime("%A")
@@ -54,6 +54,7 @@ def generate_image_prompt(event_titles: list[str]) -> str:
         f"Make it painfully cute, degenerate, and slightly chaotic—but keep it safe-for-work in tone and composition. "
         f"Imagine DeviantArt circa 2008 meets modern weeb Twitter, with an unholy sprinkle of con-crunch energy."
     )
+
 
 def generate_image(prompt: str, max_retries: int = 3) -> str:
     for attempt in range(max_retries):
@@ -80,8 +81,8 @@ def generate_image(prompt: str, max_retries: int = 3) -> str:
 
             return image_path
 
-        except openai.BadRequestError as e:
-            if e.status_code == 400 and "content_policy_violation" in str(e).lower():
+        except Exception as e:
+            if hasattr(e, "status_code") and e.status_code == 400 and "content_policy_violation" in str(e).lower():
                 print(f"[WARNING] Content policy violation on attempt {attempt + 1}")
                 if attempt + 1 < max_retries:
                     time.sleep(1)
@@ -89,35 +90,12 @@ def generate_image(prompt: str, max_retries: int = 3) -> str:
                 else:
                     raise RuntimeError("Image prompt blocked by content filter after multiple attempts.")
             else:
-                raise
-
-        except Exception as e:
-            print(f"[ERROR] Unexpected error on image generation: {e}")
-            if attempt + 1 == max_retries:
-                raise
+                print(f"[ERROR] Unexpected error on image generation: {e}")
+                if attempt + 1 == max_retries:
+                    raise
 
     raise RuntimeError("Image generation failed after retries.")
 
-
-def generate_tts_audio(greeting: str) -> str:
-    try:
-        speech_response = client.audio.speech.create(
-            model="gpt-4o-mini-tts",
-            voice="onyx",
-            input=greeting,
-            instructions="speak in a super high-pitched and sultry anime-like tone, with a thick japanese accent. Be overly affectionate and cringe, but safe for work. Go full edgelord on the uwus and nyaas. Japanese accent is a must.",
-            response_format="mp3"
-        )
-
-        filename = "/tmp/greeting.mp3"
-        with open(filename, "wb") as f:
-            f.write(speech_response.content)
-
-        return filename
-
-    except Exception as e:
-        print(f"[ERROR] Failed to generate TTS audio: {e}")
-        return ""
 
 def post_greeting_to_discord(events: list[dict] = []):
     if not DISCORD_WEBHOOK_URL:
@@ -128,17 +106,15 @@ def post_greeting_to_discord(events: list[dict] = []):
     greeting = generate_greeting(event_titles)
     image_prompt = generate_image_prompt(event_titles)
     image_path = generate_image(image_prompt)
-    audio_path = generate_tts_audio(greeting)
 
     print("[DEBUG] Greeting:", greeting)
     print("[DEBUG] Image Path:", image_path)
-    print("[DEBUG] Audio Path:", audio_path)
 
     if not greeting or len(greeting) > 4000:
         print("[ERROR] Greeting is invalid or too long.")
         return
 
-    # First message: text + image file attachment
+    # Post embed with image
     if image_path and os.path.exists(image_path):
         with open(image_path, "rb") as img_file:
             files = {"file": ("generated_image.png", img_file, "image/png")}
@@ -152,23 +128,13 @@ def post_greeting_to_discord(events: list[dict] = []):
                     }
                 ]
             }
-            resp1 = requests.post(DISCORD_WEBHOOK_URL, data={"payload_json": json.dumps(payload)}, files=files)
-            if resp1.status_code not in [200, 204]:
-                print(f"[DEBUG] Discord embed post failed: {resp1.status_code} {resp1.text}")
+            resp = requests.post(DISCORD_WEBHOOK_URL, data={"payload_json": json.dumps(payload)}, files=files)
+            if resp.status_code not in [200, 204]:
+                print(f"[DEBUG] Discord embed post failed: {resp.status_code} {resp.text}")
             else:
                 print("[DEBUG] Discord embed post successful.")
     else:
         print("[ERROR] Image file is missing or invalid.")
-
-    # Second message: audio file only
-    if audio_path and os.path.exists(audio_path):
-        with open(audio_path, "rb") as f:
-            files = {"file": ("greeting.mp3", f, "audio/mpeg")}
-            resp2 = requests.post(DISCORD_WEBHOOK_URL, files=files)
-            if resp2.status_code not in [200, 204]:
-                print(f"[DEBUG] Discord audio post failed: {resp2.status_code} {resp2.text}")
-            else:
-                print("[DEBUG] Discord audio post successful.")
 
 
 if __name__ == "__main__":
