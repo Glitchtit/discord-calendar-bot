@@ -28,4 +28,3 @@ jobs:
         push: true
         tags: |
           ${{ secrets.DOCKERHUB_USERNAME }}/gcalendar-discord-bot:botbot
-          ${{ secrets.DOCKERHUB_USERNAME }}/gcalendar-discord-bot:${{ github.sha }}
