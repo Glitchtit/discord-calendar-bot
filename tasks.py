@@ -83,9 +83,9 @@ async def watch_for_event_changes(bot):
 
             await send_embed(
                 bot,
-                f"📣 Event Changes – {get_name_for_tag(tag)}",
-                "\n".join(lines),
-                get_color_for_tag(tag)
+                title=f"📣 Event Changes – {get_name_for_tag(tag)}",
+                description="\n".join(lines),
+                color=get_color_for_tag(tag)
             )
             logger.info(f"Detected changes for '{tag}', snapshot updated.")
             save_current_events_for_key(key, all_events)

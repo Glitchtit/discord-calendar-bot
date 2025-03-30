@@ -20,6 +20,10 @@ from utils import format_event, resolve_input_to_tags
 # ─────────────────────────────────────────────────────────────
 
 async def send_embed(bot, embed: discord.Embed = None, title: str = "", description: str = "", color: int = 5814783, image_path: str | None = None):
+    if isinstance(embed, str):
+        logger.warning("send_embed() received a string instead of an Embed. Converting values assuming misuse.")
+        description = embed
+        embed = None
     from environ import ANNOUNCEMENT_CHANNEL_ID
     if not ANNOUNCEMENT_CHANNEL_ID:
         logger.warning("ANNOUNCEMENT_CHANNEL_ID not set.")
