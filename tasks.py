@@ -115,7 +115,14 @@ async def post_todays_happenings(bot, include_greeting: bool = False):
 
         if greeting:
             image_path = generate_image(greeting, persona)
-            await send_embed(bot, f"The Morning Proclamation 📜 — {persona}", greeting, color=0xffe4b5, image_path=image_path)
+            await send_embed(
+            bot,
+            title=f"The Morning Proclamation 📜 — {persona}",
+            description=greeting,
+            color=0xffe4b5,
+            image_path=image_path
+        )
+
 
 
 async def initialize_event_snapshots():
