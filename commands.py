@@ -74,8 +74,16 @@ async def post_tagged_events(bot, tag: str, day: datetime.date):
     for source_name, events in sorted(events_by_source.items()):
         if not events:
             continue
-        lines = [format_event(e) for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date")))]
-        embed.add_field(name=f"📖 {source_name}", value="\n".join(lines), inline=False)
+        formatted_events = [
+            f" {format_event(e)}"  # Indented for readability
+            for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
+        ]
+
+        embed.add_field(
+            name=f"📖 {source_name}",
+            value="\n".join(formatted_events) + "\n\u200b",  # Padding under each calendar group
+            inline=False
+        )
 
     embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
     await send_embed(bot, embed=embed)
@@ -100,12 +108,14 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
         logger.debug(f"Skipping {tag} — no weekly events from {monday} to {end}")
         return
 
+    # Group by day
     events_by_day = defaultdict(list)
     for e in all_events:
         start_str = e["start"].get("dateTime", e["start"].get("date"))
         dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
         events_by_day[dt.date()].append(e)
 
+    # Build the embed
     embed = Embed(
         title=f"📜 Herald’s Week — {get_name_for_tag(tag)}",
         description=f"Week of **{monday.strftime('%B %d')}**",
@@ -116,9 +126,18 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
         day = monday + timedelta(days=i)
         day_events = events_by_day.get(day, [])
         if not day_events:
-            continue
-        lines = [format_event(e) for e in sorted(day_events, key=lambda e: e["start"].get("dateTime", e["start"].get("date")))]
-        embed.add_field(name=f"📅 {day.strftime('%A')}", value="\n".join(lines), inline=False)
+            continue  # skip completely empty days
+
+        formatted_events = [
+            f" {format_event(e)}"  # Unicode em space for subtle indent
+            for e in sorted(day_events, key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
+        ]
+
+        embed.add_field(
+            name=f"📅 {day.strftime('%A')}",
+            value="\n".join(formatted_events) + "\n\u200b",  # Add blank line under each block
+            inline=False
+        )
 
     embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
     await send_embed(bot, embed=embed)
