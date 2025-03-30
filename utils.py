@@ -15,7 +15,7 @@ def get_monday_of_week(day: date) -> date:
 def emoji_for_event(title: str) -> str:
     """Guess an emoji based on the event title."""
     title = title.lower()
-    if "class" in title or "lecture" in title:
+    if "class" in title or "lecture" in title or "EM" in title or "IA" in title:
         return "📚"
     if "meeting" in title:
         return "📞"
