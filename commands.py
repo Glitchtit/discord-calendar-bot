@@ -19,7 +19,7 @@ from utils import format_event, resolve_input_to_tags
 # 📤 EMBED HANDLING
 # ─────────────────────────────────────────────────────────────
 
-async def send_embed(bot, title: str, description: str, color: int = 5814783, image_path: str | None = None):
+async def send_embed(bot, embed: discord.Embed = None, title: str = "", description: str = "", color: int = 5814783, image_path: str | None = None):
     from environ import ANNOUNCEMENT_CHANNEL_ID
     if not ANNOUNCEMENT_CHANNEL_ID:
         logger.warning("ANNOUNCEMENT_CHANNEL_ID not set.")
@@ -29,13 +29,17 @@ async def send_embed(bot, title: str, description: str, color: int = 5814783, im
         logger.error("Channel not found. Check ANNOUNCEMENT_CHANNEL_ID.")
         return
 
-    embed = discord.Embed(title=title, description=description, color=color)
+    # Build an embed only if one wasn't passed in
+    if embed is None:
+        embed = discord.Embed(title=title, description=description, color=color)
+
     if image_path and os.path.exists(image_path):
         file = discord.File(image_path, filename="image.png")
         embed.set_image(url="attachment://image.png")
         await channel.send(embed=embed, file=file)
     else:
         await channel.send(embed=embed)
+
 
 
 # ─────────────────────────────────────────────────────────────
