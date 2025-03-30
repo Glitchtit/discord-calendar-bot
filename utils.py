@@ -12,23 +12,50 @@ def get_monday_of_week(day: date) -> date:
     return day - timedelta(days=day.weekday())
 
 
+def emoji_for_event(title: str) -> str:
+    """Guess an emoji based on the event title."""
+    title = title.lower()
+    if "class" in title or "lecture" in title:
+        return "📚"
+    if "meeting" in title:
+        return "📞"
+    if "lunch" in title:
+        return "🥪"
+    if "dinner" in title or "banquet" in title:
+        return "🍽️"
+    if "party" in title:
+        return "🎉"
+    if "exam" in title or "test" in title:
+        return "📝"
+    if "appointment" in title:
+        return "📅"
+    return "•"
+
 def format_event(event: dict) -> str:
-    """Return a readable event summary."""
+    """Return a styled, readable event summary."""
     start = event["start"].get("dateTime", event["start"].get("date"))
     end = event["end"].get("dateTime", event["end"].get("date"))
-    title = event.get("summary", "No Title")
+    title = event.get("summary", "Untitled")
     location = event.get("location", "")
+    emoji = emoji_for_event(title)
+
     if "T" in start:
         start_dt = datetime.fromisoformat(start.replace("Z", "+00:00")).astimezone(tz.tzlocal())
-        start_str = start_dt.strftime("%Y-%m-%d %H:%M")
+        start_str = start_dt.strftime("%H:%M")
     else:
-        start_str = start
+        start_str = "All Day"
+
     if "T" in end:
         end_dt = datetime.fromisoformat(end.replace("Z", "+00:00")).astimezone(tz.tzlocal())
-        end_str = end_dt.strftime("%Y-%m-%d %H:%M")
+        end_str = end_dt.strftime("%H:%M")
     else:
-        end_str = end
-    return f"- {title} ({start_str} to {end_str}" + (f", at {location})" if location else ")")
+        end_str = ""
+
+    time_range = f"{start_str}–{end_str}" if end_str else start_str
+    location_str = f" *({location})*" if location else ""
+
+    return f"{emoji} **{title}** `{time_range}`{location_str}"
+
 
 
 def is_in_current_week(event: dict, reference: date = None) -> bool:

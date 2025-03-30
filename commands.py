@@ -42,29 +42,44 @@ async def send_embed(bot, title: str, description: str, color: int = 5814783, im
 # 📅 EVENT POSTING
 # ─────────────────────────────────────────────────────────────
 
+from collections import defaultdict
+from discord import Embed
+
 async def post_tagged_events(bot, tag: str, day: datetime.date):
     calendars = GROUPED_CALENDARS.get(tag)
     if not calendars:
         logger.warning(f"No calendars found for tag: {tag}")
         return
 
-    all_events = []
+    events_by_source = defaultdict(list)
     for meta in calendars:
-        all_events += get_events(meta, day, day)
+        events = get_events(meta, day, day)
+        for e in events:
+            events_by_source[meta["name"]].append(e)
 
-    if not all_events:
+    if not events_by_source:
         logger.debug(f"Skipping {tag} — no events for {day}")
-        return  # ✅ SKIP message completely if no events
+        return
 
-    all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
-    lines = [format_event(e) for e in all_events]
-    await send_embed(
-        bot,
-        f"Herald’s Scroll – {get_name_for_tag(tag)} on {day.strftime('%A')}",
-        "\n".join(lines),
-        get_color_for_tag(tag)
+    embed = Embed(
+        title=f"🗓️ Herald’s Scroll — {get_name_for_tag(tag)}",
+        description=f"Events for **{day.strftime('%A, %B %d')}**",
+        color=get_color_for_tag(tag)
     )
 
+    for source_name, events in sorted(events_by_source.items()):
+        if not events:
+            continue
+        lines = [format_event(e) for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date")))]
+        embed.add_field(name=f"📖 {source_name}", value="\n".join(lines), inline=False)
+
+    embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
+    await send_embed(bot, embed=embed)
+
+
+
+from collections import defaultdict
+from discord import Embed
 
 async def post_tagged_week(bot, tag: str, monday: datetime.date):
     calendars = GROUPED_CALENDARS.get(tag)
@@ -79,31 +94,31 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
 
     if not all_events:
         logger.debug(f"Skipping {tag} — no weekly events from {monday} to {end}")
-        return  # ✅ SKIP message completely if no events
+        return
 
-    # Group by day
-    events_by_day = {}
+    events_by_day = defaultdict(list)
     for e in all_events:
         start_str = e["start"].get("dateTime", e["start"].get("date"))
         dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
-        events_by_day.setdefault(dt.date(), []).append(e)
+        events_by_day[dt.date()].append(e)
 
-    # Build formatted week
-    lines = []
+    embed = Embed(
+        title=f"📜 Herald’s Week — {get_name_for_tag(tag)}",
+        description=f"Week of **{monday.strftime('%B %d')}**",
+        color=get_color_for_tag(tag)
+    )
+
     for i in range(7):
         day = monday + timedelta(days=i)
-        if day in events_by_day:
-            lines.append(f"**{day.strftime('%A')}**")
-            day_events = sorted(events_by_day[day], key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
-            lines.extend(format_event(e) for e in day_events)
-            lines.append("")
+        day_events = events_by_day.get(day, [])
+        if not day_events:
+            continue
+        lines = [format_event(e) for e in sorted(day_events, key=lambda e: e["start"].get("dateTime", e["start"].get("date")))]
+        embed.add_field(name=f"📅 {day.strftime('%A')}", value="\n".join(lines), inline=False)
 
-    await send_embed(
-        bot,
-        f"Herald’s Week – {get_name_for_tag(tag)}",
-        "\n".join(lines),
-        get_color_for_tag(tag)
-    )
+    embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
+    await send_embed(bot, embed=embed)
+
 
 
 # ─────────────────────────────────────────────────────────────
