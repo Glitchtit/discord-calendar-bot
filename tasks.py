@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from dateutil import tz
 from discord.ext import tasks
+
 from utils import (
     get_today,
     get_monday_of_week,
@@ -25,6 +26,10 @@ from log import logger
 from ai import generate_greeting, generate_image
 
 
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🚀 start_all_tasks                                                 ║
+# ║ Activates recurring task loops for scheduling and change watching ║
+# ╚════════════════════════════════════════════════════════════════════╝
 def start_all_tasks(bot):
     schedule_daily_posts.change_interval(minutes=1)
     watch_for_event_changes.change_interval(seconds=10)
@@ -32,20 +37,30 @@ def start_all_tasks(bot):
     watch_for_event_changes.start(bot)
 
 
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ ⏰ schedule_daily_posts                                            ║
+# ║ Triggers daily and weekly posting tasks at scheduled times        ║
+# ╚════════════════════════════════════════════════════════════════════╝
 @tasks.loop(minutes=1)
 async def schedule_daily_posts(bot):
     local_now = datetime.now(tz=tz.tzlocal())
     today = local_now.date()
 
+    # Monday 08:00 — Post weekly summaries
     if local_now.weekday() == 0 and local_now.hour == 8 and local_now.minute == 0:
         monday = get_monday_of_week(today)
         for tag in GROUPED_CALENDARS:
             await post_tagged_week(bot, tag, monday)
 
+    # Daily 08:01 — Post today’s agenda and greeting
     if local_now.hour == 8 and local_now.minute == 1:
         await post_todays_happenings(bot, include_greeting=True)
 
 
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🕵️ watch_for_event_changes                                        ║
+# ║ Detects new or removed events in the current week and posts diffs ║
+# ╚════════════════════════════════════════════════════════════════════╝
 @tasks.loop(seconds=10)
 async def watch_for_event_changes(bot):
     today = get_today()
@@ -55,13 +70,13 @@ async def watch_for_event_changes(bot):
         earliest = today - timedelta(days=30)
         latest = today + timedelta(days=90)
 
+        # Fetch and fingerprint all events in the date window
         all_events = []
         for meta in calendars:
             all_events += get_events(meta, earliest, latest)
-
         all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
-        key = f"{tag}_full"
 
+        key = f"{tag}_full"
         prev_snapshot = load_previous_events().get(key, [])
         prev_fps = {compute_event_fingerprint(e): e for e in prev_snapshot}
         curr_fps = {compute_event_fingerprint(e): e for e in all_events}
@@ -69,6 +84,7 @@ async def watch_for_event_changes(bot):
         added = [e for fp, e in curr_fps.items() if fp not in prev_fps]
         removed = [e for fp, e in prev_fps.items() if fp not in curr_fps]
 
+        # Limit notifications to events in this week
         added_week = [e for e in added if is_in_current_week(e, today)]
         removed_week = [e for e in removed if is_in_current_week(e, today)]
 
@@ -93,6 +109,10 @@ async def watch_for_event_changes(bot):
             logger.debug(f"No changes for '{tag}'. Snapshot unchanged.")
 
 
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📜 post_todays_happenings                                          ║
+# ║ Posts all events for today and an optional greeting and image     ║
+# ╚════════════════════════════════════════════════════════════════════╝
 async def post_todays_happenings(bot, include_greeting: bool = False):
     today = get_today()
     all_events_for_greeting = []
@@ -116,15 +136,18 @@ async def post_todays_happenings(bot, include_greeting: bool = False):
         if greeting:
             image_path = generate_image(greeting, persona)
             await send_embed(
-            bot,
-            title=f"The Morning Proclamation 📜 — {persona}",
-            description=greeting,
-            color=0xffe4b5,
-            image_path=image_path
-        )
+                bot,
+                title=f"The Morning Proclamation 📜 — {persona}",
+                description=greeting,
+                color=0xffe4b5,
+                image_path=image_path
+            )
 
 
-
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🧊 initialize_event_snapshots                                      ║
+# ║ Saves a baseline snapshot of all upcoming events across calendars ║
+# ╚════════════════════════════════════════════════════════════════════╝
 async def initialize_event_snapshots():
     logger.info("Performing initial silent snapshot of all calendars...")
     today = get_today()

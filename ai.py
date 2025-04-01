@@ -7,17 +7,26 @@ from datetime import datetime
 from openai import OpenAI
 from log import logger
 
+# Initialize OpenAI client with API key from environment
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🗣️ generate_greeting                                               ║
+# ║ Creates a medieval-style greeting message in a randomized persona ║
+# ║ based on upcoming event titles and present user names.            ║
+# ╚════════════════════════════════════════════════════════════════════╝
 def generate_greeting(event_titles: list[str], user_names: list[str] = []) -> tuple[str | None, str]:
     try:
         today = datetime.now().strftime("%A, %B %d")
         event_summary = ", ".join(event_titles) if event_titles else "no notable engagements"
         logger.debug(f"Generating greeting for events: {event_summary}")
 
+        # Randomly choose one of the medieval personas
         style = random.choice(["butler", "bard", "alchemist", "decree"])
         logger.debug(f"Selected persona style: {style}")
 
+        # Persona name mapping
         persona_names = {
             "butler": "Sir Reginald the Butler",
             "bard": "Lyricus the Bard",
@@ -26,6 +35,7 @@ def generate_greeting(event_titles: list[str], user_names: list[str] = []) -> tu
         }
         persona = persona_names[style]
 
+        # Common instruction for medieval tone
         base_instruction = (
             "All responses must be written in archaic, Shakespearean English befitting the medieval age. "
             "Use 'thou', 'dost', 'hath', and other appropriate forms. Do not use any modern phrasing."
@@ -36,6 +46,7 @@ def generate_greeting(event_titles: list[str], user_names: list[str] = []) -> tu
             present_names = ", ".join(user_names)
             names_clause = f"\nThese nobles are present today: {present_names}."
 
+        # Persona-specific prompts and styles
         prompts = {
             "butler": (
                 f"Good morrow, my liege. 'Tis {today}, and the courtly matters doth include: {event_summary}.{names_clause}\n"
@@ -62,6 +73,7 @@ def generate_greeting(event_titles: list[str], user_names: list[str] = []) -> tu
         prompt, persona_instruction = prompts[style]
         system_msg = persona_instruction + " " + base_instruction
 
+        # OpenAI API call for generating the greeting
         logger.debug("Calling OpenAI API for greeting...")
         response = client.chat.completions.create(
             model="gpt-4o",
@@ -80,7 +92,14 @@ def generate_greeting(event_titles: list[str], user_names: list[str] = []) -> tu
         logger.exception("Failed to generate greeting")
         return None, "Unknown Persona"
 
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🎨 generate_image                                                  ║
+# ║ Creates a DALL·E-generated image based on the greeting and        ║
+# ║ persona vibe, using a stylized Bayeux Tapestry art prompt.        ║
+# ╚════════════════════════════════════════════════════════════════════╝
 def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | None:
+    # Persona-specific visual styles
     persona_vibe = {
         "Sir Reginald the Butler": "a dignified, well-dressed butler bowing in a candlelit medieval hallway",
         "Lyricus the Bard": "a cheerful bard strumming a lute in a bustling medieval tavern",
@@ -95,6 +114,7 @@ def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | N
         f"with humorous medieval cartoon characters, textured linen background, and stitched-looking text."
     )
 
+    # Retry loop for content policy or transient failures
     for attempt in range(max_retries):
         try:
             logger.debug(f"[{persona}] Generating image (attempt {attempt + 1})...")
@@ -120,6 +140,7 @@ def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | N
             return image_path
 
         except Exception as e:
+            # Retry if OpenAI blocks due to content policy
             if hasattr(e, "status_code") and e.status_code == 400 and "content_policy_violation" in str(e).lower():
                 logger.warning(f"[{persona}] Content policy violation (attempt {attempt + 1})")
                 if attempt + 1 < max_retries:

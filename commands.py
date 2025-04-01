@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from dateutil import tz
 import discord
 from discord import app_commands
+from collections import defaultdict
 
 from events import (
     GROUPED_CALENDARS,
@@ -15,10 +16,10 @@ from log import logger
 from utils import format_event, resolve_input_to_tags
 
 
-# ─────────────────────────────────────────────────────────────
-# 📤 EMBED HANDLING
-# ─────────────────────────────────────────────────────────────
-
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📤 send_embed                                                      ║
+# ║ Sends an embed to the announcement channel, optionally with image ║
+# ╚════════════════════════════════════════════════════════════════════╝
 async def send_embed(bot, embed: discord.Embed = None, title: str = "", description: str = "", color: int = 5814783, image_path: str | None = None):
     if isinstance(embed, str):
         logger.warning("send_embed() received a string instead of an Embed. Converting values assuming misuse.")
@@ -33,7 +34,6 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
         logger.error("Channel not found. Check ANNOUNCEMENT_CHANNEL_ID.")
         return
 
-    # Build an embed only if one wasn't passed in
     if embed is None:
         embed = discord.Embed(title=title, description=description, color=color)
 
@@ -45,14 +45,10 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
         await channel.send(embed=embed)
 
 
-
-# ─────────────────────────────────────────────────────────────
-# 📅 EVENT POSTING
-# ─────────────────────────────────────────────────────────────
-
-from collections import defaultdict
-from discord import Embed
-
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📅 post_tagged_events                                              ║
+# ║ Sends an embed of events for a specific tag on a given day        ║
+# ╚════════════════════════════════════════════════════════════════════╝
 async def post_tagged_events(bot, tag: str, day: datetime.date):
     calendars = GROUPED_CALENDARS.get(tag)
     if not calendars:
@@ -69,7 +65,7 @@ async def post_tagged_events(bot, tag: str, day: datetime.date):
         logger.debug(f"Skipping {tag} — no events for {day}")
         return
 
-    embed = Embed(
+    embed = discord.Embed(
         title=f"🗓️ Herald’s Scroll — {get_name_for_tag(tag)}",
         description=f"Events for **{day.strftime('%A, %B %d')}**",
         color=get_color_for_tag(tag)
@@ -79,13 +75,13 @@ async def post_tagged_events(bot, tag: str, day: datetime.date):
         if not events:
             continue
         formatted_events = [
-            f" {format_event(e)}"  # Indented for readability
+            f" {format_event(e)}"
             for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
         ]
 
         embed.add_field(
             name=f"📖 {source_name}",
-            value="\n".join(formatted_events) + "\n\u200b",  # Padding under each calendar group
+            value="\n".join(formatted_events) + "\n\u200b",
             inline=False
         )
 
@@ -93,10 +89,10 @@ async def post_tagged_events(bot, tag: str, day: datetime.date):
     await send_embed(bot, embed=embed)
 
 
-
-from collections import defaultdict
-from discord import Embed
-
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📆 post_tagged_week                                                ║
+# ║ Sends an embed of the weekly schedule for a given calendar tag    ║
+# ╚════════════════════════════════════════════════════════════════════╝
 async def post_tagged_week(bot, tag: str, monday: datetime.date):
     calendars = GROUPED_CALENDARS.get(tag)
     if not calendars:
@@ -112,15 +108,13 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
         logger.debug(f"Skipping {tag} — no weekly events from {monday} to {end}")
         return
 
-    # Group by day
     events_by_day = defaultdict(list)
     for e in all_events:
         start_str = e["start"].get("dateTime", e["start"].get("date"))
         dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
         events_by_day[dt.date()].append(e)
 
-    # Build the embed
-    embed = Embed(
+    embed = discord.Embed(
         title=f"📜 Herald’s Week — {get_name_for_tag(tag)}",
         description=f"Week of **{monday.strftime('%B %d')}**",
         color=get_color_for_tag(tag)
@@ -130,16 +124,16 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
         day = monday + timedelta(days=i)
         day_events = events_by_day.get(day, [])
         if not day_events:
-            continue  # skip completely empty days
+            continue
 
         formatted_events = [
-            f" {format_event(e)}"  # Unicode em space for subtle indent
+            f" {format_event(e)}"
             for e in sorted(day_events, key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
         ]
 
         embed.add_field(
             name=f"📅 {day.strftime('%A')}",
-            value="\n".join(formatted_events) + "\n\u200b",  # Add blank line under each block
+            value="\n".join(formatted_events) + "\n\u200b",
             inline=False
         )
 
@@ -147,10 +141,10 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
     await send_embed(bot, embed=embed)
 
 
-
-# ─────────────────────────────────────────────────────────────
-# 🔍 AUTOCOMPLETE
-# ─────────────────────────────────────────────────────────────
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🔍 Autocomplete Functions for Slash Commands                       ║
+# ║ Provide dynamic suggestions in Discord UI                         ║
+# ╚════════════════════════════════════════════════════════════════════╝
 
 def get_known_tags():
     return list(GROUPED_CALENDARS.keys())

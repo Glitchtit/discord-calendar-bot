@@ -9,6 +9,10 @@ from googleapiclient.discovery import build
 from environ import GOOGLE_APPLICATION_CREDENTIALS, CALENDAR_SOURCES, USER_TAG_MAPPING
 from log import logger
 
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🔐 Google Calendar API Initialization                             ║
+# ║ Sets up credentials and API client for accessing Google Calendar ║
+# ╚════════════════════════════════════════════════════════════════════╝
 SERVICE_ACCOUNT_FILE = GOOGLE_APPLICATION_CREDENTIALS
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 EVENTS_FILE = "/data/events.json"
@@ -20,7 +24,9 @@ credentials = service_account.Credentials.from_service_account_file(
 service = build("calendar", "v3", credentials=credentials)
 logger.info("Google Calendar service initialized.")
 
-# User ID → tag mapping from env
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 👥 Tag Mapping (User ID → Tag)                                     ║
+# ╚════════════════════════════════════════════════════════════════════╝
 def get_user_tag_mapping():
     mapping = {}
     for entry in USER_TAG_MAPPING.split(","):
@@ -34,7 +40,7 @@ def get_user_tag_mapping():
 
 USER_TAG_MAP = get_user_tag_mapping()
 
-# These will be filled in bot.py on startup
+# Populated during bot startup
 TAG_NAMES = {}
 TAG_COLORS = {}
 
@@ -42,8 +48,13 @@ def get_name_for_tag(tag):
     return TAG_NAMES.get(tag, tag)
 
 def get_color_for_tag(tag):
-    return TAG_COLORS.get(tag, 0x95a5a6)  # default: gray
+    return TAG_COLORS.get(tag, 0x95a5a6)  # Default gray color
 
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📦 Calendar Source Parsing                                         ║
+# ║ Parses CALENDAR_SOURCES into structured source info               ║
+# ╚════════════════════════════════════════════════════════════════════╝
 def parse_calendar_sources():
     parsed = []
     for entry in CALENDAR_SOURCES.split(","):
@@ -56,6 +67,10 @@ def parse_calendar_sources():
                 logger.debug(f"Parsed calendar source: {prefix}:{id_or_url.strip()} (tag={tag.strip().upper()})")
     return parsed
 
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📄 Calendar Metadata Fetching                                     ║
+# ╚════════════════════════════════════════════════════════════════════╝
 def fetch_google_calendar_metadata(calendar_id):
     try:
         service.calendarList().insert(body={"id": calendar_id}).execute()
@@ -76,6 +91,11 @@ def fetch_ics_calendar_metadata(url):
     logger.debug(f"Loaded ICS calendar metadata: {name}")
     return {"type": "ics", "id": url, "name": name}
 
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📚 Source Loader                                                   ║
+# ║ Groups calendar sources by tag and loads them into memory         ║
+# ╚════════════════════════════════════════════════════════════════════╝
 def load_calendar_sources():
     logger.info("Loading calendar sources...")
     grouped = {}
@@ -88,6 +108,10 @@ def load_calendar_sources():
 
 GROUPED_CALENDARS = load_calendar_sources()
 
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 💾 Event Snapshot Persistence                                      ║
+# ╚════════════════════════════════════════════════════════════════════╝
 def load_previous_events():
     if os.path.exists(EVENTS_FILE):
         try:
@@ -106,6 +130,11 @@ def save_current_events_for_key(key, events):
         json.dump(all_data, f, ensure_ascii=False)
     logger.info(f"Saved events for key '{key}'.")
 
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📆 Event Fetching                                                  ║
+# ║ Retrieves events from Google or ICS sources                        ║
+# ╚════════════════════════════════════════════════════════════════════╝
 def get_google_events(start_date, end_date, calendar_id):
     try:
         start_utc = start_date.isoformat() + "T00:00:00Z"
@@ -158,6 +187,11 @@ def get_events(source_meta, start_date, end_date):
         return get_ics_events(start_date, end_date, source_meta["id"])
     return []
 
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🧬 compute_event_fingerprint                                       ║
+# ║ Generates a stable hash for an event's core details               ║
+# ╚════════════════════════════════════════════════════════════════════╝
 def compute_event_fingerprint(event: dict) -> str:
     def norm_time(val: str) -> str:
         return val.replace("Z", "+00:00") if "Z" in val else val
