@@ -159,11 +159,22 @@ def get_events(source_meta, start_date, end_date):
     return []
 
 def compute_event_fingerprint(event: dict) -> str:
-    relevant = (
-        event.get("summary", "") +
-        event["start"].get("dateTime", event["start"].get("date", "")) +
-        event["end"].get("dateTime", event["end"].get("date", "")) +
-        event.get("location", "") +
-        event.get("description", "")
-    )
-    return hashlib.md5(relevant.encode("utf-8")).hexdigest()
+    def norm_time(val: str) -> str:
+        return val.replace("Z", "+00:00") if "Z" in val else val
+
+    summary = event.get("summary", "")
+    start = norm_time(event["start"].get("dateTime", event["start"].get("date", "")))
+    end = norm_time(event["end"].get("dateTime", event["end"].get("date", "")))
+    location = event.get("location", "")
+    description = event.get("description", "")
+
+    trimmed = {
+        "summary": summary,
+        "start": start,
+        "end": end,
+        "location": location,
+        "description": description
+    }
+
+    normalized_json = json.dumps(trimmed, sort_keys=True)
+    return hashlib.md5(normalized_json.encode("utf-8")).hexdigest()
