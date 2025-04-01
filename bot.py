@@ -43,7 +43,7 @@ async def on_ready():
 
     await initialize_event_snapshots()
     start_all_tasks(bot)
-    await post_todays_happenings(bot, include_greeting=True)
+    #await post_todays_happenings(bot, include_greeting=True)
 
 
 @bot.tree.command(
