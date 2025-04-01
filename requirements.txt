@@ -10,4 +10,3 @@ rich==13.7.1
 colorlog==6.8.2
 discord.py==2.3.2
 dateparser==1.1.8
-pytest
