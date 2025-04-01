@@ -26,11 +26,19 @@ from commands import (
 from tasks import initialize_event_snapshots, start_all_tasks, post_todays_happenings
 from utils import get_today, get_monday_of_week, resolve_input_to_tags
 
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ 🤖 Discord Bot Initialization                               ║
+# ║ Configures the bot with necessary intents and slash system ║
+# ╚═════════════════════════════════════════════════════════════╝
 intents = discord.Intents.default()
 intents.members = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 
 
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ 🟢 on_ready                                                  ║
+# ║ Called once the bot is online and ready                     ║
+# ╚═════════════════════════════════════════════════════════════╝
 @bot.event
 async def on_ready():
     logger.info(f"Logged in as {bot.user}")
@@ -43,9 +51,12 @@ async def on_ready():
 
     await initialize_event_snapshots()
     start_all_tasks(bot)
-    #await post_todays_happenings(bot, include_greeting=True)
 
 
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ 📜 /herald                                                   ║
+# ║ Posts the weekly + daily event summaries for all tags       ║
+# ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(
     name="herald",
     description="Post all weekly and daily events for every calendar tag"
@@ -63,6 +74,10 @@ async def herald_command(interaction: discord.Interaction):
     await interaction.followup.send("Herald posted for **all** tags — week and today.")
 
 
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ 🗓️ /agenda                                                   ║
+# ║ Posts events for a given date or natural language input     ║
+# ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(
     name="agenda",
     description="Post events for a date or range (e.g. 'tomorrow', 'week'), with optional tag filter"
@@ -105,6 +120,10 @@ async def agenda_command(interaction: discord.Interaction, input: str, target: s
     await interaction.followup.send(f"Agenda posted for **{tag_names}** on **{label}**.")
 
 
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ 🎭 /greet                                                    ║
+# ║ Generates a persona-based medieval greeting with image      ║
+# ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(name="greet", description="Post the morning greeting with image")
 async def greet_command(interaction: discord.Interaction):
     await interaction.response.defer()
@@ -112,6 +131,10 @@ async def greet_command(interaction: discord.Interaction):
     await interaction.followup.send("Greeting and image posted.")
 
 
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ 🔄 /reload                                                   ║
+# ║ Reloads calendar sources and tag-to-user mapping            ║
+# ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(name="reload", description="Reload calendar sources and tag-user mappings")
 async def reload_command(interaction: discord.Interaction):
     await interaction.response.defer()
@@ -120,6 +143,10 @@ async def reload_command(interaction: discord.Interaction):
     await interaction.followup.send("Reloaded calendar sources and tag mappings.")
 
 
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ 📇 /who                                                      ║
+# ║ Displays all active tags and their mapped display names     ║
+# ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(name="who", description="List calendar tags and their assigned users")
 async def who_command(interaction: discord.Interaction):
     await interaction.response.defer()
@@ -127,6 +154,10 @@ async def who_command(interaction: discord.Interaction):
     await interaction.followup.send("**Calendar Tags:**\n" + "\n".join(lines))
 
 
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ 🔗 resolve_tag_mappings                                      ║
+# ║ Assigns display names and colors to tags based on members   ║
+# ╚═════════════════════════════════════════════════════════════╝
 async def resolve_tag_mappings():
     logger.info("Resolving Discord tag-to-name mappings...")
     guild = discord.utils.get(bot.guilds)

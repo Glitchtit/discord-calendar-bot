@@ -2,20 +2,29 @@ from datetime import datetime, timedelta, date
 from dateutil import tz
 
 
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📅 get_today                                                       ║
+# ║ Returns the current date in the local timezone                    ║
+# ╚════════════════════════════════════════════════════════════════════╝
 def get_today() -> date:
-    """Return the current date in local timezone."""
     return datetime.now(tz=tz.tzlocal()).date()
 
 
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📆 get_monday_of_week                                              ║
+# ║ Returns the Monday of the given date's week                        ║
+# ╚════════════════════════════════════════════════════════════════════╝
 def get_monday_of_week(day: date) -> date:
-    """Return the Monday of the given date's week."""
     return day - timedelta(days=day.weekday())
 
 
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🔤 emoji_for_event                                                 ║
+# ║ Attempts to guess an emoji based on event title                    ║
+# ╚════════════════════════════════════════════════════════════════════╝
 def emoji_for_event(title: str) -> str:
-    """Guess an emoji based on the event title."""
     title = title.lower()
-    if "class" in title or "lecture" in title or "EM" in title or "IA" in title:
+    if "class" in title or "lecture" in title or "em" in title or "ia" in title:
         return "📚"
     if "meeting" in title:
         return "📞"
@@ -31,8 +40,12 @@ def emoji_for_event(title: str) -> str:
         return "📅"
     return "•"
 
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📝 format_event                                                    ║
+# ║ Converts an event dictionary into a stylized, readable string     ║
+# ╚════════════════════════════════════════════════════════════════════╝
 def format_event(event: dict) -> str:
-    """Return a styled, readable event summary."""
     start = event["start"].get("dateTime", event["start"].get("date"))
     end = event["end"].get("dateTime", event["end"].get("date"))
     title = event.get("summary", "Untitled")
@@ -57,9 +70,11 @@ def format_event(event: dict) -> str:
     return f"{emoji} **{title}** `{time_range}`{location_str}"
 
 
-
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📅 is_in_current_week                                              ║
+# ║ Determines if an event occurs within the current week             ║
+# ╚════════════════════════════════════════════════════════════════════╝
 def is_in_current_week(event: dict, reference: date = None) -> bool:
-    """Return True if the event occurs within the current week."""
     reference = reference or get_today()
     monday = get_monday_of_week(reference)
     week_range = {monday + timedelta(days=i) for i in range(7)}
@@ -68,8 +83,11 @@ def is_in_current_week(event: dict, reference: date = None) -> bool:
     return dt.date() in week_range
 
 
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🔍 resolve_input_to_tags                                           ║
+# ║ Maps user-friendly input strings to internal calendar tags        ║
+# ╚════════════════════════════════════════════════════════════════════╝
 def resolve_input_to_tags(input_str: str, tag_names: dict, grouped_calendars: dict) -> list[str]:
-    """Convert user input (tag or name) to matching tag list."""
     requested = [s.strip().lower() for s in input_str.split(",") if s.strip()]
     matched = set()
     for item in requested:
