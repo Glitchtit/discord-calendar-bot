@@ -48,12 +48,13 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📅 post_tagged_events                                              ║
 # ║ Sends an embed of events for a specific tag on a given day        ║
+# ║ Returns True if events were posted, False otherwise               ║
 # ╚════════════════════════════════════════════════════════════════════╝
-async def post_tagged_events(bot, tag: str, day: datetime.date):
+async def post_tagged_events(bot, tag: str, day: datetime.date) -> bool:
     calendars = GROUPED_CALENDARS.get(tag)
     if not calendars:
         logger.warning(f"No calendars found for tag: {tag}")
-        return
+        return False
 
     events_by_source = defaultdict(list)
     for meta in calendars:
@@ -63,7 +64,7 @@ async def post_tagged_events(bot, tag: str, day: datetime.date):
 
     if not events_by_source:
         logger.debug(f"Skipping {tag} — no events for {day}")
-        return
+        return False
 
     embed = discord.Embed(
         title=f"🗓️ Herald’s Scroll — {get_name_for_tag(tag)}",
@@ -87,6 +88,7 @@ async def post_tagged_events(bot, tag: str, day: datetime.date):
 
     embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
     await send_embed(bot, embed=embed)
+    return True
 
 
 # ╔════════════════════════════════════════════════════════════════════╗

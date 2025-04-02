@@ -74,6 +74,8 @@ async def herald_command(interaction: discord.Interaction):
     await interaction.followup.send("Herald posted for **all** tags — week and today.")
 
 
+# ... (imports and setup remain unchanged)
+
 # ╔═════════════════════════════════════════════════════════════╗
 # ║ 🗓️ /agenda                                                   ║
 # ║ Posts events for a given date or natural language input     ║
@@ -97,14 +99,17 @@ async def agenda_command(interaction: discord.Interaction, input: str, target: s
         await interaction.followup.send("No matching tags or names found.")
         return
 
+    any_posted = False
     if input.lower() == "today":
         for tag in tags:
-            await post_tagged_events(bot, tag, today)
+            posted = await post_tagged_events(bot, tag, today)
+            any_posted |= posted
         label = today.strftime("%A, %B %d")
     elif input.lower() == "week":
         monday = get_monday_of_week(today)
         for tag in tags:
             await post_tagged_week(bot, tag, monday)
+        any_posted = True  # Weekly always posts if calendars are valid
         label = f"week of {monday.strftime('%B %d')}"
     else:
         parsed = dateparser.parse(input)
@@ -113,11 +118,16 @@ async def agenda_command(interaction: discord.Interaction, input: str, target: s
             return
         day = parsed.date()
         for tag in tags:
-            await post_tagged_events(bot, tag, day)
+            posted = await post_tagged_events(bot, tag, day)
+            any_posted |= posted
         label = day.strftime("%A, %B %d")
 
     tag_names = ", ".join(TAG_NAMES.get(t, t) for t in tags)
-    await interaction.followup.send(f"Agenda posted for **{tag_names}** on **{label}**.")
+    if any_posted:
+        await interaction.followup.send(f"Agenda posted for **{tag_names}** on **{label}**.")
+    else:
+        await interaction.followup.send(f"No events found for **{tag_names}** on **{label}**.")
+
 
 
 # ╔═════════════════════════════════════════════════════════════╗
