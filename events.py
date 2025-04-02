@@ -193,14 +193,23 @@ def get_events(source_meta, start_date, end_date):
 # ║ Generates a stable hash for an event's core details               ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def compute_event_fingerprint(event: dict) -> str:
-    def norm_time(val: str) -> str:
-        return val.replace("Z", "+00:00") if "Z" in val else val
+    def normalize_time(val: str) -> str:
+        if "Z" in val:
+            val = val.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(val)
+        return dt.isoformat(timespec="minutes")
 
-    summary = event.get("summary", "")
-    start = norm_time(event["start"].get("dateTime", event["start"].get("date", "")))
-    end = norm_time(event["end"].get("dateTime", event["end"].get("date", "")))
-    location = event.get("location", "")
-    description = event.get("description", "")
+    def clean(text: str) -> str:
+        return " ".join(text.strip().split())
+
+    summary = clean(event.get("summary", ""))
+    location = clean(event.get("location", ""))
+    description = clean(event.get("description", ""))
+
+    start_raw = event["start"].get("dateTime", event["start"].get("date", ""))
+    end_raw = event["end"].get("dateTime", event["end"].get("date", ""))
+    start = normalize_time(start_raw)
+    end = normalize_time(end_raw)
 
     trimmed = {
         "summary": summary,
@@ -212,3 +221,4 @@ def compute_event_fingerprint(event: dict) -> str:
 
     normalized_json = json.dumps(trimmed, sort_keys=True)
     return hashlib.md5(normalized_json.encode("utf-8")).hexdigest()
+
