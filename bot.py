@@ -85,8 +85,8 @@ async def herald_command(interaction: discord.Interaction):
     description="Post events for a date or range (e.g. 'tomorrow', 'week'), with optional tag filter"
 )
 @app_commands.describe(
-    input="A natural date or keyword: 'today', 'week', 'next monday', 'April 10'",
-    target="Optional calendar tag or display name (e.g. Thomas, Anniina)"
+    input="A natural date or keyword: 'today', 'week', 'next monday', 'April 10', 'DD.MM'",
+    target="Optional calendar tag or display name (e.g. Bob, xXsNiPeRkId69Xx)"
 )
 @app_commands.autocomplete(input=autocomplete_agenda_input, target=autocomplete_agenda_target)
 async def agenda_command(interaction: discord.Interaction, input: str, target: str = ""):
