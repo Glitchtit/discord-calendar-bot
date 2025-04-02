@@ -50,7 +50,6 @@ def get_name_for_tag(tag):
 def get_color_for_tag(tag):
     return TAG_COLORS.get(tag, 0x95a5a6)  # Default gray color
 
-
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📦 Calendar Source Parsing                                         ║
 # ║ Parses CALENDAR_SOURCES into structured source info               ║
@@ -66,7 +65,6 @@ def parse_calendar_sources():
                 parsed.append((prefix, id_or_url.strip(), tag.strip().upper()))
                 logger.debug(f"Parsed calendar source: {prefix}:{id_or_url.strip()} (tag={tag.strip().upper()})")
     return parsed
-
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📄 Calendar Metadata Fetching                                     ║
@@ -91,7 +89,6 @@ def fetch_ics_calendar_metadata(url):
     logger.debug(f"Loaded ICS calendar metadata: {name}")
     return {"type": "ics", "id": url, "name": name}
 
-
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📚 Source Loader                                                   ║
 # ║ Groups calendar sources by tag and loads them into memory         ║
@@ -107,7 +104,6 @@ def load_calendar_sources():
     return grouped
 
 GROUPED_CALENDARS = load_calendar_sources()
-
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 💾 Event Snapshot Persistence                                      ║
@@ -129,7 +125,6 @@ def save_current_events_for_key(key, events):
     with open(EVENTS_FILE, "w", encoding="utf-8") as f:
         json.dump(all_data, f, ensure_ascii=False)
     logger.info(f"Saved events for key '{key}'.")
-
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📆 Event Fetching                                                  ║
@@ -164,17 +159,25 @@ def get_ics_events(start_date, end_date, url):
         for e in cal.events:
             if start_date <= e.begin.date() <= end_date:
                 id_source = f"{e.name}|{e.begin}|{e.end}|{e.location or ''}"
-                event_id = hashlib.md5(id_source.encode("utf-8")).hexdigest()
-                events.append({
+                event = {
                     "summary": e.name,
                     "start": {"dateTime": e.begin.isoformat()},
                     "end": {"dateTime": e.end.isoformat()},
                     "location": e.location or "",
                     "description": e.description or "",
-                    "id": event_id
-                })
-        logger.debug(f"Fetched {len(events)} ICS events from {url}")
-        return events
+                    "id": hashlib.md5(id_source.encode("utf-8")).hexdigest()
+                }
+                events.append(event)
+
+        seen_fps = set()
+        deduped = []
+        for e in events:
+            fp = compute_event_fingerprint(e)
+            if fp not in seen_fps:
+                seen_fps.add(fp)
+                deduped.append(e)
+        logger.debug(f"Deduplicated to {len(deduped)} ICS events")
+        return deduped
     except Exception as e:
         logger.exception(f"Error fetching/parsing ICS calendar: {url}")
         return []
@@ -186,7 +189,6 @@ def get_events(source_meta, start_date, end_date):
     elif source_meta["type"] == "ics":
         return get_ics_events(start_date, end_date, source_meta["id"])
     return []
-
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🧬 compute_event_fingerprint                                       ║
@@ -221,4 +223,3 @@ def compute_event_fingerprint(event: dict) -> str:
 
     normalized_json = json.dumps(trimmed, sort_keys=True)
     return hashlib.md5(normalized_json.encode("utf-8")).hexdigest()
-
