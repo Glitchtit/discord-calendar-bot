@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from dateutil import tz
 from discord.ext import tasks
+import asyncio
 
 from utils import (
     get_today,
@@ -73,7 +74,8 @@ async def watch_for_event_changes(bot):
         # Fetch and fingerprint all events in the date window
         all_events = []
         for meta in calendars:
-            all_events += get_events(meta, earliest, latest)
+            events = await asyncio.to_thread(get_events, meta, earliest, latest)
+            all_events += events
         all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
 
         key = f"{tag}_full"
@@ -119,10 +121,9 @@ async def post_todays_happenings(bot, include_greeting: bool = False):
 
     for tag in GROUPED_CALENDARS:
         await post_tagged_events(bot, tag, today)
-        all_events_for_greeting += [
-            e for meta in GROUPED_CALENDARS[tag]
-            for e in get_events(meta, today, today)
-        ]
+        for meta in GROUPED_CALENDARS[tag]:
+            events = await asyncio.to_thread(get_events, meta, today, today)
+            all_events_for_greeting += events
 
     if include_greeting:
         guild = bot.guilds[0] if bot.guilds else None
@@ -134,7 +135,7 @@ async def post_todays_happenings(bot, include_greeting: bool = False):
         greeting, persona = generate_greeting(event_titles, user_names)
 
         if greeting:
-            image_path = generate_image(greeting, persona)
+            image_path = await asyncio.to_thread(generate_image, greeting, persona)
             await send_embed(
                 bot,
                 title=f"The Morning Proclamation 📜 — {persona}",
@@ -157,7 +158,8 @@ async def initialize_event_snapshots():
     for tag, calendars in GROUPED_CALENDARS.items():
         all_events = []
         for meta in calendars:
-            all_events += get_events(meta, earliest, latest)
+            events = await asyncio.to_thread(get_events, meta, earliest, latest)
+            all_events += events
         all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
         save_current_events_for_key(f"{tag}_full", all_events)
         logger.debug(f"Initial snapshot saved for '{tag}'")
