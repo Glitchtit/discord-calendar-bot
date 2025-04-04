@@ -70,7 +70,7 @@ async def send_embed(
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🎨 /greet — AI Greeting Command
 # ╚════════════════════════════════════════════════════════════════════╝
-@app_commands.command(name="greet", description="Post an AI-generated greeting with today's schedule")
+@app_commands.command(name="greet2", description="Post an AI-generated greeting with today's schedule")
 async def greet(interaction: discord.Interaction) -> None:
     """
     Generates an AI-based greeting text and image, then sends them as
@@ -130,7 +130,7 @@ async def herald_tag_autocomplete(
 # ╔════════════════════════════════════════════════════════════════════╗
 # 📅 /herald [tag] — Posts today's events for a calendar tag
 # ╚════════════════════════════════════════════════════════════════════╝
-@app_commands.command(name="herald", description="Post today's events for a calendar tag")
+@app_commands.command(name="herald2", description="Post today's events for a calendar tag")
 @app_commands.describe(tag="Tag name (e.g., A, B, T)")
 @app_commands.autocomplete(tag=herald_tag_autocomplete)
 async def herald(interaction: discord.Interaction, tag: str) -> None:
@@ -176,7 +176,7 @@ async def herald(interaction: discord.Interaction, tag: str) -> None:
 # ╔════════════════════════════════════════════════════════════════════╗
 # 📅 /agenda [date] — Returns events for a specific date
 # ╚════════════════════════════════════════════════════════════════════╝
-@app_commands.command(name="agenda", description="See events for a specific date (natural language supported)")
+@app_commands.command(name="agenda2", description="See events for a specific date (natural language supported)")
 @app_commands.describe(date="Examples: today, tomorrow, next Thursday")
 async def agenda(interaction: discord.Interaction, date: str) -> None:
     """
