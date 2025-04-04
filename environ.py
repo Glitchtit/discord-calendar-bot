@@ -25,3 +25,6 @@ CALENDAR_SOURCES = os.getenv("CALENDAR_SOURCES")
 
 # Comma-separated user-to-tag mappings (e.g., 123456789:T, 987654321:A)
 USER_TAG_MAPPING = os.getenv("USER_TAG_MAPPING", "")
+
+# Environment variable for image size
+IMAGE_SIZE = "1024x1024"  # or "512x512", "256x256", based on your needs
