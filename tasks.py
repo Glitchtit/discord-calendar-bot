@@ -32,8 +32,6 @@ from ai import generate_greeting, generate_image
 # ║ Activates recurring task loops for scheduling and change watching ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def start_all_tasks(bot):
-    schedule_daily_posts.change_interval(minutes=1)
-    watch_for_event_changes.change_interval(seconds=10)
     schedule_daily_posts.start(bot)
     watch_for_event_changes.start(bot)
 

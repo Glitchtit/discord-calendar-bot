@@ -74,7 +74,6 @@ async def herald_command(interaction: discord.Interaction):
     await interaction.followup.send("Herald posted for **all** tags — week and today.")
 
 
-# ... (imports and setup remain unchanged)
 
 # ╔═════════════════════════════════════════════════════════════╗
 # ║ 🗓️ /agenda                                                   ║
