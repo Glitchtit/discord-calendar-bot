@@ -7,7 +7,7 @@ import os
 from typing import List, Optional
 
 import discord
-from discord import app_commands
+from discord import app_commands, Interaction
 from discord.ext.commands import Bot
 
 import dateparser
@@ -68,7 +68,7 @@ async def send_embed(
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# 📣 AI Greeting Command — /greet
+# 🎨 /greet — AI Greeting Command
 # ╚════════════════════════════════════════════════════════════════════╝
 @app_commands.command(name="greet", description="Post an AI-generated greeting with today's schedule")
 async def greet(interaction: discord.Interaction) -> None:
@@ -103,14 +103,36 @@ async def greet(interaction: discord.Interaction) -> None:
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
+# 👥 Async Autocomplete for the Herald Command
+# ╚════════════════════════════════════════════════════════════════════╝
+async def herald_tag_autocomplete(
+    interaction: Interaction,
+    current: str
+) -> List[app_commands.Choice[str]]:
+    """
+    Provides autocomplete suggestions for the tag parameter of /herald.
+    Suggests tags that start with the current input, or all tags if input is empty.
+
+    Args:
+        interaction: The current Interaction (not used in logic, but required by signature).
+        current: The user’s partial input in the slash command.
+
+    Returns:
+        A list of Choice objects for the user to pick from.
+    """
+    return [
+        app_commands.Choice(name=tag, value=tag)
+        for tag in sorted(GROUPED_CALENDARS)
+        if tag.startswith(current.upper()) or current == ""
+    ]
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
 # 📅 /herald [tag] — Posts today's events for a calendar tag
 # ╚════════════════════════════════════════════════════════════════════╝
 @app_commands.command(name="herald", description="Post today's events for a calendar tag")
 @app_commands.describe(tag="Tag name (e.g., A, B, T)")
-@app_commands.autocomplete(tag=lambda i, c: [
-    app_commands.Choice(name=tag, value=tag) for tag in sorted(GROUPED_CALENDARS)
-    if tag.startswith(c.value.upper()) or c.value == ""
-])
+@app_commands.autocomplete(tag=herald_tag_autocomplete)
 async def herald(interaction: discord.Interaction, tag: str) -> None:
     """
     Fetches today's events for a specific calendar tag (e.g., 'A', 'B', etc.)
@@ -142,7 +164,7 @@ async def herald(interaction: discord.Interaction, tag: str) -> None:
         )
         embed.set_footer(text=f"{len(all_events)} event(s) • {today.strftime('%A, %d %B %Y')}")
 
-        # Instead of sending direct in followup, we use our send_embed
+        # Use our send_embed helper
         await send_embed(bot=interaction.client, embed=embed)
         logger.info("[commands.py] ✅ Herald command posted events successfully.")
 
