@@ -20,7 +20,7 @@ intents.messages = True
 intents.guilds = True
 intents.message_content = True
 
-bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
+bot = commands.Bot(command_prefix="/", intents=intents)
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
