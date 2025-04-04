@@ -1,23 +1,65 @@
-from bot import bot
-from environ import DISCORD_BOT_TOKEN
+import asyncio
+import signal
 from log import logger
-
+from tasks import start_background_tasks
+from bot import bot
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# ║ 🚀 main                                                            ║
-# ║ Entry point for launching the Discord bot                         ║
-# ║ Ensures environment variable is present before starting the bot   ║
+# 🚀 Main Bot Starter (Async)
+# ╚════════════════════════════════════════════════════════════════════╝
+async def start():
+    logger.info("🎬 Starting calendar bot...")
+
+    # Start scheduled tasks (daily/weekly posts, snapshots, etc.)
+    start_background_tasks(bot)
+
+    try:
+        await bot.start(bot_token())
+    except Exception as e:
+        logger.exception("❌ Bot crashed during startup or runtime.")
+    finally:
+        await bot.close()
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# 🔐 Token loader (from environ)
+# ╚════════════════════════════════════════════════════════════════════╝
+def bot_token():
+    from environ import DISCORD_BOT_TOKEN
+    if not DISCORD_BOT_TOKEN:
+        logger.critical("🚫 DISCORD_BOT_TOKEN is not set.")
+        raise SystemExit(1)
+    return DISCORD_BOT_TOKEN
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# 🔁 Entrypoint & Shutdown Hook
 # ╚════════════════════════════════════════════════════════════════════╝
 def main():
-    if not DISCORD_BOT_TOKEN:
-        raise ValueError("DISCORD_BOT_TOKEN is not set in environment.")
-    logger.info("Starting Discord bot...")
-    bot.run(DISCORD_BOT_TOKEN)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown(loop)))
+
+    try:
+        loop.run_until_complete(start())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("🛑 Shutdown requested by user.")
+    finally:
+        loop.close()
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# ║ 🧩 __main__ check                                                  ║
-# ║ Allows script to be run directly (e.g., `python main.py`)         ║
+# 🧼 Cleanup logic for SIGINT/SIGTERM
+# ╚════════════════════════════════════════════════════════════════════╝
+async def shutdown(loop):
+    logger.info("🔌 Cleaning up... Shutting down bot.")
+    await bot.close()
+    tasks = [t for t in asyncio.all_tasks(loop) if t is not asyncio.current_task()]
+    [task.cancel() for task in tasks]
+    await asyncio.gather(*tasks, return_exceptions=True)
+    loop.stop()
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ▶ Run the bot
 # ╚════════════════════════════════════════════════════════════════════╝
 if __name__ == "__main__":
     main()

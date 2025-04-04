@@ -1,175 +1,69 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
-from datetime import datetime
-import dateparser
+import asyncio
+import sys
 
 from log import logger
-from events import (
-    load_calendar_sources,
-    GROUPED_CALENDARS,
-    USER_TAG_MAP,
-    TAG_NAMES,
-    TAG_COLORS,
-    get_events
-)
-from ai import generate_greeting, generate_image
-from commands import (
-    post_tagged_events,
-    post_tagged_week,
-    send_embed,
-    autocomplete_tag,
-    autocomplete_range,
-    autocomplete_agenda_target,
-    autocomplete_agenda_input
-)
-from tasks import initialize_event_snapshots, start_all_tasks, post_todays_happenings
-from utils import get_today, get_monday_of_week, resolve_input_to_tags
+from environ import DISCORD_BOT_TOKEN, DEBUG, COMMAND_PREFIX
 
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 🤖 Discord Bot Initialization                               ║
-# ║ Configures the bot with necessary intents and slash system ║
-# ╚═════════════════════════════════════════════════════════════╝
+# ╔════════════════════════════════════════════════════════════════════╗
+# 🤖 Intents & Bot Setup
+# ╚════════════════════════════════════════════════════════════════════╝
 intents = discord.Intents.default()
-intents.members = True
-bot = commands.Bot(command_prefix="/", intents=intents)
+intents.messages = True
+intents.guilds = True
+intents.message_content = True
 
+bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
 
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 🟢 on_ready                                                  ║
-# ║ Called once the bot is online and ready                     ║
-# ╚═════════════════════════════════════════════════════════════╝
+# ╔════════════════════════════════════════════════════════════════════╗
+# ⚙️ On Ready Event — Sync Commands & Log Info
+# ╚════════════════════════════════════════════════════════════════════╝
 @bot.event
 async def on_ready():
-    logger.info(f"Logged in as {bot.user}")
     try:
-        await resolve_tag_mappings()
         synced = await bot.tree.sync()
-        logger.info(f"Synced {len(synced)} commands.")
-    except Exception:
-        logger.exception("Failed during on_ready or slash sync.")
+        logger.info(f"✅ Bot is ready: {bot.user}")
+        logger.info(f"🌐 Synced {len(synced)} slash commands.")
+    except Exception as e:
+        logger.exception("Failed to sync slash commands")
 
-    await initialize_event_snapshots()
-    start_all_tasks(bot)
-
-
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 📜 /herald                                                   ║
-# ║ Posts the weekly + daily event summaries for all tags       ║
-# ╚═════════════════════════════════════════════════════════════╝
-@bot.tree.command(
-    name="herald",
-    description="Post all weekly and daily events for every calendar tag"
-)
-async def herald_command(interaction: discord.Interaction):
-    await interaction.response.defer()
-    today = get_today()
-    monday = get_monday_of_week(today)
-
-    for tag in GROUPED_CALENDARS:
-        await post_tagged_week(bot, tag, monday)
-    for tag in GROUPED_CALENDARS:
-        await post_tagged_events(bot, tag, today)
-
-    await interaction.followup.send("Herald posted for **all** tags — week and today.")
-
-
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 🗓️ /agenda                                                   ║
-# ║ Posts events for a given date or natural language input     ║
-# ╚═════════════════════════════════════════════════════════════╝
-@bot.tree.command(
-    name="agenda",
-    description="Post events for a date or range (e.g. 'tomorrow', 'week'), with optional tag filter"
-)
-@app_commands.describe(
-    input="A natural date or keyword: 'today', 'week', 'next monday', 'April 10'",
-    target="Optional calendar tag or display name (e.g. Thomas, Anniina)"
-)
-@app_commands.autocomplete(input=autocomplete_agenda_input, target=autocomplete_agenda_target)
-async def agenda_command(interaction: discord.Interaction, input: str, target: str = ""):
-    await interaction.response.defer()
-
-    today = get_today()
-    tags = resolve_input_to_tags(target, TAG_NAMES, GROUPED_CALENDARS) if target.strip() else list(GROUPED_CALENDARS.keys())
-
-    if not tags:
-        await interaction.followup.send("No matching tags or names found.")
-        return
-
-    if input.lower() == "today":
-        for tag in tags:
-            await post_tagged_events(bot, tag, today)
-        label = today.strftime("%A, %B %d")
-    elif input.lower() == "week":
-        monday = get_monday_of_week(today)
-        for tag in tags:
-            await post_tagged_week(bot, tag, monday)
-        label = f"week of {monday.strftime('%B %d')}"
+# ╔════════════════════════════════════════════════════════════════════╗
+# 🚫 Error Handling
+# ╚════════════════════════════════════════════════════════════════════╝
+@bot.event
+async def on_command_error(ctx, error):
+    if hasattr(ctx, 'command') and ctx.command:
+        logger.warning(f"Error in command '{ctx.command}': {error}")
     else:
-        parsed = dateparser.parse(input)
-        if not parsed:
-            await interaction.followup.send("Could not understand the date. Try 'today', 'week', or a real date.")
-            return
-        day = parsed.date()
-        for tag in tags:
-            await post_tagged_events(bot, tag, day)
-        label = day.strftime("%A, %B %d")
+        logger.warning(f"Unhandled error: {error}")
 
-    tag_names = ", ".join(TAG_NAMES.get(t, t) for t in tags)
-    await interaction.followup.send(f"Agenda posted for **{tag_names}** on **{label}**.")
+# ╔════════════════════════════════════════════════════════════════════╗
+# 📦 Load All Cogs Dynamically
+# ╚════════════════════════════════════════════════════════════════════╝
+async def load_cogs():
+    try:
+        await bot.load_extension("commands")
+        logger.info("✅ Loaded commands extension.")
+    except Exception as e:
+        logger.exception("Failed to load commands extension.")
 
+# ╔════════════════════════════════════════════════════════════════════╗
+# 🚀 Main Entrypoint
+# ╚════════════════════════════════════════════════════════════════════╝
+async def run_bot():
+    await load_cogs()
+    try:
+        await bot.start(DISCORD_BOT_TOKEN)
+    except KeyboardInterrupt:
+        logger.info("🛑 Bot shutdown requested.")
+        await bot.close()
+    except Exception:
+        logger.exception("🚨 Bot crashed unexpectedly")
+        sys.exit(1)
 
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 🎭 /greet                                                    ║
-# ║ Generates a persona-based medieval greeting with image      ║
-# ╚═════════════════════════════════════════════════════════════╝
-@bot.tree.command(name="greet", description="Post the morning greeting with image")
-async def greet_command(interaction: discord.Interaction):
-    await interaction.response.defer()
-    await post_todays_happenings(bot, include_greeting=True)
-    await interaction.followup.send("Greeting and image posted.")
-
-
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 🔄 /reload                                                   ║
-# ║ Reloads calendar sources and tag-to-user mapping            ║
-# ╚═════════════════════════════════════════════════════════════╝
-@bot.tree.command(name="reload", description="Reload calendar sources and tag-user mappings")
-async def reload_command(interaction: discord.Interaction):
-    await interaction.response.defer()
-    load_calendar_sources()
-    await resolve_tag_mappings()
-    await interaction.followup.send("Reloaded calendar sources and tag mappings.")
-
-
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 📇 /who                                                      ║
-# ║ Displays all active tags and their mapped display names     ║
-# ╚═════════════════════════════════════════════════════════════╝
-@bot.tree.command(name="who", description="List calendar tags and their assigned users")
-async def who_command(interaction: discord.Interaction):
-    await interaction.response.defer()
-    lines = [f"**{tag}** → {TAG_NAMES.get(tag, tag)}" for tag in sorted(GROUPED_CALENDARS)]
-    await interaction.followup.send("**Calendar Tags:**\n" + "\n".join(lines))
-
-
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 🔗 resolve_tag_mappings                                      ║
-# ║ Assigns display names and colors to tags based on members   ║
-# ╚═════════════════════════════════════════════════════════════╝
-async def resolve_tag_mappings():
-    logger.info("Resolving Discord tag-to-name mappings...")
-    guild = discord.utils.get(bot.guilds)
-    if not guild:
-        logger.warning("No guild found.")
-        return
-    for user_id, tag in USER_TAG_MAP.items():
-        member = guild.get_member(user_id)
-        if member:
-            TAG_NAMES[tag] = member.nick or member.display_name
-            role_color = next((r.color.value for r in member.roles if r.color.value != 0), 0x95a5a6)
-            TAG_COLORS[tag] = role_color
-            logger.info(f"Assigned {tag}: name={TAG_NAMES[tag]}, color=#{role_color:06X}")
-        else:
-            logger.warning(f"Could not resolve Discord member for ID {user_id}")
+# ╔════════════════════════════════════════════════════════════════════╗
+# 🔁 Entry
+# ╚════════════════════════════════════════════════════════════════════╝
+if __name__ == "__main__":
+    asyncio.run(run_bot())

@@ -1,158 +1,85 @@
-import time
 import random
-import requests
-import json
-import os
-from datetime import datetime
-from openai import OpenAI
+import openai
+import asyncio
+
+from environ import OPENAI_API_KEY, IMAGE_SIZE
 from log import logger
 
-# Initialize OpenAI client with API key from environment
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
+openai.api_key = OPENAI_API_KEY
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# ║ 🗣️ generate_greeting                                               ║
-# ║ Creates a medieval-style greeting message in a randomized persona ║
-# ║ based on upcoming event titles and present user names.            ║
+# 🤖 Greeting Prompt Templates & Personas
 # ╚════════════════════════════════════════════════════════════════════╝
-def generate_greeting(event_titles: list[str], user_names: list[str] = []) -> tuple[str | None, str]:
+GREETING_PROMPTS = [
+    "A mysterious AI scribe welcomes the realm to a new day.",
+    "A cheerful bard announces the start of a productive day.",
+    "A futuristic assistant prepares the calendar for the adventurers.",
+    "A cyberpunk oracle forecasts the schedule with poetic flair.",
+    "A steampunk automaton delivers today's scrolls with precision gears."
+]
+
+PERSONAS = [
+    "A wise old mage with a flair for calendar magic.",
+    "A futuristic holographic AI companion.",
+    "A royal herald from a fantasy kingdom.",
+    "A charismatic robot who loves productivity.",
+    "A bard who turns calendars into poems."
+]
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# 🧠 Generate Text Completion Prompt (Greeting)
+# ╚════════════════════════════════════════════════════════════════════╝
+async def generate_greeting_text() -> str:
+    system_prompt = "You are a character who announces daily schedules in a creative and entertaining way."
+    persona = random.choice(PERSONAS)
+    user_prompt = random.choice(GREETING_PROMPTS)
+
+    logger.debug(f"[ai.py] Using persona: {persona}")
+    logger.debug(f"[ai.py] Prompt: {user_prompt}")
+
     try:
-        today = datetime.now().strftime("%A, %B %d")
-        event_summary = ", ".join(event_titles) if event_titles else "no notable engagements"
-        logger.debug(f"Generating greeting for events: {event_summary}")
-
-        # Randomly choose one of the medieval personas
-        style = random.choice(["butler", "bard", "alchemist", "decree"])
-        logger.debug(f"Selected persona style: {style}")
-
-        # Persona name mapping
-        persona_names = {
-            "butler": "Sir Reginald the Butler",
-            "bard": "Lyricus the Bard",
-            "alchemist": "Elarion the Alchemist",
-            "decree": "Herald of the Crown"
-        }
-        persona = persona_names[style]
-
-        # Common instruction for medieval tone
-        base_instruction = (
-            "All responses must be written in archaic, Shakespearean English befitting the medieval age. "
-            "Use 'thou', 'dost', 'hath', and other appropriate forms. Do not use any modern phrasing."
-        )
-
-        names_clause = ""
-        if user_names:
-            present_names = ", ".join(user_names)
-            names_clause = f"\nThese nobles are present today: {present_names}."
-
-        # Persona-specific prompts and styles
-        prompts = {
-            "butler": (
-                f"Good morrow, my liege. 'Tis {today}, and the courtly matters doth include: {event_summary}.{names_clause}\n"
-                f"Compose a morning address in the voice of a loyal medieval butler, under 80 words.",
-                "Thou art a deeply loyal medieval butler who speaketh in reverent, formal Elizabethan English."
-            ),
-            "bard": (
-                f"Hark, noble kin! This fine morn of {today} bringeth tidings of: {event_summary}.{names_clause}\n"
-                f"Craft a poetic morning verse as a merry bard would, within 80 words.",
-                "Thou art a poetic bard, who doth speak in rhymes and jests and singsongs of yore."
-            ),
-            "alchemist": (
-                f"Verily, on {today}, the ether shall swirl with: {event_summary}.{names_clause}\n"
-                f"Speaketh a morning prophecy in the tongue of a raving alchemist, fewer than 80 words.",
-                "Thou art an eccentric and prophetic alchemist, rambling in visions and olde-tongue riddles."
-            ),
-            "decree": (
-                f"Hearken ye! Upon this {today}, the realm shall see: {event_summary}.{names_clause}\n"
-                f"Pronounce a royal decree in bold tone, beneath 80 words.",
-                "Thou art the herald of the crown, proclaiming stately decrees in archaic, noble tongue."
-            )
-        }
-
-        prompt, persona_instruction = prompts[style]
-        system_msg = persona_instruction + " " + base_instruction
-
-        # OpenAI API call for generating the greeting
-        logger.debug("Calling OpenAI API for greeting...")
-        response = client.chat.completions.create(
-            model="gpt-4o",
+        response = await openai.ChatCompletion.acreate(
+            model="gpt-4",
             messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"{user_prompt}\nStay in character as {persona}."}
             ],
-            max_tokens=150,
+            temperature=0.8,
+            max_tokens=150
         )
-
-        message = response.choices[0].message.content.strip()
-        message += f"\n\n— {persona}"
-        logger.info(f"Greeting generated by {persona}")
-        return message, persona
-    except Exception:
-        logger.exception("Failed to generate greeting")
-        return None, "Unknown Persona"
-
+        message = response["choices"][0]["message"]["content"].strip()
+        return message
+    except Exception as e:
+        logger.error(f"❌ OpenAI text completion failed: {e}")
+        return "📜 The herald was speechless today."
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# ║ 🎨 generate_image                                                  ║
-# ║ Creates a DALL·E-generated image based on the greeting and        ║
-# ║ persona vibe, using a stylized Bayeux Tapestry art prompt.        ║
+# 🎨 Generate Image Prompt from Text
 # ╚════════════════════════════════════════════════════════════════════╝
-def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | None:
-    # Persona-specific visual styles
-    persona_vibe = {
-        "Sir Reginald the Butler": "a dignified, well-dressed butler bowing in a candlelit medieval hallway",
-        "Lyricus the Bard": "a cheerful bard strumming a lute in a bustling medieval tavern",
-        "Elarion the Alchemist": "an eccentric alchemist surrounded by glowing potions in a cluttered tower",
-        "Herald of the Crown": "a royal herald on horseback with scrolls, in front of a castle courtyard"
-    }
+async def generate_greeting_image(prompt: str, file_path: str = "/tmp/dalle-image.png") -> str | None:
+    if not prompt:
+        prompt = "a fantasy AI calendar assistant greeting the morning with elegance"
+    try:
+        logger.debug(f"[ai.py] Requesting image with prompt: {prompt}")
+        response = await openai.Image.acreate(
+            model="dall-e-3",
+            prompt=prompt,
+            n=1,
+            size=IMAGE_SIZE,
+            response_format="url"
+        )
+        image_url = response["data"][0]["url"]
 
-    visual_context = persona_vibe.get(persona, "medieval character")
-    prompt = (
-        f"Scene inspired by the following proclamation: '{greeting}'\n"
-        f"Depict {visual_context}, illustrated in the style of the Bayeux Tapestry, "
-        f"with humorous medieval cartoon characters, textured linen background, and stitched-looking text."
-    )
-
-    # Retry loop for content policy or transient failures
-    for attempt in range(max_retries):
-        try:
-            logger.debug(f"[{persona}] Generating image (attempt {attempt + 1})...")
-            response = client.images.generate(
-                model="dall-e-3",
-                prompt=prompt,
-                size="1024x1024",
-                quality="standard",
-                n=1,
-                response_format="url"
-            )
-            image_url = response.data[0].url
-            image_response = requests.get(image_url)
-            image_response.raise_for_status()
-
-            os.makedirs("/data/art", exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            image_path = f"/data/art/generated_{timestamp}.png"
-            with open(image_path, "wb") as f:
-                f.write(image_response.content)
-
-            logger.info(f"Image saved to {image_path}")
-            return image_path
-
-        except Exception as e:
-            # Retry if OpenAI blocks due to content policy
-            if hasattr(e, "status_code") and e.status_code == 400 and "content_policy_violation" in str(e).lower():
-                logger.warning(f"[{persona}] Content policy violation (attempt {attempt + 1})")
-                if attempt + 1 < max_retries:
-                    time.sleep(1)
-                    continue
-                else:
-                    logger.error("Image prompt blocked after multiple attempts.")
+        # Download and save image
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url) as resp:
+                if resp.status != 200:
+                    logger.warning(f"[ai.py] Failed to fetch image from URL: {image_url}")
                     return None
-            else:
-                logger.exception("Unexpected error during image generation")
-                if attempt + 1 == max_retries:
-                    logger.error("Max retries reached. Skipping image.")
-                    return None
-
-    return None
+                with open(file_path, "wb") as f:
+                    f.write(await resp.read())
+        return file_path
+    except Exception as e:
+        logger.error(f"🎨 Failed to generate or download image: {e}")
+        return None

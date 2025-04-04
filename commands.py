@@ -1,24 +1,107 @@
 import os
-from datetime import datetime, timedelta
-from dateutil import tz
 import discord
 from discord import app_commands
-from collections import defaultdict
+from discord.ext import commands
+from datetime import datetime, timedelta
+import dateparser
 
-from events import (
-    GROUPED_CALENDARS,
-    get_events,
-    get_name_for_tag,
-    get_color_for_tag,
-    TAG_NAMES
-)
+from events import GROUPED_CALENDARS, get_events, get_name_for_tag, get_color_for_tag
+from utils import format_event, get_today, get_monday_of_week, is_in_current_week, resolve_tz
 from log import logger
-from utils import format_event, resolve_input_to_tags
+from ai import generate_greeting_text, generate_greeting_image
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# ║ 📤 send_embed                                                      ║
-# ║ Sends an embed to the announcement channel, optionally with image ║
+# 📣 AI Greeting Command — AI-generated greeting + image
+# ╚════════════════════════════════════════════════════════════════════╝
+@app_commands.command(name="greet", description="Post an AI-generated greeting with today's schedule")
+async def greet(interaction: discord.Interaction):
+    await interaction.response.defer()
+    logger.info(f"🎨 Generating AI greeting for {interaction.user}...")
+
+    # Generate greeting text
+    greeting_text = await generate_greeting_text()
+    
+    # Generate AI image for the greeting
+    image_path = await generate_greeting_image(greeting_text)
+
+    # Send embed with greeting
+    await send_embed(interaction.bot, title="📣 Daily AI Greeting", description=greeting_text, image_path=image_path)
+    logger.info(f"✅ AI greeting posted.")
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# 📅 /herald [tag] — Posts today's events for a calendar tag
+# ╚════════════════════════════════════════════════════════════════════╝
+@app_commands.command(name="herald", description="Post today's events for a calendar tag")
+@app_commands.describe(tag="Tag name (e.g., A, B, T)")
+@app_commands.autocomplete(tag=lambda i, c: [
+    app_commands.Choice(name=tag, value=tag) for tag in sorted(GROUPED_CALENDARS)
+    if tag.startswith(c.value.upper()) or c.value == ""
+])
+async def herald(interaction: discord.Interaction, tag: str):
+    await interaction.response.defer()
+    logger.info(f"📣 /herald called by {interaction.user} for tag '{tag}'")
+
+    today = get_today()
+    all_events = []
+    for source in GROUPED_CALENDARS.get(tag.upper(), []):
+        events = await interaction.bot.loop.run_in_executor(None, get_events, source, today, today)
+        all_events.extend(events)
+
+    all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
+
+    if not all_events:
+        await interaction.followup.send(f"⚠️ No events found today for tag `{tag}`.")
+        return
+
+    embed = discord.Embed(
+        title=f"📅 Today’s Events — {get_name_for_tag(tag)}",
+        color=get_color_for_tag(tag),
+        description="\n\n".join(format_event(e) for e in all_events)
+    )
+    embed.set_footer(text=f"{len(all_events)} event(s) • {today.strftime('%A, %d %B %Y')}")
+    await interaction.followup.send(embed=embed)
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# 📅 /agenda [date] — Returns events for any given day (natural language)
+# ╚════════════════════════════════════════════════════════════════════╝
+@app_commands.command(name="agenda", description="See events for a specific date (natural language supported)")
+@app_commands.describe(date="Examples: today, tomorrow, next Thursday")
+async def agenda(interaction: discord.Interaction, date: str):
+    await interaction.response.defer()
+    logger.info(f"📅 /agenda called by {interaction.user}: {date!r}")
+
+    dt = dateparser.parse(date)
+    if not dt:
+        await interaction.followup.send("⚠️ Could not understand that date.")
+        return
+
+    day = dt.date()
+    all_events = []
+    for tag, sources in GROUPED_CALENDARS.items():
+        for source in sources:
+            events = await interaction.bot.loop.run_in_executor(None, get_events, source, day, day)
+            all_events.extend(events)
+
+    all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
+
+    if not all_events:
+        await interaction.followup.send(f"No events found for `{date}`.")
+        return
+
+    embed = discord.Embed(
+        title=f"🗓️ Agenda for {day.strftime('%A, %d %B %Y')}",
+        color=0x3498db,
+        description="\n\n".join(format_event(e) for e in all_events)
+    )
+    embed.set_footer(text=f"{len(all_events)} event(s)")
+    await interaction.followup.send(embed=embed)
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# 📤 send_embed Helper Function — Sends embeds to the announcement channel
 # ╚════════════════════════════════════════════════════════════════════╝
 async def send_embed(bot, embed: discord.Embed = None, title: str = "", description: str = "", color: int = 5814783, image_path: str | None = None):
     if isinstance(embed, str):
@@ -46,106 +129,8 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# ║ 📅 post_tagged_events                                              ║
-# ║ Sends an embed of events for a specific tag on a given day        ║
+# 🔍 Autocomplete Helper — Resolves slash command inputs for tags
 # ╚════════════════════════════════════════════════════════════════════╝
-async def post_tagged_events(bot, tag: str, day: datetime.date):
-    calendars = GROUPED_CALENDARS.get(tag)
-    if not calendars:
-        logger.warning(f"No calendars found for tag: {tag}")
-        return
-
-    events_by_source = defaultdict(list)
-    for meta in calendars:
-        events = get_events(meta, day, day)
-        for e in events:
-            events_by_source[meta["name"]].append(e)
-
-    if not events_by_source:
-        logger.debug(f"Skipping {tag} — no events for {day}")
-        return
-
-    embed = discord.Embed(
-        title=f"🗓️ Herald’s Scroll — {get_name_for_tag(tag)}",
-        description=f"Events for **{day.strftime('%A, %B %d')}**",
-        color=get_color_for_tag(tag)
-    )
-
-    for source_name, events in sorted(events_by_source.items()):
-        if not events:
-            continue
-        formatted_events = [
-            f" {format_event(e)}"
-            for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
-        ]
-
-        embed.add_field(
-            name=f"📖 {source_name}",
-            value="\n".join(formatted_events) + "\n\u200b",
-            inline=False
-        )
-
-    embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
-    await send_embed(bot, embed=embed)
-
-
-# ╔════════════════════════════════════════════════════════════════════╗
-# ║ 📆 post_tagged_week                                                ║
-# ║ Sends an embed of the weekly schedule for a given calendar tag    ║
-# ╚════════════════════════════════════════════════════════════════════╝
-async def post_tagged_week(bot, tag: str, monday: datetime.date):
-    calendars = GROUPED_CALENDARS.get(tag)
-    if not calendars:
-        logger.warning(f"No calendars for tag {tag}")
-        return
-
-    end = monday + timedelta(days=6)
-    all_events = []
-    for meta in calendars:
-        all_events += get_events(meta, monday, end)
-
-    if not all_events:
-        logger.debug(f"Skipping {tag} — no weekly events from {monday} to {end}")
-        return
-
-    events_by_day = defaultdict(list)
-    for e in all_events:
-        start_str = e["start"].get("dateTime", e["start"].get("date"))
-        dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
-        events_by_day[dt.date()].append(e)
-
-    embed = discord.Embed(
-        title=f"📜 Herald’s Week — {get_name_for_tag(tag)}",
-        description=f"Week of **{monday.strftime('%B %d')}**",
-        color=get_color_for_tag(tag)
-    )
-
-    for i in range(7):
-        day = monday + timedelta(days=i)
-        day_events = events_by_day.get(day, [])
-        if not day_events:
-            continue
-
-        formatted_events = [
-            f" {format_event(e)}"
-            for e in sorted(day_events, key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
-        ]
-
-        embed.add_field(
-            name=f"📅 {day.strftime('%A')}",
-            value="\n".join(formatted_events) + "\n\u200b",
-            inline=False
-        )
-
-    embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
-    await send_embed(bot, embed=embed)
-
-
-# ╔════════════════════════════════════════════════════════════════════╗
-# ║ 🔍 Autocomplete Functions for Slash Commands                       ║
-# ║ Provide dynamic suggestions in Discord UI                         ║
-# ╚════════════════════════════════════════════════════════════════════╝
-
 def get_known_tags():
     return list(GROUPED_CALENDARS.keys())
 
@@ -155,26 +140,3 @@ async def autocomplete_tag(interaction: discord.Interaction, current: str):
         app_commands.Choice(name=tag, value=tag)
         for tag in get_known_tags() if current.lower() in tag.lower()
     ]
-
-
-async def autocomplete_range(interaction: discord.Interaction, current: str):
-    return [
-        app_commands.Choice(name=r, value=r)
-        for r in ["today", "week"] if current.lower() in r
-    ]
-
-
-async def autocomplete_agenda_input(interaction: discord.Interaction, current: str):
-    suggestions = ["today", "tomorrow", "week", "next monday", "this friday"]
-    return [
-        app_commands.Choice(name=s, value=s)
-        for s in suggestions if current.lower() in s.lower()
-    ]
-
-
-async def autocomplete_agenda_target(interaction: discord.Interaction, current: str):
-    suggestions = list(set(get_known_tags() + list(TAG_NAMES.values())))
-    return [
-        app_commands.Choice(name=s, value=s)
-        for s in suggestions if current.lower() in s.lower()
-    ][:25]

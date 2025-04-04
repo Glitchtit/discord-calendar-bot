@@ -1,12 +1,28 @@
-openai==1.69.0
-google-api-python-client==2.123.0
+# Core Discord bot framework
+discord.py==2.3.2
+
+# Calendar + time parsing
+icalendar==5.0.11
+python-dateutil==2.8.2
+pytz==2024.1
+zoneinfo; python_version < "3.9"
+dateparser==1.2.0
+
+# Google Calendar API
+google-api-python-client==2.120.0
 google-auth==2.29.0
 google-auth-oauthlib==1.2.0
-python-dateutil==2.9.0.post0
-ics==0.7.2
-requests==2.31.0
-schedule==1.2.1
-rich==13.7.1
+
+# AI APIs
+openai==1.14.3
+aiohttp==3.9.3
+
+# Logging & utils
 colorlog==6.8.2
-discord.py==2.3.2
-dateparser==1.1.8
+requests==2.31.0
+
+# Type hints (optional)
+types-requests==2.31.0.20240106
+
+# For Docker builds (optional for time zone support)
+tzdata
