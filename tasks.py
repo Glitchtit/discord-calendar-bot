@@ -62,7 +62,7 @@ async def schedule_daily_posts(bot):
 # ║ 🕵️ watch_for_event_changes                                        ║
 # ║ Detects new or removed events in the current week and posts diffs ║
 # ╚════════════════════════════════════════════════════════════════════╝
-@tasks.loop(seconds=10)
+@tasks.loop(seconds=60)
 async def watch_for_event_changes(bot):
     today = get_today()
     monday = get_monday_of_week(today)
