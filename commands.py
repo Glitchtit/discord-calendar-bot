@@ -1,12 +1,10 @@
 import os
 import discord
 from discord import app_commands
-from discord.ext import commands
-from datetime import datetime, timedelta
 import dateparser
 
 from events import GROUPED_CALENDARS, get_events, get_name_for_tag, get_color_for_tag
-from utils import format_event, get_today, get_monday_of_week, is_in_current_week, resolve_tz
+from utils import format_event, get_today
 from log import logger
 from ai import generate_greeting_text, generate_greeting_image
 
