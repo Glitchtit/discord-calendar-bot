@@ -1,19 +1,34 @@
+"""
+log.py: Logging setup for the calendar bot.
+
+Provides a 'logger' instance preconfigured with:
+1. A colorized console handler for debug-level logs (if DEBUG is true).
+2. A TimedRotatingFileHandler that rotates daily, keeping up to 14 days of logs.
+3. Consistent formatting for both console and file output.
+
+Usage:
+    from log import logger
+    logger.info("Hello, world!")
+"""
+
 import os
 import logging
 from logging.handlers import TimedRotatingFileHandler
+from typing import Final
+
 from colorlog import ColoredFormatter
+from environ import DEBUG
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# 🔧 Configuration
+# 🔧 Directories & Filenames
 # ╚════════════════════════════════════════════════════════════════════╝
-LOG_DIR = "/data/logs"
-LOG_FILE = os.path.join(LOG_DIR, "bot.log")
-DEBUG = os.environ.get("DEBUG", "false").lower() in ("1", "true", "yes")
+LOG_DIR: Final[str] = "/data/logs"
+LOG_FILE: Final[str] = os.path.join(LOG_DIR, "bot.log")
 
 os.makedirs(LOG_DIR, exist_ok=True)
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# 🎨 Console Formatter
+# 🎨 Console Formatter & Handler
 # ╚════════════════════════════════════════════════════════════════════╝
 color_formatter = ColoredFormatter(
     fmt="%(log_color)s[%(asctime)s] [%(levelname)-8s] %(name)s: %(message)s",
@@ -53,11 +68,17 @@ file_handler.setFormatter(file_formatter)
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🧱 Logger Setup
 # ╚════════════════════════════════════════════════════════════════════╝
-logger = logging.getLogger("calendarbot")
+logger: logging.Logger = logging.getLogger("calendarbot")
 logger.setLevel(logging.DEBUG if DEBUG else logging.INFO)
+
+# Clear any existing handlers to avoid duplication
 logger.handlers.clear()
+
+# Attach our two handlers
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)
+
+# Prevent messages from propagating to the root logger
 logger.propagate = False
 
-logger.debug("Logger initialized. DEBUG=%s", DEBUG)
+logger.debug(f"Logger initialized. DEBUG={DEBUG}")

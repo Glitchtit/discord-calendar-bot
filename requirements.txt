@@ -17,12 +17,12 @@ google-auth-oauthlib==1.2.0
 openai==1.14.3
 aiohttp==3.9.3
 
-# Logging & utils
+# Logging & utilities
 colorlog==6.8.2
 requests==2.31.0
 
-# Type hints (optional)
+# Optional type stubs (useful for IDE intellisense/checking)
 types-requests==2.31.0.20240106
 
-# For Docker builds (optional for time zone support)
+# Time zone data for Docker and systems without built-in tz data
 tzdata

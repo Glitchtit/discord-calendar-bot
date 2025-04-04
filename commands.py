@@ -1,6 +1,15 @@
+"""
+commands.py: Implements the slash commands for greeting, heralding, and agendas,
+plus utilities for sending embeds to a predefined announcement channel.
+"""
+
 import os
+from typing import List, Optional
+
 import discord
 from discord import app_commands
+from discord.ext.commands import Bot
+
 import dateparser
 
 from events import GROUPED_CALENDARS, get_events, get_name_for_tag, get_color_for_tag
@@ -10,22 +19,87 @@ from ai import generate_greeting_text, generate_greeting_image
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# 📣 AI Greeting Command — AI-generated greeting + image
+# 📤 Helper Function: send_embed
+# ╚════════════════════════════════════════════════════════════════════╝
+async def send_embed(
+    bot: Bot,
+    embed: Optional[discord.Embed] = None,
+    title: str = "",
+    description: str = "",
+    color: int = 0x58B9FF,
+    image_path: Optional[str] = None
+) -> None:
+    """
+    Sends a Discord embed (with optional attached image) to the configured
+    announcement channel. If the channel or image is not found, logs a warning.
+
+    Args:
+        bot: The instance of discord.ext.commands.Bot.
+        embed: A preconstructed Embed object, or None if creating a new embed.
+        title: The title of the embed (used if embed is None).
+        description: The description text for the embed (used if embed is None).
+        color: Integer color code for the embed border (used if embed is None).
+        image_path: Filesystem path to an image to attach.
+
+    Returns:
+        None
+    """
+    from environ import ANNOUNCEMENT_CHANNEL_ID  # to avoid circular import
+    if not ANNOUNCEMENT_CHANNEL_ID:
+        logger.warning("[commands.py] ANNOUNCEMENT_CHANNEL_ID is not set.")
+        return
+
+    channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+    if channel is None:
+        logger.error("[commands.py] Announcement channel not found. Check ANNOUNCEMENT_CHANNEL_ID.")
+        return
+
+    # If the caller didn't supply an embed, build a new one
+    if embed is None:
+        embed = discord.Embed(title=title, description=description, color=color)
+
+    # If an image path is specified, attach the image
+    if image_path and os.path.exists(image_path):
+        file = discord.File(image_path, filename="image.png")
+        embed.set_image(url="attachment://image.png")
+        await channel.send(embed=embed, file=file)
+    else:
+        await channel.send(embed=embed)
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# 📣 AI Greeting Command — /greet
 # ╚════════════════════════════════════════════════════════════════════╝
 @app_commands.command(name="greet", description="Post an AI-generated greeting with today's schedule")
-async def greet(interaction: discord.Interaction):
+async def greet(interaction: discord.Interaction) -> None:
+    """
+    Generates an AI-based greeting text and image, then sends them as
+    an embed to the announcement channel.
+
+    Usage: /greet
+    """
     await interaction.response.defer()
-    logger.info(f"🎨 Generating AI greeting for {interaction.user}...")
+    logger.info(f"[commands.py] 🎨 Generating AI greeting for user {interaction.user}.")
 
-    # Generate greeting text
-    greeting_text = await generate_greeting_text()
-    
-    # Generate AI image for the greeting
-    image_path = await generate_greeting_image(greeting_text)
+    try:
+        # Generate greeting text
+        greeting_text: str = await generate_greeting_text()
 
-    # Send embed with greeting
-    await send_embed(interaction.bot, title="📣 Daily AI Greeting", description=greeting_text, image_path=image_path)
-    logger.info(f"✅ AI greeting posted.")
+        # Generate AI image
+        image_path: Optional[str] = await generate_greeting_image(greeting_text)
+
+        # Send embed with greeting
+        await send_embed(
+            bot=interaction.client,  # "interaction.client" is our Bot instance
+            title="📣 Daily AI Greeting",
+            description=greeting_text,
+            image_path=image_path
+        )
+        logger.info("[commands.py] ✅ AI greeting posted successfully.")
+
+    except Exception as e:
+        logger.exception("[commands.py] Error in /greet command.", exc_info=e)
+        await interaction.followup.send("⚠️ An error occurred while generating the greeting.")
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -37,104 +111,91 @@ async def greet(interaction: discord.Interaction):
     app_commands.Choice(name=tag, value=tag) for tag in sorted(GROUPED_CALENDARS)
     if tag.startswith(c.value.upper()) or c.value == ""
 ])
-async def herald(interaction: discord.Interaction, tag: str):
+async def herald(interaction: discord.Interaction, tag: str) -> None:
+    """
+    Fetches today's events for a specific calendar tag (e.g., 'A', 'B', etc.)
+    and sends them as an embed to the announcement channel.
+
+    Usage: /herald <tag>
+    """
     await interaction.response.defer()
-    logger.info(f"📣 /herald called by {interaction.user} for tag '{tag}'")
+    logger.info(f"[commands.py] 📣 /herald called by {interaction.user} for tag '{tag}'")
 
-    today = get_today()
-    all_events = []
-    for source in GROUPED_CALENDARS.get(tag.upper(), []):
-        events = await interaction.bot.loop.run_in_executor(None, get_events, source, today, today)
-        all_events.extend(events)
+    try:
+        today = get_today()
+        all_events = []
+        for source in GROUPED_CALENDARS.get(tag.upper(), []):
+            events = await interaction.client.loop.run_in_executor(None, get_events, source, today, today)
+            all_events.extend(events)
 
-    all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
+        # Sort by start time
+        all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
 
-    if not all_events:
-        await interaction.followup.send(f"⚠️ No events found today for tag `{tag}`.")
-        return
+        if not all_events:
+            await interaction.followup.send(f"⚠️ No events found today for tag `{tag}`.")
+            return
 
-    embed = discord.Embed(
-        title=f"📅 Today’s Events — {get_name_for_tag(tag)}",
-        color=get_color_for_tag(tag),
-        description="\n\n".join(format_event(e) for e in all_events)
-    )
-    embed.set_footer(text=f"{len(all_events)} event(s) • {today.strftime('%A, %d %B %Y')}")
-    await interaction.followup.send(embed=embed)
+        embed = discord.Embed(
+            title=f"📅 Today’s Events — {get_name_for_tag(tag)}",
+            color=get_color_for_tag(tag),
+            description="\n\n".join(format_event(e) for e in all_events)
+        )
+        embed.set_footer(text=f"{len(all_events)} event(s) • {today.strftime('%A, %d %B %Y')}")
+
+        # Instead of sending direct in followup, we use our send_embed
+        await send_embed(bot=interaction.client, embed=embed)
+        logger.info("[commands.py] ✅ Herald command posted events successfully.")
+
+    except Exception as e:
+        logger.exception("[commands.py] Error in /herald command.", exc_info=e)
+        await interaction.followup.send("⚠️ An error occurred while fetching today's events.")
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# 📅 /agenda [date] — Returns events for any given day (natural language)
+# 📅 /agenda [date] — Returns events for a specific date
 # ╚════════════════════════════════════════════════════════════════════╝
 @app_commands.command(name="agenda", description="See events for a specific date (natural language supported)")
 @app_commands.describe(date="Examples: today, tomorrow, next Thursday")
-async def agenda(interaction: discord.Interaction, date: str):
+async def agenda(interaction: discord.Interaction, date: str) -> None:
+    """
+    Accepts a natural-language date string, resolves it to a day, and
+    fetches all events from all calendar tags for that day.
+
+    Usage: /agenda <natural-language-date>
+    """
     await interaction.response.defer()
-    logger.info(f"📅 /agenda called by {interaction.user}: {date!r}")
+    logger.info(f"[commands.py] 📅 /agenda called by {interaction.user} with date '{date}'")
 
-    dt = dateparser.parse(date)
-    if not dt:
-        await interaction.followup.send("⚠️ Could not understand that date.")
-        return
+    try:
+        dt = dateparser.parse(date)
+        if not dt:
+            await interaction.followup.send("⚠️ Could not understand that date.")
+            return
 
-    day = dt.date()
-    all_events = []
-    for tag, sources in GROUPED_CALENDARS.items():
-        for source in sources:
-            events = await interaction.bot.loop.run_in_executor(None, get_events, source, day, day)
-            all_events.extend(events)
+        day = dt.date()
+        all_events = []
+        for tag, sources in GROUPED_CALENDARS.items():
+            for source in sources:
+                events = await interaction.client.loop.run_in_executor(None, get_events, source, day, day)
+                all_events.extend(events)
 
-    all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
+        # Sort by start time
+        all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
 
-    if not all_events:
-        await interaction.followup.send(f"No events found for `{date}`.")
-        return
+        if not all_events:
+            await interaction.followup.send(f"No events found for `{date}`.")
+            return
 
-    embed = discord.Embed(
-        title=f"🗓️ Agenda for {day.strftime('%A, %d %B %Y')}",
-        color=0x3498db,
-        description="\n\n".join(format_event(e) for e in all_events)
-    )
-    embed.set_footer(text=f"{len(all_events)} event(s)")
-    await interaction.followup.send(embed=embed)
+        embed = discord.Embed(
+            title=f"🗓️ Agenda for {day.strftime('%A, %d %B %Y')}",
+            color=0x3498db,
+            description="\n\n".join(format_event(e) for e in all_events)
+        )
+        embed.set_footer(text=f"{len(all_events)} event(s)")
 
+        await send_embed(bot=interaction.client, embed=embed)
+        logger.info("[commands.py] ✅ Agenda command posted events successfully.")
 
-# ╔════════════════════════════════════════════════════════════════════╗
-# 📤 send_embed Helper Function — Sends embeds to the announcement channel
-# ╚════════════════════════════════════════════════════════════════════╝
-async def send_embed(bot, embed: discord.Embed = None, title: str = "", description: str = "", color: int = 5814783, image_path: str | None = None):
-    if isinstance(embed, str):
-        logger.warning("send_embed() received a string instead of an Embed. Converting values assuming misuse.")
-        description = embed
-        embed = None
-    from environ import ANNOUNCEMENT_CHANNEL_ID
-    if not ANNOUNCEMENT_CHANNEL_ID:
-        logger.warning("ANNOUNCEMENT_CHANNEL_ID not set.")
-        return
-    channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
-    if not channel:
-        logger.error("Channel not found. Check ANNOUNCEMENT_CHANNEL_ID.")
-        return
-
-    if embed is None:
-        embed = discord.Embed(title=title, description=description, color=color)
-
-    if image_path and os.path.exists(image_path):
-        file = discord.File(image_path, filename="image.png")
-        embed.set_image(url="attachment://image.png")
-        await channel.send(embed=embed, file=file)
-    else:
-        await channel.send(embed=embed)
-
-
-# ╔════════════════════════════════════════════════════════════════════╗
-# 🔍 Autocomplete Helper — Resolves slash command inputs for tags
-# ╚════════════════════════════════════════════════════════════════════╝
-def get_known_tags():
-    return list(GROUPED_CALENDARS.keys())
-
-
-async def autocomplete_tag(interaction: discord.Interaction, current: str):
-    return [
-        app_commands.Choice(name=tag, value=tag)
-        for tag in get_known_tags() if current.lower() in tag.lower()
-    ]
+    except Exception as e:
+        logger.exception("[commands.py] Error in /agenda command.", exc_info=e)
+        await interaction.followup.send("⚠️ An error occurred while fetching the agenda.")
