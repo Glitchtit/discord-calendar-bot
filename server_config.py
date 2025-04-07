@@ -14,6 +14,7 @@ This enables:
 import os
 import json
 import re
+import requests
 from typing import Dict, List, Any, Optional, Tuple
 from log import logger
 
@@ -171,8 +172,16 @@ def detect_calendar_type(url_or_id: str) -> Optional[str]:
         'google' or 'ics' or None if format is unrecognized
     """
     # Check for ICS URL format
-    if url_or_id.startswith(('http://', 'https://')) and '.ics' in url_or_id.lower():
-        return 'ics'
+    if url_or_id.startswith(('http://', 'https://')):
+        if '.ics' in url_or_id.lower():
+            return 'ics'
+        try:
+            r = requests.head(url_or_id, timeout=5)
+            ct = r.headers.get('Content-Type', '').lower()
+            if 'text/calendar' in ct or 'text/ical' in ct:
+                return 'ics'
+        except:
+            pass
     
     # Google Calendar ID formats:
     # - email format: xxx@group.calendar.google.com
