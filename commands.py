@@ -342,13 +342,13 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
                 events_by_day[start_date].append(e)
 
         embed = discord.Embed(
-            title=f"📜 Herald’s Week — {get_name_for_tag(tag)}",
+            title=f"📜 Herald’s Week — {TAG_NAMES.get(tag, tag)}",  # Use Discord username
             description=f"Week of **{monday.strftime('%B %d')}**",
             color=get_color_for_tag(tag)
         )
 
         # Add mention for the tag or @everyone
-        mention = TAG_NAMES.get(tag, "@everyone")
+        mention = TAG_NAMES.get(tag, "@everyone")EVERYONE" else TAG_NAMES.get(tag, tag)
         await send_embed(bot, embed=embed, content=f"{mention}")
 
         for i in range(7):
@@ -410,13 +410,14 @@ async def agenda(interaction: discord.Interaction, date: str) -> None:
             return
 
         embed = discord.Embed(
-            title=f"🗓️ Agenda for {day.strftime('%A, %d %B %Y')}",
+            title=f"🗓️ Agenda for {TAG_NAMES.get(tag, tag)} on {day.strftime('%A, %d %B %Y')}",  # Use Discord username
             color=0x3498db,
             description="\n\n".join(format_event(e) for e in all_events)
         )
         embed.set_footer(text=f"{len(all_events)} event(s)")
 
-        await send_embed(bot=interaction.client, embed=embed)
+        mention = "@everyone" if tag.upper() == "EVERYONE" else TAG_NAMES.get(tag, tag)
+        await send_embed(bot=interaction.client, embed=embed, content=f"{mention}")
         logger.info("[commands.py] ✅ Agenda command posted events successfully.")
 
     except Exception as e:
