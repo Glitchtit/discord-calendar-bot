@@ -1,3 +1,16 @@
+"""
+server_config.py: Server-specific configuration management for the calendar bot.
+
+This module replaces the previous environment variable-based configuration approach
+with a server-specific JSON file storage system. Each Discord server now has its own
+configuration file stored in the /data/servers directory.
+
+This enables:
+- Per-server calendar configurations
+- Server-specific user-tag mappings  
+- Independent setup across different Discord servers
+"""
+
 import os
 import json
 import re
@@ -24,6 +37,7 @@ except Exception as e:
     # Fallback to local directory if /data is not writable
     SERVER_CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "servers")
     os.makedirs(SERVER_CONFIG_DIR, exist_ok=True)
+    logger.info(f"Using fallback server config directory: {SERVER_CONFIG_DIR}")
 
 def get_config_path(server_id: int) -> str:
     """Get the path to a server's configuration file."""
@@ -176,3 +190,81 @@ def detect_calendar_type(url_or_id: str) -> Optional[str]:
         return 'google'  # Assume Google format if it's just alphanumeric+symbols
     
     return None  # Unknown format
+
+def migrate_env_config_to_server(server_id: int, calendar_sources: str, user_tag_mapping: str) -> Tuple[bool, str]:
+    """
+    Migrate environment variable configuration to server-specific configuration.
+    
+    This helper function is used for one-time migration from the deprecated
+    environment variable approach to the new server-specific configuration.
+    
+    Args:
+        server_id: Discord server ID to create configuration for
+        calendar_sources: Value from CALENDAR_SOURCES environment variable
+        user_tag_mapping: Value from USER_TAG_MAPPING environment variable
+        
+    Returns:
+        (success, message): Tuple with migration status and message
+    """
+    if not calendar_sources and not user_tag_mapping:
+        return False, "No legacy configuration found to migrate"
+    
+    # Load existing config or start with empty one
+    config = load_server_config(server_id)
+    changes_made = False
+    
+    # Process calendar sources (format: google:id:TAG or ics:url:TAG)
+    if calendar_sources:
+        calendars_added = 0
+        for source in calendar_sources.split(','):
+            source = source.strip()
+            if not source:
+                continue
+                
+            parts = source.split(':')
+            if len(parts) < 3:
+                continue
+                
+            cal_type, cal_id, tag = parts[0], parts[1], parts[2]
+            
+            # Skip if this calendar already exists
+            if any(cal["id"] == cal_id for cal in config.get("calendars", [])):
+                continue
+                
+            # Add the calendar
+            calendar_entry = {
+                "type": cal_type,
+                "id": cal_id,
+                "name": f"Migrated {cal_type.capitalize()} Calendar",
+                "tag": tag
+            }
+            
+            config.setdefault("calendars", []).append(calendar_entry)
+            calendars_added += 1
+            changes_made = True
+    
+    # Process user tag mappings (format: user_id:TAG)
+    if user_tag_mapping:
+        users_added = 0
+        for mapping in user_tag_mapping.split(','):
+            mapping = mapping.strip()
+            if not mapping or ':' not in mapping:
+                continue
+                
+            user_id, tag = mapping.split(':', 1)
+            
+            # Skip if mapping already exists
+            if any(t == tag for t, uid in config.get("user_mappings", {}).items() if uid == user_id):
+                continue
+                
+            config.setdefault("user_mappings", {})[tag] = user_id
+            users_added += 1
+            changes_made = True
+    
+    # Save if we made changes
+    if changes_made and save_server_config(server_id, config):
+        return True, f"Successfully migrated legacy configuration to server {server_id}"
+    elif not changes_made:
+        return False, "No new configuration to migrate"
+    else:
+        return False, "Failed to save migrated configuration"

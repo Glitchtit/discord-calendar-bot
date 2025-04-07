@@ -6,6 +6,10 @@ Provides a 'logger' instance preconfigured with:
 2. A TimedRotatingFileHandler that rotates daily, keeping up to 14 days of logs.
 3. Consistent formatting for both console and file output.
 
+Note: While the bot now uses server-specific configuration via the /setup command
+instead of environment variables, this logging module still uses the DEBUG
+environment variable to determine log level.
+
 Usage:
     from log import logger
     logger.info("Hello, world!")

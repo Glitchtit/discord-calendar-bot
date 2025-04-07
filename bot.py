@@ -1,5 +1,13 @@
 """
 bot.py: Discord bot setup and initialization, including command sync and error handling.
+
+This module implements the Discord bot interface including:
+- Slash commands for calendar interaction
+- Setup wizard for server-specific calendar configuration
+- Event monitoring and notification systems
+
+Note: Now uses server-specific configuration via /setup command instead of
+the previous environment variable approach.
 """
 
 import sys
@@ -13,12 +21,11 @@ from datetime import datetime
 import dateparser
 import asyncio
 import random
-import os  # Add this import
+import os
 from discord.ui import View, Button, Select, Modal, TextInput
 
 from log import logger
 from events import (
-    load_calendar_sources,
     GROUPED_CALENDARS,
     USER_TAG_MAP,
     TAG_NAMES,
@@ -44,9 +51,9 @@ from server_config import (
     remove_calendar, 
     load_server_config, 
     save_server_config,
-    SERVER_CONFIG_DIR,  # Add this import
-    get_all_server_ids,   # Add this import
-    detect_calendar_type  # Add this import
+    SERVER_CONFIG_DIR,
+    get_all_server_ids,
+    detect_calendar_type
 )
 
 # ╔════════════════════════════════════════════════════════════════════╗

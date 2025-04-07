@@ -8,6 +8,7 @@ import requests
 import json
 import os
 import math
+import time  # Add missing time import
 from datetime import datetime, timedelta
 from openai import OpenAI, APIError, RateLimitError, APITimeoutError, APIConnectionError
 from log import logger
@@ -237,7 +238,7 @@ def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | N
                 model="dall-e-3",
                 prompt=prompt,
                 n=1,
-                size=IMAGE_SIZE,
+                size="1024x1024",  # Hard-code image size instead of using variable
                 response_format="url"
             )
             image_url = response.data[0].url

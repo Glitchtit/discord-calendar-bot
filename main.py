@@ -25,7 +25,12 @@ shutdown_in_progress = False
 # ║ Checks all required environment variables before startup          ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def validate_environment() -> bool:
-    """Validate that all required environment variables are set."""
+    """
+    Validate that all required environment variables are set.
+    
+    Note: Calendar configuration is now done through the /setup command
+    in Discord rather than through environment variables.
+    """
     missing_vars = []
     
     # Check critical variables
@@ -36,8 +41,6 @@ def validate_environment() -> bool:
         missing_vars.append("ANNOUNCEMENT_CHANNEL_ID")
     elif ANNOUNCEMENT_CHANNEL_ID == 0:
         logger.warning("ANNOUNCEMENT_CHANNEL_ID is set to default value (0). Bot may not post messages.")
-    
-    # Note: CALENDAR_SOURCES is no longer required as we use server-specific configurations
     
     # Check if Google credentials file exists
     if not os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
@@ -126,7 +129,12 @@ def setup_watchdog():
 # ║ Logs useful information during startup                            ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def display_startup_info():
-    """Display information about the bot's configuration."""
+    """
+    Display information about the bot's configuration.
+    
+    Reports on server-specific configurations created with
+    the /setup command rather than environment variables.
+    """
     import sys
     import os
     from server_config import get_all_server_ids

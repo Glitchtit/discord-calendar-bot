@@ -15,7 +15,7 @@ _datetime_str_pattern = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}')
 # ╚════════════════════════════════════════════════════════════════════╝
 def get_local_timezone():
     global _timezone_cache
-    if _timezone_cache is not None:
+    if (_timezone_cache is not None):
         return _timezone_cache
     
     try:
@@ -235,6 +235,21 @@ def is_in_current_week(event: dict, reference: date = None) -> bool:
 # ║ Maps user-friendly input strings to internal calendar tags        ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def resolve_input_to_tags(input_str: str, tag_names: dict, grouped_calendars: dict) -> list[str]:
+    """
+    Maps user-provided input to internal calendar tags.
+    
+    Works with the server-specific configuration system implemented via the /setup command.
+    Previously this worked with global environment variables, but now uses per-server
+    configuration.
+    
+    Args:
+        input_str: Comma-separated string of tag names or display names
+        tag_names: Dictionary mapping tags to display names
+        grouped_calendars: Dictionary of available calendar tags
+        
+    Returns:
+        List of matching tag strings
+    """
     try:
         # Handle invalid inputs
         if not input_str or not isinstance(input_str, str):

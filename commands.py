@@ -6,6 +6,7 @@ plus utilities for sending embeds to a predefined announcement channel.
 import os
 import asyncio
 import random
+import dateparser  # Add missing import
 from datetime import datetime, timedelta
 from dateutil import tz
 import discord
@@ -19,8 +20,9 @@ from events import (
     get_color_for_tag,
     TAG_NAMES
 )
+from utils import format_event  # Add missing import
 from log import logger
-from ai import generate_greeting_text, generate_greeting_image
+from ai import generate_greeting, generate_image  # Fix function references
 
 
 # ╔════════════════════════════════════════════════════════════════════╗

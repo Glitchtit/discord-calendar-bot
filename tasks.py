@@ -1,3 +1,16 @@
+"""
+tasks.py: Scheduled tasks for calendar monitoring and notifications.
+
+Contains tasks that:
+1. Post daily and weekly calendar summaries
+2. Monitor for changes in calendar events
+3. Generate AI-powered morning greetings
+4. Self-monitor task health
+
+Note: All tasks now work with server-specific configurations loaded via
+the /setup command, rather than the deprecated environment variables.
+"""
+
 from datetime import datetime, timedelta
 from dateutil import tz
 from discord.ext import tasks
@@ -19,7 +32,7 @@ from commands import (
     send_embed
 )
 from events import (
-    GROUPED_CALENDARS,
+    GROUPED_CALENDARS,  # Now populated from server-specific configs
     get_events,
     get_name_for_tag,
     get_color_for_tag,

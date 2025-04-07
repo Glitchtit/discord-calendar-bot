@@ -402,50 +402,6 @@ def get_ics_events(start_date, end_date, url):
         logger.exception(f"Error fetching/parsing ICS calendar: {url}")
         return []
 
-    parsed: List[Tuple[str, str, str]] = []
-    for entry in CALENDAR_SOURCES.split(","):
-        entry = entry.strip()
-        if not entry:
-            continue
-
-        if entry.startswith("google:") or entry.startswith("ics:"):
-            prefix, rest = entry.split(":", 1)
-            if ":" in rest:
-                id_or_url, tag = rest.rsplit(":", 1)
-                parsed.append((prefix, id_or_url.strip(), tag.strip().upper()))
-            else:
-                logger.warning(f"[events.py] Skipping calendar source without tag: {entry}")
-        else:
-            logger.error(f"[events.py] Unsupported calendar source: {entry}")
-
-    return parsed
-
-def load_calendar_sources() -> Dict[str, List[Dict[str, str]]]:
-    """
-    Loads the calendar sources from environment, fetching metadata for each,
-    and groups them by tag.
-
-    Returns:
-        A dictionary mapping tag -> list of metadata dicts like:
-        { "type": ..., "id": ..., "name": ... }
-    """
-    logger.info("[events.py] 🔁 Loading calendar sources...")
-    grouped: Dict[str, List[Dict[str, str]]] = {}
-    for ctype, cid, tag in parse_calendar_sources():
-        if ctype == "google":
-            meta = fetch_google_calendar_metadata(cid)
-        else:  # 'ics'
-            meta = fetch_ics_calendar_metadata(cid)
-
-        meta["tag"] = tag
-        grouped.setdefault(tag, []).append(meta)
-        logger.debug(f"[events.py] Calendar loaded: {meta}")
-
-    return grouped
-
-GROUPED_CALENDARS: Dict[str, List[Dict[str, str]]] = load_calendar_sources()
-
-
 # ╔════════════════════════════════════════════════════════════════════╗
 # 📡 Unified Event Fetching Interface
 # ╚════════════════════════════════════════════════════════════════════╝
@@ -517,9 +473,33 @@ def compute_event_fingerprint(event: dict) -> str:
 # ║ ⚠️ Legacy Functions (Deprecated)                                   ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def parse_calendar_sources():
-    """DEPRECATED: Returns an empty list for backward compatibility."""
-    logger.warning("parse_calendar_sources() is deprecated. Use load_calendars_from_server_configs() instead.")
+    """DEPRECATED: Use load_calendars_from_server_configs() instead.
+    
+    This function previously parsed CALENDAR_SOURCES environment variable,
+    but is now replaced by server-specific configuration via /setup command.
+    Returns an empty list for backward compatibility.
+    """
+    logger.warning("parse_calendar_sources() is deprecated. Use server-specific configuration with /setup command instead.")
     return []
+
+def get_user_tag_mapping():
+    """DEPRECATED: Use server-specific user mappings instead.
+    
+    This function previously parsed USER_TAG_MAPPING environment variable,
+    but is now replaced by per-server user mappings in server config files.
+    Returns an empty dict for backward compatibility.
+    """
+    logger.warning("get_user_tag_mapping() is deprecated. User-tag mappings are now stored in server configurations.")
+    return {}
+
+def resolve_tag_mappings():
+    """DEPRECATED: Tag mappings are now managed per server.
+    
+    This function previously resolved tag mappings from environment variables,
+    but is now handled during server config loading.
+    """
+    logger.warning("resolve_tag_mappings() is deprecated. Tag mappings are now resolved during server config loading.")
+    return
 
 # Initialize calendars on module load
 load_calendars_from_server_configs()

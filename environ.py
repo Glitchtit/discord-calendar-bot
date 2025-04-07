@@ -64,23 +64,6 @@ def get_str_env(var_name: str, default: str = "") -> str:
 # 🔧 Core Variables
 # ╚════════════════════════════════════════════════════════════════════╝
 
-# Debug mode toggle — enables verbose logging if set to "true"
-DEBUG = os.getenv("DEBUG", "false").lower() == "true"
-
-# Discord bot token — required for authentication with Discord API
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-
-# Channel ID where announcements and embeds will be posted
-ANNOUNCEMENT_CHANNEL_ID = int(os.getenv("ANNOUNCEMENT_CHANNEL_ID", "0"))
-
-# OpenAI API key — required for generating greetings and images
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-# Path to service account JSON for Google Calendar API
-GOOGLE_APPLICATION_CREDENTIALS = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "/app/service_account.json")
-
-# Note: CALENDAR_SOURCES and USER_TAG_MAPPING have been removed
-# Server-specific configurations are now stored in /data/servers/<server_id>.json
 DEBUG: bool = get_bool_env("DEBUG", False)
 """
 Indicates whether to run in debug mode, enabling verbose logging, etc.
@@ -108,15 +91,31 @@ GOOGLE_APPLICATION_CREDENTIALS: str = get_str_env("GOOGLE_APPLICATION_CREDENTIAL
 Path to the Google service account JSON used for Calendar API calls.
 """
 
+# ╔════════════════════════════════════════════════════════════════════╗
+# ⚠️ Deprecated Variables - Use /setup command instead
+# ╚════════════════════════════════════════════════════════════════════╝
+
 CALENDAR_SOURCES: Optional[str] = get_str_env("CALENDAR_SOURCES", None)
 """
-Comma-separated string defining calendars to load (google:id:TAG or ics:url:TAG).
+DEPRECATED: Use the /setup command in Discord instead.
+
+This variable was previously used to define calendars via comma-separated
+string (google:id:TAG or ics:url:TAG), but is now replaced by server-specific
+configuration via the /setup command.
 """
 
 USER_TAG_MAPPING: str = get_str_env("USER_TAG_MAPPING", "")
 """
-Comma-separated user-to-tag mappings (e.g., '123456789:T, 987654321:A').
+DEPRECATED: Use the /setup command in Discord instead.
+
+This variable was previously used for comma-separated user-to-tag mappings 
+(e.g., '123456789:T, 987654321:A'), but is now replaced by server-specific
+user mappings created during calendar setup.
 """
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# 🧩 Other Configuration
+# ╚════════════════════════════════════════════════════════════════════╝
 
 IMAGE_SIZE: str = "1024x1024"
 """
