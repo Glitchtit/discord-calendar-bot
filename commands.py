@@ -348,7 +348,7 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
         )
 
         # Add mention for the tag or @everyone
-        mention = TAG_NAMES.get(tag, "@everyone")EVERYONE" else TAG_NAMES.get(tag, tag)
+        mention = "@everyone" if tag.upper() == "EVERYONE" else TAG_NAMES.get(tag, tag)
         await send_embed(bot, embed=embed, content=f"{mention}")
 
         for i in range(7):
