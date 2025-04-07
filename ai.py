@@ -40,12 +40,8 @@ PERSONAS = [
 # ╚════════════════════════════════════════════════════════════════════╝
 async def generate_greeting_text() -> str:
     """
-    Uses OpenAI ChatCompletion to generate a creative greeting message,
-    combining a randomly chosen user prompt with a persona.
-
-    Returns:
-        A string containing the greeting text. If the OpenAI API call fails,
-        returns a fallback string.
+    Uses OpenAI ChatCompletion to generate a creative greeting message.
+    Handles token overflow errors gracefully.
     """
     system_prompt = (
         "You are a character who announces daily schedules in a creative, "
@@ -73,9 +69,39 @@ async def generate_greeting_text() -> str:
         message = response["choices"][0]["message"]["content"].strip()
         logger.debug("[ai.py] Successfully generated greeting text.")
         return message
+
+    except openai.error.InvalidRequestError as e:
+        if "maximum context length" in str(e):
+            logger.warning("[ai.py] Prompt too long. Retrying with shorter prompt.")
+            try:
+                # Retry with trimmed persona and prompt
+                short_persona = persona[:80]
+                short_prompt = user_prompt[:120]
+                response = await openai.ChatCompletion.acreate(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": "You announce daily schedules in a fun way."},
+                        {
+                            "role": "user",
+                            "content": f"{short_prompt}\nAct as {short_persona}."
+                        }
+                    ],
+                    temperature=0.8,
+                    max_tokens=120
+                )
+                message = response["choices"][0]["message"]["content"].strip()
+                logger.debug("[ai.py] Successfully recovered after token overflow.")
+                return message
+            except Exception as retry_e:
+                logger.error(f"[ai.py] Retry after token overflow also failed: {retry_e}")
+                return "📜 The herald tried again but still stumbled."
+        else:
+            logger.error(f"[ai.py] ❌ OpenAI text completion failed: {e}")
+            return "📜 The herald was speechless today."
     except Exception as e:
-        logger.error(f"[ai.py] ❌ OpenAI text completion failed: {e}")
+        logger.error(f"[ai.py] ❌ Unexpected error in OpenAI call: {e}")
         return "📜 The herald was speechless today."
+
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
