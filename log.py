@@ -2,6 +2,7 @@ import logging
 import os
 from colorlog import ColoredFormatter
 from environ import DEBUG
+from logging.handlers import TimedRotatingFileHandler  # Add this import
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📁 Log Directory & File Setup                                     ║
@@ -46,7 +47,9 @@ try:
 
         # File handler: logs everything to persistent storage
         try:
-            file_handler = logging.FileHandler(LOG_FILE)
+            file_handler = TimedRotatingFileHandler(
+                LOG_FILE, when="H", interval=4, backupCount=1  # Rotate every 4 hours, keep 1 backup
+            )
             file_handler.setFormatter(file_formatter)
             file_handler.setLevel(logging.DEBUG if DEBUG else logging.INFO)
             logger.addHandler(file_handler)
