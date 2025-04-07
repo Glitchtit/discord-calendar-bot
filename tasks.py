@@ -234,8 +234,8 @@ async def watch_for_event_changes(bot):
                 all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
 
                 # Compare with previous snapshot
-                key = f"{tag}_full"
-                server_id = calendars[0]["server_id"]
+                key = f"{meta['user_id']}_full"  # Use user_id from meta
+                server_id = meta["server_id"]
                 prev_snapshot = load_previous_events(server_id).get(key, [])
                 
                 # Create fingerprints, with added error handling
@@ -278,21 +278,21 @@ async def watch_for_event_changes(bot):
 
                         await send_embed(
                             bot,
-                            title=f"📣 Event Changes – {get_name_for_tag(tag)}",
+                            title=f"📣 Event Changes – User {meta['user_id']}",  # Use user_id from meta
                             description="\n".join(lines),
-                            color=get_color_for_tag(tag)
+                            color=0x3498db  # Default color
                         )
-                        logger.info(f"Detected changes for '{tag}', snapshot updated.")
-                        save_current_events_for_key(meta["server_id"], f"{tag}_full", all_events)
+                        logger.info(f"Detected changes for user ID '{meta['user_id']}', snapshot updated.")  # Use user_id
+                        save_current_events_for_key(meta["server_id"], f"{meta['user_id']}_full", all_events)
                     except Exception as e:
                         logger.exception(f"Error posting changes for tag {tag}: {e}")
                 else:
                     # Only save if we have data and it differs from previous
                     if all_events and (len(all_events) != len(prev_snapshot)):
-                        save_current_events_for_key(meta["server_id"], f"{tag}_full", all_events)
-                        logger.debug(f"Updated snapshot for '{tag}' with {len(all_events)} events")
+                        save_current_events_for_key(meta["server_id"], f"{meta['user_id']}_full", all_events)
+                        logger.debug(f"Updated snapshot for user ID '{meta['user_id']}' with {len(all_events)} events")
                     else:
-                        logger.debug(f"No changes for '{tag}'. Snapshot unchanged.")
+                        logger.debug(f"No changes for user ID '{meta['user_id']}'. Snapshot unchanged.")
                     
             # Update task health status
             update_task_health(task_name, True)

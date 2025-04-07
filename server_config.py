@@ -99,29 +99,12 @@ def add_calendar(server_id: int, calendar_url: str, user_id: str, display_name: 
     if not calendar_type:
         return False, "Invalid calendar URL format. Please provide a valid Google Calendar ID or ICS URL."
     
-    # Generate a tag for the user if they don't have one
-    user_id_str = str(user_id)
-    user_tag = None
-    
-    for tag, mapped_id in config.get("user_mappings", {}).items():
-        if mapped_id == user_id_str:
-            user_tag = tag
-            break
-    
-    if not user_tag:
-        if user_id_str == "EVERYONE":
-            user_tag = "EVERYONE"
-            config.setdefault("user_mappings", {})[user_tag] = "EVERYONE"  # Special case for "EVERYONE"
-        else:
-            user_tag = f"USER_{user_id_str[-4:]}"
-            config.setdefault("user_mappings", {})[user_tag] = user_id_str
-    
     # Add calendar to config
     calendar_entry = {
         "type": calendar_type,
         "id": calendar_url,
         "name": display_name or f"{calendar_type.capitalize()} Calendar",
-        "tag": user_tag
+        "user_id": user_id
     }
     
     # Check for duplicates
@@ -132,7 +115,7 @@ def add_calendar(server_id: int, calendar_url: str, user_id: str, display_name: 
     config.setdefault("calendars", []).append(calendar_entry)
     
     if save_server_config(server_id, config):
-        return True, f"Calendar successfully added and assigned to tag {user_tag}."
+        return True, f"Calendar successfully added and assigned to user ID {user_id}."
     else:
         return False, "Failed to save configuration. Please try again."
 
@@ -206,7 +189,7 @@ def detect_calendar_type(url_or_id: str) -> Optional[str]:
     
     return None  # Unknown format
 
-def migrate_env_config_to_server(server_id: int, calendar_sources: str, user_tag_mapping: str) -> Tuple[bool, str]:
+def migrate_env_config_to_server(server_id: int, calendar_sources: str, user_mapping: str) -> Tuple[bool, str]:
     """
     Migrate environment variable configuration to server-specific configuration.
     
@@ -216,21 +199,20 @@ def migrate_env_config_to_server(server_id: int, calendar_sources: str, user_tag
     Args:
         server_id: Discord server ID to create configuration for
         calendar_sources: Value from CALENDAR_SOURCES environment variable
-        user_tag_mapping: Value from USER_TAG_MAPPING environment variable
+        user_mapping: Value from USER_TAG_MAPPING environment variable
         
     Returns:
         (success, message): Tuple with migration status and message
     """
-    if not calendar_sources and not user_tag_mapping:
+    if not calendar_sources and not user_mapping:
         return False, "No legacy configuration found to migrate"
     
     # Load existing config or start with empty one
     config = load_server_config(server_id)
     changes_made = False
     
-    # Process calendar sources (format: google:id:TAG or ics:url:TAG)
+    # Process calendar sources (format: google:id:user_id or ics:url:user_id)
     if calendar_sources:
-        calendars_added = 0
         for source in calendar_sources.split(','):
             source = source.strip()
             if not source:
@@ -240,7 +222,7 @@ def migrate_env_config_to_server(server_id: int, calendar_sources: str, user_tag
             if len(parts) < 3:
                 continue
                 
-            cal_type, cal_id, tag = parts[0], parts[1], parts[2]
+            cal_type, cal_id, user_id = parts[0], parts[1], parts[2]
             
             # Skip if this calendar already exists
             if any(cal["id"] == cal_id for cal in config.get("calendars", [])):
@@ -251,32 +233,13 @@ def migrate_env_config_to_server(server_id: int, calendar_sources: str, user_tag
                 "type": cal_type,
                 "id": cal_id,
                 "name": f"Migrated {cal_type.capitalize()} Calendar",
-                "tag": tag
+                "user_id": user_id
             }
             
             config.setdefault("calendars", []).append(calendar_entry)
-            calendars_added += 1
             changes_made = True
     
-    # Process user tag mappings (format: user_id:TAG)
-    if user_tag_mapping:
-        users_added = 0
-        for mapping in user_tag_mapping.split(','):
-            mapping = mapping.strip()
-            if not mapping or ':' not in mapping:
-                continue
-                
-            user_id, tag = mapping.split(':', 1)
-            
-            # Skip if mapping already exists
-            if any(t == tag for t, uid in config.get("user_mappings", {}).items() if uid == user_id):
-                continue
-                
-            config.setdefault("user_mappings", {})[tag] = user_id
-            users_added += 1
-            changes_made = True
-    
-    # Save if we made changes
+    # Save if changes were made
     if changes_made and save_server_config(server_id, config):
         return True, f"Successfully migrated legacy configuration to server {server_id}"
     elif not changes_made:

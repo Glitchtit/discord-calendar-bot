@@ -302,9 +302,9 @@ async def greet_command(interaction: discord.Interaction):
 
 # ╔═════════════════════════════════════════════════════════════╗
 # ║ 🔄 /reload                                                   ║
-# ║ Reloads calendar sources and tag-to-user mapping            ║
+# ║ Reloads calendar sources and user mappings                  ║
 # ╚═════════════════════════════════════════════════════════════╝
-@bot.tree.command(name="reload", description="Reload calendar sources and tag-user mappings")
+@bot.tree.command(name="reload", description="Reload calendar sources and user mappings")
 async def reload_command(interaction: discord.Interaction):
     try:
         await interaction.response.defer()
@@ -312,8 +312,7 @@ async def reload_command(interaction: discord.Interaction):
         from events import load_calendars_from_server_configs, reinitialize_events
         load_calendars_from_server_configs()  # Ensure GROUPED_CALENDARS is updated
         await reinitialize_events()  # Reinitialize events for all calendars
-        await resolve_tag_mappings()  # Update tag mappings
-        await interaction.followup.send("Reloaded calendar sources and tag mappings.")
+        await interaction.followup.send("Reloaded calendar sources and user mappings.")
     except Exception as e:
         logger.exception(f"Error in /reload command: {e}")
         await interaction.followup.send("An error occurred while reloading.")
@@ -323,15 +322,18 @@ async def reload_command(interaction: discord.Interaction):
 # ║ 📇 /who                                                      ║
 # ║ Displays all active tags and their mapped display names     ║
 # ╚═════════════════════════════════════════════════════════════╝
-@bot.tree.command(name="who", description="List calendar tags and their assigned users")
+@bot.tree.command(name="who", description="List all calendars and their assigned users")
 async def who_command(interaction: discord.Interaction):
     try:
         await interaction.response.defer()
-        lines = [f"**{tag}** → {TAG_NAMES.get(tag, tag)}" for tag in sorted(GROUPED_CALENDARS)]
-        await interaction.followup.send("**Calendar Tags:**\n" + "\n".join(lines))
+        lines = [
+            f"**User ID: {user_id}** → {', '.join(cal['name'] for cal in calendars)}"
+            for user_id, calendars in GROUPED_CALENDARS.items()
+        ]
+        await interaction.followup.send("**Calendars and Assigned Users:**\n" + "\n".join(lines))
     except Exception as e:
         logger.exception(f"Error in /who command: {e}")
-        await interaction.followup.send("An error occurred while listing tags.")
+        await interaction.followup.send("An error occurred while listing calendars.")
 
 
 # ╔═════════════════════════════════════════════════════════════╗
@@ -339,48 +341,22 @@ async def who_command(interaction: discord.Interaction):
 # ║ Assigns display names and colors to tags based on members   ║
 # ╚═════════════════════════════════════════════════════════════╝
 async def resolve_tag_mappings():
-    """Resolve tag names from server data and populate member display names."""
-    from events import USER_TAG_MAP, TAG_NAMES, TAG_COLORS, GROUPED_CALENDARS
+    """Resolve user mappings and populate display names."""
+    from events import GROUPED_CALENDARS
 
     # Clear existing mappings
     TAG_NAMES.clear()
     TAG_COLORS.clear()
 
-    # Pre-defined colors for different tags
-    default_colors = {
-        "ANDY": 0xf39c12,    # Orange
-        "KATIE": 0xe91e63,   # Pink
-        "JUSTIN": 0x3498db,  # Blue
-        "MIGUEL": 0x2ecc71,  # Green
-        "CORY": 0x9b59b6,    # Purple
-        "SHARED": 0x95a5a6,  # Gray
-        "FAMILY": 0xe74c3c,  # Red
-    }
-
-    # Assign default colors for known tags
-    for tag, color in default_colors.items():
-        TAG_COLORS[tag] = color
-
-    # Resolve member names for tags
+    # Assign display names for user IDs
     resolved_count = 0
     for guild in bot.guilds:
         for member in guild.members:
-            if member.id in USER_TAG_MAP:
-                tag = USER_TAG_MAP[member.id]
-                TAG_NAMES[tag] = member.display_name
+            if member.id in GROUPED_CALENDARS:
+                TAG_NAMES[member.id] = member.display_name
                 resolved_count += 1
 
-                # Assign a random color if not already assigned
-                if tag not in TAG_COLORS:
-                    import random
-                    TAG_COLORS[tag] = random.randint(0x100000, 0xFFFFFF)
-
-    # Ensure all tags in GROUPED_CALENDARS have a display name
-    for tag in GROUPED_CALENDARS:
-        if tag not in TAG_NAMES:
-            TAG_NAMES[tag] = tag  # Fallback to the tag itself
-
-    logger.info(f"Resolved {resolved_count} tag mappings to member names")
+    logger.info(f"Resolved {resolved_count} user mappings to display names.")
 
 
 # ╔═════════════════════════════════════════════════════════════════╗

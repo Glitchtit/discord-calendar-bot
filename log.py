@@ -202,6 +202,10 @@ else:
             logger.info(f"Log directory: {log_dir_used}")
         else:
             logger.warning("File logging disabled - using console only")
+
+        # Update log messages to reflect user ID and server-specific configurations
+        logger.info("Server-specific configurations are now used. Tags have been deprecated.")
+        logger.info("Ensure all calendars are mapped to user IDs via the /setup command.")
             
     except Exception as e:
         print(f"Critical error initializing logger: {e}")

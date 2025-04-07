@@ -102,17 +102,17 @@ def load_calendars_from_server_configs():
     for server_id in get_all_server_ids():
         config = load_server_config(server_id)
         for calendar in config.get("calendars", []):
-            tag = calendar["tag"]
-            if tag not in GROUPED_CALENDARS:
-                GROUPED_CALENDARS[tag] = []
-            GROUPED_CALENDARS[tag].append({
+            user_id = calendar["user_id"]
+            if user_id not in GROUPED_CALENDARS:
+                GROUPED_CALENDARS[user_id] = []
+            GROUPED_CALENDARS[user_id].append({
                 "server_id": server_id,
                 "type": calendar["type"],
                 "id": calendar["id"],
                 "name": calendar.get("name", "Unnamed Calendar")
             })
 
-    logger.info(f"Loaded {len(GROUPED_CALENDARS)} calendar tags from server configurations.")
+    logger.info(f"Loaded {len(GROUPED_CALENDARS)} user-specific calendars from server configurations.")
 
 # Remaining functions from events.py stay the same, but we'll change the old 
 # parse_calendar_sources and get_user_tag_mapping functions to be deprecated

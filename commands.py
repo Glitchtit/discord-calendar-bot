@@ -35,30 +35,26 @@ async def autocomplete_tag(
     current: str
 ) -> List[app_commands.Choice[str]]:
     """
-    Provides autocomplete suggestions for calendar tags.
-    Used by commands that need to filter by user/tag.
+    Provides autocomplete suggestions for user IDs.
+    Used by commands that need to filter by user.
     """
     suggestions = []
     
-    # Add all tag names
-    for tag in GROUPED_CALENDARS:
-        display_name = TAG_NAMES.get(tag, tag)
-        suggestions.append((display_name, display_name))
-        # Also add the raw tag as an option
-        if tag != display_name:
-            suggestions.append((tag, tag))
+    # Add all user IDs
+    for user_id in GROUPED_CALENDARS:
+        suggestions.append((user_id, user_id))
     
     # Filter based on current input
     if current:
         filtered = [
-            app_commands.Choice(name=name, value=value)
-            for name, value in suggestions 
-            if current.lower() in name.lower()
+            app_commands.Choice(name=user_id, value=user_id)
+            for user_id in suggestions 
+            if current.lower() in user_id.lower()
         ]
         return filtered[:25]  # Discord limits to 25 choices
     
     # Return all suggestions if no input
-    return [app_commands.Choice(name=name, value=value) for name, value in suggestions[:25]]
+    return [app_commands.Choice(name=user_id, value=user_id) for user_id in suggestions[:25]]
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔄 _retry_discord_operation                                        ║
@@ -228,11 +224,11 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
 # ║ Sends an embed of events for a specific tag on a given day        ║
 # ║ Returns True if events were posted, False otherwise               ║
 # ╚════════════════════════════════════════════════════════════════════╝
-async def post_tagged_events(bot, tag: str, day: datetime.date) -> bool:
+async def post_tagged_events(bot, user_id: str, day: datetime.date) -> bool:
     try:
-        calendars = GROUPED_CALENDARS.get(tag)
+        calendars = GROUPED_CALENDARS.get(user_id)
         if not calendars:
-            logger.warning(f"No calendars found for tag: {tag}")
+            logger.warning(f"No calendars found for user ID: {user_id}")
             return False
 
         events_by_source = defaultdict(list)
@@ -248,17 +244,17 @@ async def post_tagged_events(bot, tag: str, day: datetime.date) -> bool:
                 # Continue with other calendars even if one fails
 
         if not events_by_source:
-            logger.debug(f"Skipping {tag} — no events for {day}")
+            logger.debug(f"Skipping {user_id} — no events for {day}")
             return False
             
         embed = discord.Embed(
-            title=f"🗓️ Herald's Scroll — {get_name_for_tag(tag)}",
+            title=f"🗓️ Herald's Scroll — {user_id}",
             description=f"Events for **{day.strftime('%A, %B %d')}**",
-            color=get_color_for_tag(tag)
+            color=get_color_for_tag(user_id)
         )
 
-        # Add mention for the tag or @everyone
-        mention = TAG_NAMES.get(tag, "@everyone")
+        # Add mention for the user ID
+        mention = f"<@{user_id}>"
         await send_embed(bot, embed=embed, content=f"{mention}")
 
         for source_name, events in sorted(events_by_source.items()):
@@ -299,18 +295,18 @@ async def post_tagged_events(bot, tag: str, day: datetime.date) -> bool:
         return True
         
     except Exception as e:
-        logger.exception(f"Error in post_tagged_events for tag {tag} on {day}: {e}")
+        logger.exception(f"Error in post_tagged_events for user ID {user_id} on {day}: {e}")
         return False
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 📅 /herald [tag] — Posts today's events for a calendar tag
 # ╚════════════════════════════════════════════════════════════════════╝
-async def post_tagged_week(bot, tag: str, monday: datetime.date):
+async def post_tagged_week(bot, user_id: str, monday: datetime.date):
     try:
-        calendars = GROUPED_CALENDARS.get(tag)
+        calendars = GROUPED_CALENDARS.get(user_id)
         if not calendars:
-            logger.warning(f"No calendars for tag {tag}")
+            logger.warning(f"No calendars for user ID {user_id}")
             return
 
         end = monday + timedelta(days=6)
@@ -322,7 +318,7 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
             all_events += events
 
         if not all_events:
-            logger.debug(f"Skipping {tag} — no weekly events from {monday} to {end}")
+            logger.debug(f"Skipping {user_id} — no weekly events from {monday} to {end}")
             return
 
         events_by_day = defaultdict(list)
@@ -344,13 +340,13 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
         # Resolve user mention from user_mappings
         from server_config import load_server_config
         server_config = load_server_config(bot.guilds[0].id)  # Assuming single guild context
-        user_id = server_config.get("user_mappings", {}).get(tag, None)
+        user_id = server_config.get("user_mappings", {}).get(user_id, None)
         mention = f"<@{user_id}>" if user_id else "@everyone"
 
         embed = discord.Embed(
             title=f"📜 Herald’s Week — {mention}",
             description=f"Week of **{monday.strftime('%B %d')}**",
-            color=get_color_for_tag(tag)
+            color=get_color_for_tag(user_id)
         )
 
         for i in range(7):
@@ -373,7 +369,7 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
         embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
         await send_embed(bot, embed=embed, content=f"{mention}")
     except Exception as e:
-        logger.exception(f"Error in post_tagged_week for tag {tag} starting {monday}: {e}")
+        logger.exception(f"Error in post_tagged_week for user ID {user_id} starting {monday}: {e}")
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -384,7 +380,7 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
 async def agenda(interaction: discord.Interaction, date: str) -> None:
     """
     Accepts a natural-language date string, resolves it to a day, and
-    fetches all events from all calendar tags for that day.
+    fetches all events from all calendars for that day.
 
     Usage: /agenda <natural-language-date>
     """
@@ -399,7 +395,7 @@ async def agenda(interaction: discord.Interaction, date: str) -> None:
 
         day = dt.date()
         all_events = []
-        for tag, sources in GROUPED_CALENDARS.items():
+        for user_id, sources in GROUPED_CALENDARS.items():
             for source in sources:
                 events = await interaction.client.loop.run_in_executor(None, get_events, source, day, day)
                 all_events.extend(events)
@@ -412,13 +408,13 @@ async def agenda(interaction: discord.Interaction, date: str) -> None:
             return
 
         embed = discord.Embed(
-            title=f"🗓️ Agenda for {TAG_NAMES.get(tag, tag)} on {day.strftime('%A, %d %B %Y')}",  # Use Discord username
+            title=f"🗓️ Agenda for {interaction.user.display_name} on {day.strftime('%A, %d %B %Y')}",
             color=0x3498db,
             description="\n\n".join(format_event(e) for e in all_events)
         )
         embed.set_footer(text=f"{len(all_events)} event(s)")
 
-        mention = "@everyone" if tag.upper() == "EVERYONE" else TAG_NAMES.get(tag, tag)
+        mention = f"<@{interaction.user.id}>"
         await send_embed(bot=interaction.client, embed=embed, content=f"{mention}")
         logger.info("[commands.py] ✅ Agenda command posted events successfully.")
 
