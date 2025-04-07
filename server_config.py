@@ -111,9 +111,10 @@ def add_calendar(server_id: int, calendar_url: str, user_id: str, display_name: 
     if not user_tag:
         if user_id_str == "EVERYONE":
             user_tag = "EVERYONE"
+            config.setdefault("user_mappings", {})[user_tag] = "EVERYONE"  # Special case for "EVERYONE"
         else:
             user_tag = f"USER_{user_id_str[-4:]}"
-        config.setdefault("user_mappings", {})[user_tag] = user_id_str
+            config.setdefault("user_mappings", {})[user_tag] = user_id_str
     
     # Add calendar to config
     calendar_entry = {
