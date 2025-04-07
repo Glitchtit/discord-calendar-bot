@@ -1,3 +1,4 @@
+# Core dependencies
 openai==1.69.0
 google-api-python-client==2.123.0
 google-auth==2.29.0
@@ -10,5 +11,10 @@ rich==13.7.1
 colorlog==6.8.2
 discord.py==2.3.2
 dateparser==1.1.8
-# Ensure the following dependencies are included:
-logging==0.5.1.2  # For advanced logging features
+
+# Stability enhancements
+tenacity==8.2.3        # Advanced retry logic
+backoff==2.2.1         # Exponential backoff
+cachetools==5.3.2      # Caching utilities
+psutil==5.9.6          # System resource monitoring
+aiohttp==3.9.1         # Async HTTP client with enhanced stability

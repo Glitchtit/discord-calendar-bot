@@ -3,6 +3,8 @@ from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
 import dateparser
+import asyncio
+import random
 
 from log import logger
 from events import (
@@ -34,6 +36,9 @@ intents = discord.Intents.default()
 intents.members = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 
+# Track initialization state to avoid duplicate startups
+bot.is_initialized = False
+
 
 # ╔═════════════════════════════════════════════════════════════╗
 # ║ 🟢 on_ready                                                  ║
@@ -42,18 +47,72 @@ bot = commands.Bot(command_prefix="/", intents=intents)
 @bot.event
 async def on_ready():
     logger.info(f"Logged in as {bot.user}")
-    try:
-        await resolve_tag_mappings()
-        synced = await bot.tree.sync()
-        logger.info(f"Synced {len(synced)} commands.")
-    except Exception as e:
-        logger.exception(f"Failed during on_ready or slash sync: {e}")
+    
+    # Prevent multiple initializations if Discord reconnects
+    if bot.is_initialized:
+        logger.info("Bot reconnected, skipping initialization")
+        return
+    
+    # Perform initialization with progressive backoff for retries
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            # Step 1: Resolve tag mappings
+            await resolve_tag_mappings()
+            
+            # Step 2: Add slight delay to avoid rate limiting
+            await asyncio.sleep(1)
+            
+            # Step 3: Sync slash commands
+            synced = await bot.tree.sync()
+            logger.info(f"Synced {len(synced)} commands.")
+            
+            # Step 4: Initialize event snapshots
+            await initialize_event_snapshots()
+            
+            # Step 5: Start recurring tasks
+            start_all_tasks(bot)
+            
+            # Mark successful initialization
+            bot.is_initialized = True
+            logger.info("Bot initialization completed successfully")
+            break
+            
+        except discord.errors.HTTPException as e:
+            # Handle Discord API issues with exponential backoff
+            retry_delay = 2 ** attempt + random.uniform(0, 1)
+            logger.warning(f"Discord API error during initialization (attempt {attempt}/{max_retries}): {e}")
+            
+            if attempt < max_retries:
+                logger.info(f"Retrying initialization in {retry_delay:.2f} seconds...")
+                await asyncio.sleep(retry_delay)
+            else:
+                logger.error("Maximum retries reached. Continuing with partial initialization.")
+                # Still mark as initialized to prevent endless retries on reconnect
+                bot.is_initialized = True
+                
+        except Exception as e:
+            logger.exception(f"Unexpected error during initialization: {e}")
+            # Mark as initialized despite error to prevent retry loops
+            bot.is_initialized = True
 
-    try:
-        await initialize_event_snapshots()
-        start_all_tasks(bot)
-    except Exception as e:
-        logger.exception(f"Failed to initialize tasks: {e}")
+
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ 🔌 on_disconnect                                            ║
+# ║ Called when the bot disconnects from Discord                ║
+# ╚═════════════════════════════════════════════════════════════╝
+@bot.event
+async def on_disconnect():
+    logger.warning("Bot disconnected from Discord. Waiting for reconnection...")
+
+
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ 🔌 on_resumed                                               ║
+# ║ Called when the bot reconnects after a disconnect           ║
+# ╚═════════════════════════════════════════════════════════════╝
+@bot.event
+async def on_resumed():
+    logger.info("Bot connection resumed")
 
 
 # ╔═════════════════════════════════════════════════════════════╗
@@ -79,7 +138,6 @@ async def herald_command(interaction: discord.Interaction):
     except Exception as e:
         logger.exception(f"Error in /herald command: {e}")
         await interaction.followup.send("An error occurred while posting the herald.")
-
 
 
 # ╔═════════════════════════════════════════════════════════════╗
@@ -139,7 +197,6 @@ async def agenda_command(interaction: discord.Interaction, input: str, target: s
         await interaction.followup.send("An error occurred while processing the agenda.")
 
 
-
 # ╔═════════════════════════════════════════════════════════════╗
 # ║ 🎭 /greet                                                    ║
 # ║ Generates a persona-based medieval greeting with image      ║
@@ -193,18 +250,57 @@ async def who_command(interaction: discord.Interaction):
 async def resolve_tag_mappings():
     try:
         logger.info("Resolving Discord tag-to-name mappings...")
-        guild = discord.utils.get(bot.guilds)
-        if not guild:
-            logger.warning("No guild found.")
+        
+        # Handle case where bot might be in multiple guilds
+        if not bot.guilds:
+            logger.warning("No guilds available. Tag mappings not resolved.")
             return
-        for user_id, tag in USER_TAG_MAP.items():
-            member = guild.get_member(user_id)
-            if member:
-                TAG_NAMES[tag] = member.nick or member.display_name
-                role_color = next((r.color.value for r in member.roles if r.color.value != 0), 0x95a5a6)
-                TAG_COLORS[tag] = role_color
-                logger.info(f"Assigned {tag}: name={TAG_NAMES[tag]}, color=#{role_color:06X}")
-            else:
-                logger.warning(f"Could not resolve Discord member for ID {user_id}")
+            
+        # Process each guild the bot is in
+        for guild in bot.guilds:
+            logger.debug(f"Processing guild: {guild.name} (ID: {guild.id})")
+            
+            # Process each user-tag mapping
+            for user_id, tag in USER_TAG_MAP.items():
+                # Fetch member with retries
+                member = None
+                max_retries = 2
+                
+                for attempt in range(max_retries):
+                    try:
+                        # Try to get member from cache first
+                        member = guild.get_member(user_id)
+                        
+                        # If not in cache, fetch from API
+                        if member is None:
+                            member = await guild.fetch_member(user_id)
+                            
+                        if member:
+                            break
+                    except discord.errors.NotFound:
+                        # Member not in this guild, try the next one
+                        logger.debug(f"User ID {user_id} not found in guild {guild.name}")
+                        break
+                    except Exception as e:
+                        logger.warning(f"Error fetching member {user_id} (attempt {attempt+1}): {e}")
+                        await asyncio.sleep(1)
+                
+                # Process member if found
+                if member:
+                    display_name = member.nick or member.display_name
+                    TAG_NAMES[tag] = display_name
+                    
+                    # Get member's role color (defaulting to gray if none)
+                    role_color = next((r.color.value for r in member.roles if r.color.value != 0), 0x95a5a6)
+                    TAG_COLORS[tag] = role_color
+                    
+                    logger.info(f"Assigned {tag}: name={display_name}, color=#{role_color:06X}")
+                else:
+                    # Not found in any guild, set fallback name
+                    TAG_NAMES[tag] = TAG_NAMES.get(tag, tag)
+                    logger.warning(f"Could not resolve Discord member for ID {user_id} in any guild")
+        
+        logger.info(f"Tag mapping complete: {len(TAG_NAMES)} tags resolved")
     except Exception as e:
         logger.exception(f"Error in resolve_tag_mappings: {e}")
+        # Don't re-raise, allow initialization to continue
