@@ -308,8 +308,9 @@ async def greet_command(interaction: discord.Interaction):
 async def reload_command(interaction: discord.Interaction):
     try:
         await interaction.response.defer()
-        # Use the new configuration loading system
-        load_calendars_from_server_configs()
+        # Use the new configuration loading system and re-initialize events
+        from events import reinitialize_events
+        await reinitialize_events()
         await resolve_tag_mappings()
         await interaction.followup.send("Reloaded calendar sources and tag mappings.")
     except Exception as e:
@@ -662,8 +663,9 @@ class UserSelectView(View):
                 final_display_name
             )
             
-            # Reload calendar configuration
-            load_calendars_from_server_configs()
+            # Reload calendar configuration and reinitialize events
+            from events import reinitialize_events
+            asyncio.create_task(reinitialize_events())
             
             # Show the result
             await interaction.response.send_message(
@@ -736,9 +738,10 @@ class ConfirmRemovalView(View):
         # Remove the calendar
         success, message = remove_calendar(self.guild_id, self.calendar_id)
         
-        # Reload calendar configuration if successful
+        # Reload calendar configuration if successful and reinitialize events
         if success:
-            load_calendars_from_server_configs()
+            from events import reinitialize_events
+            asyncio.create_task(reinitialize_events())
             
         await interaction.response.send_message(
             f"{'✅' if success else '❌'} {message}",

@@ -501,5 +501,26 @@ def resolve_tag_mappings():
     logger.warning("resolve_tag_mappings() is deprecated. Tag mappings are now resolved during server config loading.")
     return
 
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🔄 Reload Functions                                                ║
+# ║ Functions to handle reloading after setup changes                  ║
+# ╚════════════════════════════════════════════════════════════════════╝
+async def reinitialize_events():
+    """
+    Re-initializes the event snapshots after calendar configuration changes.
+    This should be called after /setup or /reload commands to ensure events
+    are properly loaded into /data/events.json.
+    """
+    from tasks import initialize_event_snapshots
+    
+    # First, reload calendar configurations
+    load_calendars_from_server_configs()
+    
+    # Then initialize event snapshots
+    logger.info("Re-initializing event snapshots after configuration change")
+    await initialize_event_snapshots()
+    
+    return True
+
 # Initialize calendars on module load
 load_calendars_from_server_configs()
