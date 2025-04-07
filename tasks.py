@@ -220,6 +220,8 @@ async def watch_for_event_changes(bot):
                     try:
                         # Rate limit ourselves to avoid overloading APIs
                         events = await asyncio.to_thread(get_events, meta, earliest, latest)
+                        if not events:
+                            events = []
                         all_events += events
                     except Exception as e:
                         logger.exception(f"Error fetching events for calendar {meta['name']}: {e}")
@@ -385,6 +387,8 @@ async def post_todays_happenings(bot, include_greeting: bool = False):
                 for meta in GROUPED_CALENDARS[tag]:
                     try:
                         events = await asyncio.to_thread(get_events, meta, today, today)
+                        if not events:
+                            events = []
                         all_events_for_greeting += events
                     except Exception as e:
                         logger.warning(f"Error fetching greeting events for {meta['name']}: {e}")
@@ -491,6 +495,8 @@ async def initialize_event_snapshots():
                 for meta in calendars:
                     try:
                         events = await asyncio.to_thread(get_events, meta, earliest, latest)
+                        if not events:
+                            events = []
                         all_events += events
                         processed += 1
                         
