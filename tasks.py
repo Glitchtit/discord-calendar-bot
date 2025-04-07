@@ -183,24 +183,25 @@ def start_background_tasks(bot) -> None:
     in safe_call to prevent a single failure from halting the entire loop.
     """
     async def scheduler() -> None:
-        while True:
-            now = datetime.now()
-            weekday = now.weekday()
+        try:
+            while True:
+                now = datetime.now()
+                weekday = now.weekday()
 
-            # 06:00 daily greeting + events
-            if now.hour == 6 and now.minute == 0:
-                await safe_call(post_ai_greeting, bot)
-                await safe_call(post_all_tags_today, bot)
+                if now.hour == 6 and now.minute == 0:
+                    await safe_call(post_ai_greeting, bot)
+                    await safe_call(post_all_tags_today, bot)
 
-            # 06:10 Monday weekly summary
-            if weekday == 0 and now.hour == 6 and now.minute == 10:
-                await safe_call(post_all_tags_week, bot)
+                if weekday == 0 and now.hour == 6 and now.minute == 10:
+                    await safe_call(post_all_tags_week, bot)
 
-            # 06:20 daily snapshot archive
-            if now.hour == 6 and now.minute == 20:
-                await safe_call(archive_snapshots, bot)
+                if now.hour == 6 and now.minute == 20:
+                    await safe_call(archive_snapshots, bot)
 
-            await asyncio.sleep(60)
+                await asyncio.sleep(60)
+        except Exception as e:
+            logger.exception("[tasks.py] ❌ Scheduler loop crashed!", exc_info=e)
+
 
     asyncio.create_task(scheduler())
     logger.info("[tasks.py] Background tasks initialized.")
