@@ -49,6 +49,7 @@ try:
     logger.info("Google Calendar service initialized.")
 except Exception as e:
     logger.exception(f"Error initializing Google Calendar service: {e}")
+    logger.debug("Debug: Verify GOOGLE_APPLICATION_CREDENTIALS is set correctly or the file exists.")
     service = None  # Will trigger fallback behavior in functions
 
 # ╔════════════════════════════════════════════════════════════════════╗
