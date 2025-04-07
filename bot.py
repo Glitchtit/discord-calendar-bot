@@ -39,10 +39,6 @@ from commands import (
     post_tagged_events,
     post_tagged_week,
     send_embed,
-    autocomplete_tag,
-    autocomplete_range,
-    autocomplete_agenda_target,
-    autocomplete_agenda_input
 )
 from tasks import initialize_event_snapshots, start_all_tasks, post_todays_happenings
 from utils import get_today, get_monday_of_week, resolve_input_to_tags
@@ -170,6 +166,66 @@ async def herald_command(interaction: discord.Interaction):
     except Exception as e:
         logger.exception(f"Error in /herald command: {e}")
         await interaction.followup.send("An error occurred while posting the herald.")
+
+
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ 🔍 Autocomplete Functions                                    ║
+# ║ Provides suggestions for command arguments                   ║
+# ╚═════════════════════════════════════════════════════════════╝
+async def autocomplete_agenda_input(
+    interaction: discord.Interaction,
+    current: str,
+) -> List[app_commands.Choice[str]]:
+    """Provides autocomplete for date input in agenda command."""
+    suggestions = [
+        "today", "tomorrow", "week", 
+        "next monday", "next tuesday", "next wednesday", 
+        "next thursday", "next friday", "next saturday", "next sunday"
+    ]
+    
+    # Add suggestions for upcoming days of the week
+    today = get_today()
+    for i in range(1, 7):
+        day = (today + datetime.timedelta(days=i)).strftime("%A").lower()
+        if day not in suggestions:
+            suggestions.append(day)
+    
+    # Filter based on current input
+    if current:
+        return [
+            app_commands.Choice(name=suggestion, value=suggestion)
+            for suggestion in suggestions if current.lower() in suggestion.lower()
+        ][:25]
+    
+    # Return top suggestions if no input
+    return [app_commands.Choice(name=suggestion, value=suggestion) for suggestion in suggestions[:25]]
+
+async def autocomplete_agenda_target(
+    interaction: discord.Interaction,
+    current: str,
+) -> List[app_commands.Choice[str]]:
+    """Provides autocomplete for tag/user in agenda command."""
+    suggestions = []
+    
+    # Add all tag names
+    for tag in GROUPED_CALENDARS:
+        display_name = TAG_NAMES.get(tag, tag)
+        suggestions.append((display_name, display_name))
+        # Also add the raw tag as an option
+        if tag != display_name:
+            suggestions.append((tag, tag))
+    
+    # Filter based on current input
+    if current:
+        filtered = [
+            app_commands.Choice(name=name, value=value)
+            for name, value in suggestions 
+            if current.lower() in name.lower()
+        ]
+        return filtered[:25]  # Discord limits to 25 choices
+    
+    # Return all suggestions if no input
+    return [app_commands.Choice(name=name, value=value) for name, value in suggestions[:25]]
 
 
 # ╔═════════════════════════════════════════════════════════════╗

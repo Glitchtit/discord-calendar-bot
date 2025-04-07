@@ -12,6 +12,7 @@ from dateutil import tz
 import discord
 from discord import app_commands, errors as discord_errors
 from collections import defaultdict
+from typing import List  # Add this import for type hints
 
 from events import (
     GROUPED_CALENDARS,
@@ -24,6 +25,40 @@ from utils import format_event  # Add missing import
 from log import logger
 from ai import generate_greeting, generate_image  # Fix function references
 
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🔍 Autocomplete Functions                                          ║
+# ║ Provides suggestions for command arguments                         ║
+# ╚════════════════════════════════════════════════════════════════════╝
+async def autocomplete_tag(
+    interaction: discord.Interaction, 
+    current: str
+) -> List[app_commands.Choice[str]]:
+    """
+    Provides autocomplete suggestions for calendar tags.
+    Used by commands that need to filter by user/tag.
+    """
+    suggestions = []
+    
+    # Add all tag names
+    for tag in GROUPED_CALENDARS:
+        display_name = TAG_NAMES.get(tag, tag)
+        suggestions.append((display_name, display_name))
+        # Also add the raw tag as an option
+        if tag != display_name:
+            suggestions.append((tag, tag))
+    
+    # Filter based on current input
+    if current:
+        filtered = [
+            app_commands.Choice(name=name, value=value)
+            for name, value in suggestions 
+            if current.lower() in name.lower()
+        ]
+        return filtered[:25]  # Discord limits to 25 choices
+    
+    # Return all suggestions if no input
+    return [app_commands.Choice(name=name, value=value) for name, value in suggestions[:25]]
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔄 _retry_discord_operation                                        ║
