@@ -3,6 +3,7 @@ openai==1.69.0
 google-api-python-client==2.123.0
 google-auth==2.29.0
 google-auth-oauthlib==1.2.0
+ics==0.7.2            # Python package for parsing iCalendar files
 
 # AI APIs
 aiohttp==3.9.3
