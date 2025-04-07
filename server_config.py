@@ -19,6 +19,7 @@ from log import logger
 
 # Directory for server configuration files
 SERVER_CONFIG_BASE = "/data"
+SERVER_CONFIG_DIR = SERVER_CONFIG_BASE
 
 # Create required directories if they don't exist
 for path in [SERVER_CONFIG_BASE, os.path.dirname(SERVER_CONFIG_BASE)]:
