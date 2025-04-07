@@ -341,8 +341,12 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
             elif start_date:
                 events_by_day[start_date].append(e)
 
-        # Use Discord mention for the tag
-        mention = "@everyone" if tag.upper() == "EVERYONE" else f"<@{tag}>"
+        # Resolve user mention from user_mappings
+        from server_config import load_server_config
+        server_config = load_server_config(bot.guilds[0].id)  # Assuming single guild context
+        user_id = server_config.get("user_mappings", {}).get(tag, None)
+        mention = f"<@{user_id}>" if user_id else "@everyone"
+
         embed = discord.Embed(
             title=f"📜 Herald’s Week — {mention}",
             description=f"Week of **{monday.strftime('%B %d')}**",
