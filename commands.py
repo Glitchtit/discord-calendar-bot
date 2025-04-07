@@ -21,28 +21,31 @@ from utils import format_event, resolve_input_to_tags
 # ║ Sends an embed to the announcement channel, optionally with image ║
 # ╚════════════════════════════════════════════════════════════════════╝
 async def send_embed(bot, embed: discord.Embed = None, title: str = "", description: str = "", color: int = 5814783, image_path: str | None = None):
-    if isinstance(embed, str):
-        logger.warning("send_embed() received a string instead of an Embed. Converting values assuming misuse.")
-        description = embed
-        embed = None
-    from environ import ANNOUNCEMENT_CHANNEL_ID
-    if not ANNOUNCEMENT_CHANNEL_ID:
-        logger.warning("ANNOUNCEMENT_CHANNEL_ID not set.")
-        return
-    channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
-    if not channel:
-        logger.error("Channel not found. Check ANNOUNCEMENT_CHANNEL_ID.")
-        return
+    try:
+        if isinstance(embed, str):
+            logger.warning("send_embed() received a string instead of an Embed. Converting values assuming misuse.")
+            description = embed
+            embed = None
+        from environ import ANNOUNCEMENT_CHANNEL_ID
+        if not ANNOUNCEMENT_CHANNEL_ID:
+            logger.warning("ANNOUNCEMENT_CHANNEL_ID not set.")
+            return
+        channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+        if not channel:
+            logger.error("Channel not found. Check ANNOUNCEMENT_CHANNEL_ID.")
+            return
 
-    if embed is None:
-        embed = discord.Embed(title=title, description=description, color=color)
+        if embed is None:
+            embed = discord.Embed(title=title, description=description, color=color)
 
-    if image_path and os.path.exists(image_path):
-        file = discord.File(image_path, filename="image.png")
-        embed.set_image(url="attachment://image.png")
-        await channel.send(embed=embed, file=file)
-    else:
-        await channel.send(embed=embed)
+        if image_path and os.path.exists(image_path):
+            file = discord.File(image_path, filename="image.png")
+            embed.set_image(url="attachment://image.png")
+            await channel.send(embed=embed, file=file)
+        else:
+            await channel.send(embed=embed)
+    except Exception as e:
+        logger.exception(f"Error in send_embed: {e}")
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -51,44 +54,48 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
 # ║ Returns True if events were posted, False otherwise               ║
 # ╚════════════════════════════════════════════════════════════════════╝
 async def post_tagged_events(bot, tag: str, day: datetime.date) -> bool:
-    calendars = GROUPED_CALENDARS.get(tag)
-    if not calendars:
-        logger.warning(f"No calendars found for tag: {tag}")
-        return False
+    try:
+        calendars = GROUPED_CALENDARS.get(tag)
+        if not calendars:
+            logger.warning(f"No calendars found for tag: {tag}")
+            return False
 
-    events_by_source = defaultdict(list)
-    for meta in calendars:
-        events = get_events(meta, day, day)
-        for e in events:
-            events_by_source[meta["name"]].append(e)
+        events_by_source = defaultdict(list)
+        for meta in calendars:
+            events = get_events(meta, day, day)
+            for e in events:
+                events_by_source[meta["name"]].append(e)
 
-    if not events_by_source:
-        logger.debug(f"Skipping {tag} — no events for {day}")
-        return False
+        if not events_by_source:
+            logger.debug(f"Skipping {tag} — no events for {day}")
+            return False
 
-    embed = discord.Embed(
-        title=f"🗓️ Herald’s Scroll — {get_name_for_tag(tag)}",
-        description=f"Events for **{day.strftime('%A, %B %d')}**",
-        color=get_color_for_tag(tag)
-    )
-
-    for source_name, events in sorted(events_by_source.items()):
-        if not events:
-            continue
-        formatted_events = [
-            f" {format_event(e)}"
-            for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
-        ]
-
-        embed.add_field(
-            name=f"📖 {source_name}",
-            value="\n".join(formatted_events) + "\n\u200b",
-            inline=False
+        embed = discord.Embed(
+            title=f"🗓️ Herald’s Scroll — {get_name_for_tag(tag)}",
+            description=f"Events for **{day.strftime('%A, %B %d')}**",
+            color=get_color_for_tag(tag)
         )
 
-    embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
-    await send_embed(bot, embed=embed)
-    return True
+        for source_name, events in sorted(events_by_source.items()):
+            if not events:
+                continue
+            formatted_events = [
+                f" {format_event(e)}"
+                for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
+            ]
+
+            embed.add_field(
+                name=f"📖 {source_name}",
+                value="\n".join(formatted_events) + "\n\u200b",
+                inline=False
+            )
+
+        embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
+        await send_embed(bot, embed=embed)
+        return True
+    except Exception as e:
+        logger.exception(f"Error in post_tagged_events for tag {tag} on {day}: {e}")
+        return False
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -96,51 +103,54 @@ async def post_tagged_events(bot, tag: str, day: datetime.date) -> bool:
 # ║ Sends an embed of the weekly schedule for a given calendar tag    ║
 # ╚════════════════════════════════════════════════════════════════════╝
 async def post_tagged_week(bot, tag: str, monday: datetime.date):
-    calendars = GROUPED_CALENDARS.get(tag)
-    if not calendars:
-        logger.warning(f"No calendars for tag {tag}")
-        return
+    try:
+        calendars = GROUPED_CALENDARS.get(tag)
+        if not calendars:
+            logger.warning(f"No calendars for tag {tag}")
+            return
 
-    end = monday + timedelta(days=6)
-    all_events = []
-    for meta in calendars:
-        all_events += get_events(meta, monday, end)
+        end = monday + timedelta(days=6)
+        all_events = []
+        for meta in calendars:
+            all_events += get_events(meta, monday, end)
 
-    if not all_events:
-        logger.debug(f"Skipping {tag} — no weekly events from {monday} to {end}")
-        return
+        if not all_events:
+            logger.debug(f"Skipping {tag} — no weekly events from {monday} to {end}")
+            return
 
-    events_by_day = defaultdict(list)
-    for e in all_events:
-        start_str = e["start"].get("dateTime", e["start"].get("date"))
-        dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
-        events_by_day[dt.date()].append(e)
+        events_by_day = defaultdict(list)
+        for e in all_events:
+            start_str = e["start"].get("dateTime", e["start"].get("date"))
+            dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
+            events_by_day[dt.date()].append(e)
 
-    embed = discord.Embed(
-        title=f"📜 Herald’s Week — {get_name_for_tag(tag)}",
-        description=f"Week of **{monday.strftime('%B %d')}**",
-        color=get_color_for_tag(tag)
-    )
-
-    for i in range(7):
-        day = monday + timedelta(days=i)
-        day_events = events_by_day.get(day, [])
-        if not day_events:
-            continue
-
-        formatted_events = [
-            f" {format_event(e)}"
-            for e in sorted(day_events, key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
-        ]
-
-        embed.add_field(
-            name=f"📅 {day.strftime('%A')}",
-            value="\n".join(formatted_events) + "\n\u200b",
-            inline=False
+        embed = discord.Embed(
+            title=f"📜 Herald’s Week — {get_name_for_tag(tag)}",
+            description=f"Week of **{monday.strftime('%B %d')}**",
+            color=get_color_for_tag(tag)
         )
 
-    embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
-    await send_embed(bot, embed=embed)
+        for i in range(7):
+            day = monday + timedelta(days=i)
+            day_events = events_by_day.get(day, [])
+            if not day_events:
+                continue
+
+            formatted_events = [
+                f" {format_event(e)}"
+                for e in sorted(day_events, key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
+            ]
+
+            embed.add_field(
+                name=f"📅 {day.strftime('%A')}",
+                value="\n".join(formatted_events) + "\n\u200b",
+                inline=False
+            )
+
+        embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
+        await send_embed(bot, embed=embed)
+    except Exception as e:
+        logger.exception(f"Error in post_tagged_week for tag {tag} starting {monday}: {e}")
 
 
 # ╔════════════════════════════════════════════════════════════════════╗

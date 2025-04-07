@@ -46,11 +46,14 @@ async def on_ready():
         await resolve_tag_mappings()
         synced = await bot.tree.sync()
         logger.info(f"Synced {len(synced)} commands.")
-    except Exception:
-        logger.exception("Failed during on_ready or slash sync.")
+    except Exception as e:
+        logger.exception(f"Failed during on_ready or slash sync: {e}")
 
-    await initialize_event_snapshots()
-    start_all_tasks(bot)
+    try:
+        await initialize_event_snapshots()
+        start_all_tasks(bot)
+    except Exception as e:
+        logger.exception(f"Failed to initialize tasks: {e}")
 
 
 # ╔═════════════════════════════════════════════════════════════╗
@@ -62,16 +65,20 @@ async def on_ready():
     description="Post all weekly and daily events for every calendar tag"
 )
 async def herald_command(interaction: discord.Interaction):
-    await interaction.response.defer()
-    today = get_today()
-    monday = get_monday_of_week(today)
+    try:
+        await interaction.response.defer()
+        today = get_today()
+        monday = get_monday_of_week(today)
 
-    for tag in GROUPED_CALENDARS:
-        await post_tagged_week(bot, tag, monday)
-    for tag in GROUPED_CALENDARS:
-        await post_tagged_events(bot, tag, today)
+        for tag in GROUPED_CALENDARS:
+            await post_tagged_week(bot, tag, monday)
+        for tag in GROUPED_CALENDARS:
+            await post_tagged_events(bot, tag, today)
 
-    await interaction.followup.send("Herald posted for **all** tags — week and today.")
+        await interaction.followup.send("Herald posted for **all** tags — week and today.")
+    except Exception as e:
+        logger.exception(f"Error in /herald command: {e}")
+        await interaction.followup.send("An error occurred while posting the herald.")
 
 
 
@@ -89,43 +96,47 @@ async def herald_command(interaction: discord.Interaction):
 )
 @app_commands.autocomplete(input=autocomplete_agenda_input, target=autocomplete_agenda_target)
 async def agenda_command(interaction: discord.Interaction, input: str, target: str = ""):
-    await interaction.response.defer()
+    try:
+        await interaction.response.defer()
 
-    today = get_today()
-    tags = resolve_input_to_tags(target, TAG_NAMES, GROUPED_CALENDARS) if target.strip() else list(GROUPED_CALENDARS.keys())
+        today = get_today()
+        tags = resolve_input_to_tags(target, TAG_NAMES, GROUPED_CALENDARS) if target.strip() else list(GROUPED_CALENDARS.keys())
 
-    if not tags:
-        await interaction.followup.send("No matching tags or names found.")
-        return
-
-    any_posted = False
-    if input.lower() == "today":
-        for tag in tags:
-            posted = await post_tagged_events(bot, tag, today)
-            any_posted |= posted
-        label = today.strftime("%A, %B %d")
-    elif input.lower() == "week":
-        monday = get_monday_of_week(today)
-        for tag in tags:
-            await post_tagged_week(bot, tag, monday)
-        any_posted = True  # Weekly always posts if calendars are valid
-        label = f"week of {monday.strftime('%B %d')}"
-    else:
-        parsed = dateparser.parse(input)
-        if not parsed:
-            await interaction.followup.send("Could not understand the date. Try 'today', 'week', or a real date.")
+        if not tags:
+            await interaction.followup.send("No matching tags or names found.")
             return
-        day = parsed.date()
-        for tag in tags:
-            posted = await post_tagged_events(bot, tag, day)
-            any_posted |= posted
-        label = day.strftime("%A, %B %d")
 
-    tag_names = ", ".join(TAG_NAMES.get(t, t) for t in tags)
-    if any_posted:
-        await interaction.followup.send(f"Agenda posted for **{tag_names}** on **{label}**.")
-    else:
-        await interaction.followup.send(f"No events found for **{tag_names}** on **{label}**.")
+        any_posted = False
+        if input.lower() == "today":
+            for tag in tags:
+                posted = await post_tagged_events(bot, tag, today)
+                any_posted |= posted
+            label = today.strftime("%A, %B %d")
+        elif input.lower() == "week":
+            monday = get_monday_of_week(today)
+            for tag in tags:
+                await post_tagged_week(bot, tag, monday)
+            any_posted = True  # Weekly always posts if calendars are valid
+            label = f"week of {monday.strftime('%B %d')}"
+        else:
+            parsed = dateparser.parse(input)
+            if not parsed:
+                await interaction.followup.send("Could not understand the date. Try 'today', 'week', or a real date.")
+                return
+            day = parsed.date()
+            for tag in tags:
+                posted = await post_tagged_events(bot, tag, day)
+                any_posted |= posted
+            label = day.strftime("%A, %B %d")
+
+        tag_names = ", ".join(TAG_NAMES.get(t, t) for t in tags)
+        if any_posted:
+            await interaction.followup.send(f"Agenda posted for **{tag_names}** on **{label}**.")
+        else:
+            await interaction.followup.send(f"No events found for **{tag_names}** on **{label}**.")
+    except Exception as e:
+        logger.exception(f"Error in /agenda command: {e}")
+        await interaction.followup.send("An error occurred while processing the agenda.")
 
 
 
@@ -135,9 +146,13 @@ async def agenda_command(interaction: discord.Interaction, input: str, target: s
 # ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(name="greet", description="Post the morning greeting with image")
 async def greet_command(interaction: discord.Interaction):
-    await interaction.response.defer()
-    await post_todays_happenings(bot, include_greeting=True)
-    await interaction.followup.send("Greeting and image posted.")
+    try:
+        await interaction.response.defer()
+        await post_todays_happenings(bot, include_greeting=True)
+        await interaction.followup.send("Greeting and image posted.")
+    except Exception as e:
+        logger.exception(f"Error in /greet command: {e}")
+        await interaction.followup.send("An error occurred while posting the greeting.")
 
 
 # ╔═════════════════════════════════════════════════════════════╗
@@ -146,10 +161,14 @@ async def greet_command(interaction: discord.Interaction):
 # ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(name="reload", description="Reload calendar sources and tag-user mappings")
 async def reload_command(interaction: discord.Interaction):
-    await interaction.response.defer()
-    load_calendar_sources()
-    await resolve_tag_mappings()
-    await interaction.followup.send("Reloaded calendar sources and tag mappings.")
+    try:
+        await interaction.response.defer()
+        load_calendar_sources()
+        await resolve_tag_mappings()
+        await interaction.followup.send("Reloaded calendar sources and tag mappings.")
+    except Exception as e:
+        logger.exception(f"Error in /reload command: {e}")
+        await interaction.followup.send("An error occurred while reloading.")
 
 
 # ╔═════════════════════════════════════════════════════════════╗
@@ -158,9 +177,13 @@ async def reload_command(interaction: discord.Interaction):
 # ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(name="who", description="List calendar tags and their assigned users")
 async def who_command(interaction: discord.Interaction):
-    await interaction.response.defer()
-    lines = [f"**{tag}** → {TAG_NAMES.get(tag, tag)}" for tag in sorted(GROUPED_CALENDARS)]
-    await interaction.followup.send("**Calendar Tags:**\n" + "\n".join(lines))
+    try:
+        await interaction.response.defer()
+        lines = [f"**{tag}** → {TAG_NAMES.get(tag, tag)}" for tag in sorted(GROUPED_CALENDARS)]
+        await interaction.followup.send("**Calendar Tags:**\n" + "\n".join(lines))
+    except Exception as e:
+        logger.exception(f"Error in /who command: {e}")
+        await interaction.followup.send("An error occurred while listing tags.")
 
 
 # ╔═════════════════════════════════════════════════════════════╗
@@ -168,17 +191,20 @@ async def who_command(interaction: discord.Interaction):
 # ║ Assigns display names and colors to tags based on members   ║
 # ╚═════════════════════════════════════════════════════════════╝
 async def resolve_tag_mappings():
-    logger.info("Resolving Discord tag-to-name mappings...")
-    guild = discord.utils.get(bot.guilds)
-    if not guild:
-        logger.warning("No guild found.")
-        return
-    for user_id, tag in USER_TAG_MAP.items():
-        member = guild.get_member(user_id)
-        if member:
-            TAG_NAMES[tag] = member.nick or member.display_name
-            role_color = next((r.color.value for r in member.roles if r.color.value != 0), 0x95a5a6)
-            TAG_COLORS[tag] = role_color
-            logger.info(f"Assigned {tag}: name={TAG_NAMES[tag]}, color=#{role_color:06X}")
-        else:
-            logger.warning(f"Could not resolve Discord member for ID {user_id}")
+    try:
+        logger.info("Resolving Discord tag-to-name mappings...")
+        guild = discord.utils.get(bot.guilds)
+        if not guild:
+            logger.warning("No guild found.")
+            return
+        for user_id, tag in USER_TAG_MAP.items():
+            member = guild.get_member(user_id)
+            if member:
+                TAG_NAMES[tag] = member.nick or member.display_name
+                role_color = next((r.color.value for r in member.roles if r.color.value != 0), 0x95a5a6)
+                TAG_COLORS[tag] = role_color
+                logger.info(f"Assigned {tag}: name={TAG_NAMES[tag]}, color=#{role_color:06X}")
+            else:
+                logger.warning(f"Could not resolve Discord member for ID {user_id}")
+    except Exception as e:
+        logger.exception(f"Error in resolve_tag_mappings: {e}")

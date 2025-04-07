@@ -28,15 +28,19 @@ logger.info("Google Calendar service initialized.")
 # ║ 👥 Tag Mapping (User ID → Tag)                                     ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def get_user_tag_mapping():
-    mapping = {}
-    for entry in USER_TAG_MAPPING.split(","):
-        if ":" in entry:
-            user_id, tag = entry.strip().split(":", 1)
-            try:
-                mapping[int(user_id)] = tag.strip().upper()
-            except ValueError:
-                logger.warning(f"Invalid user ID in USER_TAG_MAPPING: {entry}")
-    return mapping
+    try:
+        mapping = {}
+        for entry in USER_TAG_MAPPING.split(","):
+            if ":" in entry:
+                user_id, tag = entry.strip().split(":", 1)
+                try:
+                    mapping[int(user_id)] = tag.strip().upper()
+                except ValueError:
+                    logger.warning(f"Invalid user ID in USER_TAG_MAPPING: {entry}")
+        return mapping
+    except Exception as e:
+        logger.exception(f"Error in get_user_tag_mapping: {e}")
+        return {}
 
 USER_TAG_MAP = get_user_tag_mapping()
 
@@ -94,14 +98,21 @@ def fetch_ics_calendar_metadata(url):
 # ║ Groups calendar sources by tag and loads them into memory         ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def load_calendar_sources():
-    logger.info("Loading calendar sources...")
-    grouped = {}
-    for ctype, cid, tag in parse_calendar_sources():
-        meta = fetch_google_calendar_metadata(cid) if ctype == "google" else fetch_ics_calendar_metadata(cid)
-        meta["tag"] = tag
-        grouped.setdefault(tag, []).append(meta)
-        logger.debug(f"Calendar loaded: {meta}")
-    return grouped
+    try:
+        logger.info("Loading calendar sources...")
+        grouped = {}
+        for ctype, cid, tag in parse_calendar_sources():
+            try:
+                meta = fetch_google_calendar_metadata(cid) if ctype == "google" else fetch_ics_calendar_metadata(cid)
+                meta["tag"] = tag
+                grouped.setdefault(tag, []).append(meta)
+                logger.debug(f"Calendar loaded: {meta}")
+            except Exception as e:
+                logger.exception(f"Error loading calendar source {cid} for tag {tag}: {e}")
+        return grouped
+    except Exception as e:
+        logger.exception(f"Error in load_calendar_sources: {e}")
+        return {}
 
 GROUPED_CALENDARS = load_calendar_sources()
 
@@ -109,22 +120,27 @@ GROUPED_CALENDARS = load_calendar_sources()
 # ║ 💾 Event Snapshot Persistence                                      ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def load_previous_events():
-    if os.path.exists(EVENTS_FILE):
-        try:
+    try:
+        if os.path.exists(EVENTS_FILE):
             with open(EVENTS_FILE, "r", encoding="utf-8") as f:
                 logger.debug("Loaded previous event snapshot from disk.")
                 return json.load(f)
-        except json.JSONDecodeError:
-            logger.warning("Previous events file corrupted. Starting fresh.")
+    except json.JSONDecodeError:
+        logger.warning("Previous events file corrupted. Starting fresh.")
+    except Exception as e:
+        logger.exception(f"Error loading previous events: {e}")
     return {}
 
 def save_current_events_for_key(key, events):
-    logger.debug(f"Saving {len(events)} events under key: {key}")
-    all_data = load_previous_events()
-    all_data[key] = events
-    with open(EVENTS_FILE, "w", encoding="utf-8") as f:
-        json.dump(all_data, f, ensure_ascii=False)
-    logger.info(f"Saved events for key '{key}'.")
+    try:
+        logger.debug(f"Saving {len(events)} events under key: {key}")
+        all_data = load_previous_events()
+        all_data[key] = events
+        with open(EVENTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(all_data, f, ensure_ascii=False)
+        logger.info(f"Saved events for key '{key}'.")
+    except Exception as e:
+        logger.exception(f"Error saving events for key {key}: {e}")
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📆 Event Fetching                                                  ║
@@ -146,7 +162,7 @@ def get_google_events(start_date, end_date, calendar_id):
         logger.debug(f"Fetched {len(items)} Google events for {calendar_id}")
         return items
     except Exception as e:
-        logger.exception(f"Error fetching Google events from calendar {calendar_id}")
+        logger.exception(f"Error fetching Google events from calendar {calendar_id}: {e}")
         return []
 
 def get_ics_events(start_date, end_date, url):
@@ -195,31 +211,35 @@ def get_events(source_meta, start_date, end_date):
 # ║ Generates a stable hash for an event's core details               ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def compute_event_fingerprint(event: dict) -> str:
-    def normalize_time(val: str) -> str:
-        if "Z" in val:
-            val = val.replace("Z", "+00:00")
-        dt = datetime.fromisoformat(val)
-        return dt.isoformat(timespec="minutes")
+    try:
+        def normalize_time(val: str) -> str:
+            if "Z" in val:
+                val = val.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(val)
+            return dt.isoformat(timespec="minutes")
 
-    def clean(text: str) -> str:
-        return " ".join(text.strip().split())
+        def clean(text: str) -> str:
+            return " ".join(text.strip().split())
 
-    summary = clean(event.get("summary", ""))
-    location = clean(event.get("location", ""))
-    description = clean(event.get("description", ""))
+        summary = clean(event.get("summary", ""))
+        location = clean(event.get("location", ""))
+        description = clean(event.get("description", ""))
 
-    start_raw = event["start"].get("dateTime", event["start"].get("date", ""))
-    end_raw = event["end"].get("dateTime", event["end"].get("date", ""))
-    start = normalize_time(start_raw)
-    end = normalize_time(end_raw)
+        start_raw = event["start"].get("dateTime", event["start"].get("date", ""))
+        end_raw = event["end"].get("dateTime", event["end"].get("date", ""))
+        start = normalize_time(start_raw)
+        end = normalize_time(end_raw)
 
-    trimmed = {
-        "summary": summary,
-        "start": start,
-        "end": end,
-        "location": location,
-        "description": description
-    }
+        trimmed = {
+            "summary": summary,
+            "start": start,
+            "end": end,
+            "location": location,
+            "description": description
+        }
 
-    normalized_json = json.dumps(trimmed, sort_keys=True)
-    return hashlib.md5(normalized_json.encode("utf-8")).hexdigest()
+        normalized_json = json.dumps(trimmed, sort_keys=True)
+        return hashlib.md5(normalized_json.encode("utf-8")).hexdigest()
+    except Exception as e:
+        logger.exception(f"Error computing event fingerprint: {e}")
+        return ""

@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, date
 from dateutil import tz
+from log import logger  # Import logger from log.py
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -46,28 +47,33 @@ def emoji_for_event(title: str) -> str:
 # ║ Converts an event dictionary into a stylized, readable string     ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def format_event(event: dict) -> str:
-    start = event["start"].get("dateTime", event["start"].get("date"))
-    end = event["end"].get("dateTime", event["end"].get("date"))
-    title = event.get("summary", "Untitled")
-    location = event.get("location", "")
-    emoji = emoji_for_event(title)
+    try:
+        start = event["start"].get("dateTime", event["start"].get("date"))
+        end = event["end"].get("dateTime", event["end"].get("date"))
+        title = event.get("summary", "Untitled")
+        location = event.get("location", "")
+        emoji = emoji_for_event(title)
 
-    if "T" in start:
-        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00")).astimezone(tz.tzlocal())
-        start_str = start_dt.strftime("%H:%M")
-    else:
-        start_str = "All Day"
+        if "T" in start:
+            start_dt = datetime.fromisoformat(start.replace("Z", "+00:00")).astimezone(tz.tzlocal())
+            start_str = start_dt.strftime("%H:%M")
+        else:
+            start_str = "All Day"
 
-    if "T" in end:
-        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00")).astimezone(tz.tzlocal())
-        end_str = end_dt.strftime("%H:%M")
-    else:
-        end_str = ""
+        if "T" in end:
+            end_dt = datetime.fromisoformat(end.replace("Z", "+00:00")).astimezone(tz.tzlocal())
+            end_str = end_dt.strftime("%H:%M")
+        else:
+            end_str = ""
 
-    time_range = f"{start_str}–{end_str}" if end_str else start_str
-    location_str = f" *({location})*" if location else ""
+        time_range = f"{start_str}–{end_str}" if end_str else start_str
+        location_str = f" *({location})*" if location else ""
 
-    return f"{emoji} **{title}** `{time_range}`{location_str}"
+        return f"{emoji} **{title}** `{time_range}`{location_str}"
+    except Exception as e:
+        # Log the exception using logger
+        logger.exception(f"Error formatting event: {e}")
+        return "⚠️ **Error formatting event**"
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -75,12 +81,17 @@ def format_event(event: dict) -> str:
 # ║ Determines if an event occurs within the current week             ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def is_in_current_week(event: dict, reference: date = None) -> bool:
-    reference = reference or get_today()
-    monday = get_monday_of_week(reference)
-    week_range = {monday + timedelta(days=i) for i in range(7)}
-    start_str = event["start"].get("dateTime", event["start"].get("date"))
-    dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
-    return dt.date() in week_range
+    try:
+        reference = reference or get_today()
+        monday = get_monday_of_week(reference)
+        week_range = {monday + timedelta(days=i) for i in range(7)}
+        start_str = event["start"].get("dateTime", event["start"].get("date"))
+        dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
+        return dt.date() in week_range
+    except Exception as e:
+        # Log the exception using logger
+        logger.exception(f"Error checking if event is in current week: {e}")
+        return False
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -88,13 +99,18 @@ def is_in_current_week(event: dict, reference: date = None) -> bool:
 # ║ Maps user-friendly input strings to internal calendar tags        ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def resolve_input_to_tags(input_str: str, tag_names: dict, grouped_calendars: dict) -> list[str]:
-    requested = [s.strip().lower() for s in input_str.split(",") if s.strip()]
-    matched = set()
-    for item in requested:
-        if item.upper() in grouped_calendars:
-            matched.add(item.upper())
-        else:
-            for tag, name in tag_names.items():
-                if name.lower() == item:
-                    matched.add(tag)
-    return list(matched)
+    try:
+        requested = [s.strip().lower() for s in input_str.split(",") if s.strip()]
+        matched = set()
+        for item in requested:
+            if item.upper() in grouped_calendars:
+                matched.add(item.upper())
+            else:
+                for tag, name in tag_names.items():
+                    if name.lower() == item:
+                        matched.add(tag)
+        return list(matched)
+    except Exception as e:
+        # Log the exception using logger
+        logger.exception(f"Error resolving input to tags: {e}")
+        return []

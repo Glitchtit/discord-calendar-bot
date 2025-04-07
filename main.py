@@ -9,10 +9,13 @@ from log import logger
 # ║ Ensures environment variable is present before starting the bot   ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def main():
-    if not DISCORD_BOT_TOKEN:
-        raise ValueError("DISCORD_BOT_TOKEN is not set in environment.")
-    logger.info("Starting Discord bot...")
-    bot.run(DISCORD_BOT_TOKEN)
+    try:
+        if not DISCORD_BOT_TOKEN:
+            raise ValueError("DISCORD_BOT_TOKEN is not set in environment.")
+        logger.info("Starting Discord bot...")
+        bot.run(DISCORD_BOT_TOKEN)
+    except Exception as e:
+        logger.exception(f"An unexpected error occurred: {e}")
 
 
 # ╔════════════════════════════════════════════════════════════════════╗

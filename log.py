@@ -9,7 +9,11 @@ from environ import DEBUG
 # ╚════════════════════════════════════════════════════════════════════╝
 LOG_DIR = "/data/logs"
 LOG_FILE = os.path.join(LOG_DIR, "bot.log")
-os.makedirs(LOG_DIR, exist_ok=True)
+
+try:
+    os.makedirs(LOG_DIR, exist_ok=True)
+except Exception as e:
+    print(f"Error creating log directory: {e}")
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📋 Logger Initialization                                          ║
@@ -18,37 +22,44 @@ os.makedirs(LOG_DIR, exist_ok=True)
 logger = logging.getLogger("calendarbot")
 logger.setLevel(logging.DEBUG if DEBUG else logging.INFO)
 
-# Prevent multiple handlers from being added during reloads
-if not logger.handlers:
-    # File formatter: plain text logs with timestamps
-    file_formatter = logging.Formatter(
-        "[%(asctime)s] %(levelname)s in %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
-    )
+try:
+    # Prevent multiple handlers from being added during reloads
+    if not logger.handlers:
+        # File formatter: plain text logs with timestamps
+        file_formatter = logging.Formatter(
+            "[%(asctime)s] %(levelname)s in %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"
+        )
 
-    # Console formatter: colorful output for terminal debugging
-    console_formatter = ColoredFormatter(
-        "%(log_color)s[%(asctime)s] %(levelname)s in %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        log_colors={
-            "DEBUG": "cyan",
-            "INFO": "green",
-            "WARNING": "yellow",
-            "ERROR": "red",
-            "CRITICAL": "bold_red",
-        }
-    )
+        # Console formatter: colorful output for terminal debugging
+        console_formatter = ColoredFormatter(
+            "%(log_color)s[%(asctime)s] %(levelname)s in %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+            log_colors={
+                "DEBUG": "cyan",
+                "INFO": "green",
+                "WARNING": "yellow",
+                "ERROR": "red",
+                "CRITICAL": "bold_red",
+            }
+        )
 
-    # File handler: logs everything to persistent storage
-    file_handler = logging.FileHandler(LOG_FILE)
-    file_handler.setFormatter(file_formatter)
-    file_handler.setLevel(logging.DEBUG if DEBUG else logging.INFO)
+        # File handler: logs everything to persistent storage
+        try:
+            file_handler = logging.FileHandler(LOG_FILE)
+            file_handler.setFormatter(file_formatter)
+            file_handler.setLevel(logging.DEBUG if DEBUG else logging.INFO)
+            logger.addHandler(file_handler)
+        except Exception as e:
+            print(f"Error setting up file handler: {e}")
 
-    # Console handler: outputs to stdout for quick feedback
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(console_formatter)
-    console_handler.setLevel(logging.DEBUG if DEBUG else logging.INFO)
-
-    # Register handlers with logger
-    logger.addHandler(console_handler)
-    logger.addHandler(file_handler)
+        # Console handler: outputs to stdout for quick feedback
+        try:
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(console_formatter)
+            console_handler.setLevel(logging.DEBUG if DEBUG else logging.INFO)
+            logger.addHandler(console_handler)
+        except Exception as e:
+            print(f"Error setting up console handler: {e}")
+except Exception as e:
+    print(f"Error initializing logger: {e}")
