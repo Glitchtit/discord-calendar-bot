@@ -28,7 +28,6 @@ from log import logger
 # ╚════════════════════════════════════════════════════════════════════╝
 SERVICE_ACCOUNT_FILE = GOOGLE_APPLICATION_CREDENTIALS
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
-EVENTS_FILE = "/data/events.json"  # Remove or replace with:
 def get_events_file(server_id: int) -> str:
     return os.path.join("/data", str(server_id), "events.json")
 
@@ -344,12 +343,12 @@ def load_previous_events(server_id: int):
         logger.exception(f"Error loading previous events: {e}")
     return {}
 
-def save_current_events_for_key(key, events):
+def save_current_events_for_key(server_id: int, key, events):
     try:
         logger.debug(f"Saving {len(events)} events under key: {key}")
-        all_data = load_previous_events()
+        all_data = load_previous_events(server_id)
         all_data[key] = events
-        with open(EVENTS_FILE, "w", encoding="utf-8") as f:
+        with open(get_events_file(server_id), "w", encoding="utf-8") as f:
             json.dump(all_data, f, ensure_ascii=False)
         logger.info(f"Saved events for key '{key}'.")
     except Exception as e:

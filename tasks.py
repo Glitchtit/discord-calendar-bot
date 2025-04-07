@@ -282,13 +282,13 @@ async def watch_for_event_changes(bot):
                             color=get_color_for_tag(tag)
                         )
                         logger.info(f"Detected changes for '{tag}', snapshot updated.")
-                        save_current_events_for_key(key, all_events)
+                        save_current_events_for_key(meta["server_id"], f"{tag}_full", all_events)
                     except Exception as e:
                         logger.exception(f"Error posting changes for tag {tag}: {e}")
                 else:
                     # Only save if we have data and it differs from previous
                     if all_events and (len(all_events) != len(prev_snapshot)):
-                        save_current_events_for_key(key, all_events)
+                        save_current_events_for_key(meta["server_id"], f"{tag}_full", all_events)
                         logger.debug(f"Updated snapshot for '{tag}' with {len(all_events)} events")
                     else:
                         logger.debug(f"No changes for '{tag}'. Snapshot unchanged.")
@@ -510,7 +510,7 @@ async def initialize_event_snapshots():
                 if all_events:
                     # Sort before saving for consistent fingerprinting
                     all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
-                    save_current_events_for_key(f"{tag}_full", all_events)
+                    save_current_events_for_key(meta["server_id"], f"{tag}_full", all_events)
                     logger.debug(f"Initial snapshot saved for '{tag}' with {len(all_events)} events")
                 else:
                     logger.warning(f"No events found for tag '{tag}' during initialization")
