@@ -239,6 +239,8 @@ async def post_tagged_events(bot, tag: str, day: datetime.date) -> bool:
         for meta in calendars:
             try:
                 events = get_events(meta, day, day)
+                if not events:
+                    events = []
                 for e in events:
                     events_by_source[meta["name"]].append(e)
             except Exception as e:
@@ -338,7 +340,10 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
         end = monday + timedelta(days=6)
         all_events = []
         for meta in calendars:
-            all_events += get_events(meta, monday, end)
+            events = get_events(meta, monday, end)
+            if not events:
+                events = []
+            all_events += events
 
         if not all_events:
             logger.debug(f"Skipping {tag} — no weekly events from {monday} to {end}")
