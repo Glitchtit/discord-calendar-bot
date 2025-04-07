@@ -10,3 +10,5 @@ rich==13.7.1
 colorlog==6.8.2
 discord.py==2.3.2
 dateparser==1.1.8
+# Ensure the following dependencies are included:
+logging==0.5.1.2  # For advanced logging features
