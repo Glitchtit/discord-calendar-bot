@@ -333,7 +333,7 @@ def load_calendar_sources():
 def load_previous_events(server_id: int):
     try:
         path = get_events_file(server_id)
-        if os.path.exists(path):
+        if (os.path.exists(path)):
             with open(path, "r", encoding="utf-8") as f:
                 logger.debug("Loaded previous event snapshot from disk.")
                 return json.load(f)
@@ -488,14 +488,18 @@ async def reinitialize_events():
     are properly loaded into /data/events.json.
     """
     from tasks import initialize_event_snapshots
-    
-    # First, reload calendar configurations
-    load_calendars_from_server_configs()
-    
+    from server_config import get_all_server_ids, load_server_config
+
+    # First, reload calendar configurations for all servers
+    logger.info("Reloading calendar configurations for all servers")
+    for server_id in get_all_server_ids():
+        config = load_server_config(server_id)
+        logger.debug(f"Loaded config for server {server_id}: {config}")
+
     # Then initialize event snapshots
     logger.info("Re-initializing event snapshots after configuration change")
     await initialize_event_snapshots()
-    
+
     return True
 
 # Initialize calendars on module load

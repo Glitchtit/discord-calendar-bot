@@ -308,7 +308,7 @@ async def greet_command(interaction: discord.Interaction):
 async def reload_command(interaction: discord.Interaction):
     try:
         await interaction.response.defer()
-        # Use the new configuration loading system and re-initialize events
+        # Use the updated reinitialize_events to reload all calendars dynamically
         from events import reinitialize_events
         await reinitialize_events()
         await resolve_tag_mappings()
