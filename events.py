@@ -28,7 +28,9 @@ from log import logger
 # ╚════════════════════════════════════════════════════════════════════╝
 SERVICE_ACCOUNT_FILE = GOOGLE_APPLICATION_CREDENTIALS
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
-EVENTS_FILE = "/data/events.json"
+EVENTS_FILE = "/data/events.json"  # Remove or replace with:
+def get_events_file(server_id: int) -> str:
+    return os.path.join("/data", str(server_id), "events.json")
 
 # In-memory cache
 _calendar_metadata_cache = {}
@@ -45,8 +47,12 @@ try:
     credentials = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE, scopes=SCOPES
     )
-    service = build("calendar", "v3", credentials=credentials, cache_discovery=False)
-    logger.info("Google Calendar service initialized.")
+    if not credentials:
+        logger.error("No Google Credentials were loaded. Please check your config.")
+        service = None
+    else:
+        service = build("calendar", "v3", credentials=credentials, cache_discovery=False)
+        logger.info("Google Calendar service initialized.")
 except Exception as e:
     logger.exception(f"Error initializing Google Calendar service: {e}")
     logger.debug("Debug: Verify GOOGLE_APPLICATION_CREDENTIALS is set correctly or the file exists.")
@@ -317,9 +323,7 @@ def fetch_ics_calendar_metadata(url: str) -> Dict[str, Any]:
 # 📆 Google Calendar Event Fetching
 # ╚════════════════════════════════════════════════════════════════════╝
 def load_calendar_sources():
-    """DEPRECATED: Use load_calendars_from_server_configs() instead.
-    This function is kept for backward compatibility and now just calls
-    the new server-config based loading function."""
+    """DEPRECATED: Use load_calendars_from_server_configs() instead."""
     logger.warning("load_calendar_sources() is deprecated. Use load_calendars_from_server_configs() instead.")
     load_calendars_from_server_configs()
     return GROUPED_CALENDARS
@@ -327,10 +331,11 @@ def load_calendar_sources():
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 💾 Event Snapshot Persistence                                      ║
 # ╚════════════════════════════════════════════════════════════════════╝
-def load_previous_events():
+def load_previous_events(server_id: int):
     try:
-        if os.path.exists(EVENTS_FILE):
-            with open(EVENTS_FILE, "r", encoding="utf-8") as f:
+        path = get_events_file(server_id)
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
                 logger.debug("Loaded previous event snapshot from disk.")
                 return json.load(f)
     except json.JSONDecodeError:
@@ -366,6 +371,9 @@ def get_google_events(start_date, end_date, calendar_id):
             singleEvents=True,
             orderBy="startTime"
         ).execute()
+        items = result.get("items", [])
+        logger.debug(f"Fetched {len(items)} events from Google Calendar {calendar_id}")
+        return items
     except Exception as e:
         logger.exception(f"Error fetching Google events from calendar {calendar_id}: {e}")
         return []
@@ -469,38 +477,6 @@ def compute_event_fingerprint(event: dict) -> str:
     except Exception as e:
         logger.exception(f"Error computing event fingerprint: {e}")
         return ""
-
-# ╔════════════════════════════════════════════════════════════════════╗
-# ║ ⚠️ Legacy Functions (Deprecated)                                   ║
-# ╚════════════════════════════════════════════════════════════════════╝
-def parse_calendar_sources():
-    """DEPRECATED: Use load_calendars_from_server_configs() instead.
-    
-    This function previously parsed CALENDAR_SOURCES environment variable,
-    but is now replaced by server-specific configuration via /setup command.
-    Returns an empty list for backward compatibility.
-    """
-    logger.warning("parse_calendar_sources() is deprecated. Use server-specific configuration with /setup command instead.")
-    return []
-
-def get_user_tag_mapping():
-    """DEPRECATED: Use server-specific user mappings instead.
-    
-    This function previously parsed USER_TAG_MAPPING environment variable,
-    but is now replaced by per-server user mappings in server config files.
-    Returns an empty dict for backward compatibility.
-    """
-    logger.warning("get_user_tag_mapping() is deprecated. User-tag mappings are now stored in server configurations.")
-    return {}
-
-def resolve_tag_mappings():
-    """DEPRECATED: Tag mappings are now managed per server.
-    
-    This function previously resolved tag mappings from environment variables,
-    but is now handled during server config loading.
-    """
-    logger.warning("resolve_tag_mappings() is deprecated. Tag mappings are now resolved during server config loading.")
-    return
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔄 Reload Functions                                                ║

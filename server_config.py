@@ -18,10 +18,10 @@ from typing import Dict, List, Any, Optional, Tuple
 from log import logger
 
 # Directory for server configuration files
-SERVER_CONFIG_DIR = "/data/servers"
+SERVER_CONFIG_BASE = "/data"
 
 # Create required directories if they don't exist
-for path in [SERVER_CONFIG_DIR, os.path.dirname(SERVER_CONFIG_DIR)]:
+for path in [SERVER_CONFIG_BASE, os.path.dirname(SERVER_CONFIG_BASE)]:
     if not os.path.exists(path):
         try:
             os.makedirs(path, exist_ok=True)
@@ -31,17 +31,17 @@ for path in [SERVER_CONFIG_DIR, os.path.dirname(SERVER_CONFIG_DIR)]:
 
 # Ensure the server configuration directory exists
 try:
-    os.makedirs(SERVER_CONFIG_DIR, exist_ok=True)
+    os.makedirs(SERVER_CONFIG_BASE, exist_ok=True)
 except Exception as e:
     logger.warning(f"Failed to create server config directory: {e}")
     # Fallback to local directory if /data is not writable
-    SERVER_CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "servers")
-    os.makedirs(SERVER_CONFIG_DIR, exist_ok=True)
-    logger.info(f"Using fallback server config directory: {SERVER_CONFIG_DIR}")
+    SERVER_CONFIG_BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    os.makedirs(SERVER_CONFIG_BASE, exist_ok=True)
+    logger.info(f"Using fallback server config directory: {SERVER_CONFIG_BASE}")
 
 def get_config_path(server_id: int) -> str:
     """Get the path to a server's configuration file."""
-    return os.path.join(SERVER_CONFIG_DIR, f"{server_id}.json")
+    return os.path.join(SERVER_CONFIG_BASE, str(server_id), "config.json")
 
 def load_server_config(server_id: int) -> Dict[str, Any]:
     """Load configuration for a specific server."""
@@ -69,6 +69,7 @@ def save_server_config(server_id: int, config: Dict[str, Any]) -> bool:
     config_path = get_config_path(server_id)
     
     try:
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
         logger.info(f"Saved configuration for server {server_id}")
@@ -151,14 +152,12 @@ def get_all_server_ids() -> List[int]:
     """Get a list of all server IDs that have configuration files."""
     try:
         server_ids = []
-        for filename in os.listdir(SERVER_CONFIG_DIR):
-            if filename.endswith('.json'):
-                try:
-                    server_id = int(filename[:-5])  # Remove .json extension
-                    server_ids.append(server_id)
-                except ValueError:
-                    # Not a valid server ID filename
-                    pass
+        for entry in os.listdir(SERVER_CONFIG_BASE):
+            full_path = os.path.join(SERVER_CONFIG_BASE, entry)
+            if entry.isdigit() and os.path.isdir(full_path):
+                config_file = os.path.join(full_path, "config.json")
+                if os.path.exists(config_file):
+                    server_ids.append(int(entry))
         return server_ids
     except Exception as e:
         logger.exception(f"Error listing server configurations: {e}")
