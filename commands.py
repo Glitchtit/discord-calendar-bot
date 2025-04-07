@@ -112,7 +112,7 @@ def check_channel_permissions(channel, bot_member):
 # ║ 📤 send_embed                                                      ║
 # ║ Sends an embed to the announcement channel, optionally with image ║
 # ╚════════════════════════════════════════════════════════════════════╝
-async def send_embed(bot, embed: discord.Embed = None, title: str = "", description: str = "", color: int = 5814783, image_path: str | None = None):
+async def send_embed(bot, embed: discord.Embed = None, title: str = "", description: str = "", color: int = 5814783, image_path: str | None = None, content: str = ""):
     try:
         if isinstance(embed, str):
             logger.warning("send_embed() received a string instead of an Embed. Converting values assuming misuse.")
@@ -168,7 +168,7 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
                 main_embed.set_footer(text=embed.footer.text)
                 
             # Send the main embed first
-            await _retry_discord_operation(lambda: channel.send(embed=main_embed))
+            await _retry_discord_operation(lambda: channel.send(content=content, embed=main_embed))
             
             # Then send fields as separate embeds, grouping a few fields per embed
             field_groups = []
@@ -199,7 +199,7 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
                 for field in group:
                     continuation_embed.add_field(name=field.name, value=field.value, inline=field.inline)
                     
-                await _retry_discord_operation(lambda: channel.send(embed=continuation_embed))
+                await _retry_discord_operation(lambda: channel.send(content=content, embed=continuation_embed))
                 
             return
             
@@ -215,9 +215,9 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
         
         # Send the message with retry
         if file:
-            await _retry_discord_operation(lambda: channel.send(embed=embed, file=file))
+            await _retry_discord_operation(lambda: channel.send(content=content, embed=embed, file=file))
         else:
-            await _retry_discord_operation(lambda: channel.send(embed=embed))
+            await _retry_discord_operation(lambda: channel.send(content=content, embed=embed))
             
     except Exception as e:
         logger.exception(f"Error in send_embed: {e}")
@@ -257,55 +257,31 @@ async def post_tagged_events(bot, tag: str, day: datetime.date) -> bool:
             color=get_color_for_tag(tag)
         )
 
-        # Check if we have too many calendars (Discord limits to 25 fields per embed)
-        if len(events_by_source) > 20:  # Leave buffer for other fields
-            logger.warning(f"Too many calendar sources ({len(events_by_source)}) for a single embed. Sending multiple embeds.")
-            
-            # Send the main embed header first
-            await send_embed(bot, embed=embed)
-            
-            # Then send each calendar as its own embed
-            for i, (source_name, events) in enumerate(sorted(events_by_source.items())):
-                if not events:
-                    continue
-                    
-                source_embed = discord.Embed(
-                    title=f"📖 {source_name}",
-                    color=get_color_for_tag(tag)
-                )
-                
-                # Format events with a character limit
-                formatted_events = []
-                total_length = 0
-                MAX_EMBED_VALUE_LENGTH = 900  # Discord limit is 1024, leave buffer
-                
-                for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
-                    event_text = f" {format_event(e)}"
-                    if total_length + len(event_text) > MAX_EMBED_VALUE_LENGTH:
-                        formatted_events.append("... and more events (truncated)")
-                        break
-                    formatted_events.append(event_text)
-                    total_length += len(event_text)
-                
-                source_embed.description = "\n".join(formatted_events)
-                source_embed.set_footer(text=f"Calendar {i+1}/{len(events_by_source)}")
-                
-                await send_embed(bot, embed=source_embed)
-            
-            return True
-        
-        # Standard flow - add all events to a single embed
+        # Add mention for the tag or @everyone
+        mention = TAG_NAMES.get(tag, "@everyone")
+        await send_embed(bot, embed=embed, content=f"{mention}")
+
         for source_name, events in sorted(events_by_source.items()):
             if not events:
                 continue
-                
-            # Format events with a character limit to avoid Discord's field value limit
+
             formatted_events = []
             total_length = 0
             MAX_FIELD_LENGTH = 900  # Discord limit is 1024, leave buffer
             
             for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
-                event_text = f" {format_event(e)}"
+                start = e["start"].get("dateTime", e["start"].get("date"))
+                end = e["end"].get("dateTime", e["end"].get("date"))
+                if start and end:
+                    start_date = datetime.fromisoformat(start.replace("Z", "+00:00")).date()
+                    end_date = datetime.fromisoformat(end.replace("Z", "+00:00")).date()
+                    if start_date != end_date:
+                        event_text = f" {format_event(e)} (Multi-day: {start_date} to {end_date})"
+                    else:
+                        event_text = f" {format_event(e)}"
+                else:
+                    event_text = f" {format_event(e)}"
+
                 if total_length + len(event_text) > MAX_FIELD_LENGTH:
                     formatted_events.append("... and more events (truncated)")
                     break
@@ -352,14 +328,28 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
         events_by_day = defaultdict(list)
         for e in all_events:
             start_str = e["start"].get("dateTime", e["start"].get("date"))
-            dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
-            events_by_day[dt.date()].append(e)
+            end_str = e["end"].get("dateTime", e["end"].get("date"))
+            start_date = datetime.fromisoformat(start_str.replace("Z", "+00:00")).date() if start_str else None
+            end_date = datetime.fromisoformat(end_str.replace("Z", "+00:00")).date() if end_str else None
+
+            if start_date and end_date and start_date != end_date:
+                # Add multi-day events to all relevant days
+                current_date = start_date
+                while current_date <= end_date:
+                    events_by_day[current_date].append(e)
+                    current_date += timedelta(days=1)
+            elif start_date:
+                events_by_day[start_date].append(e)
 
         embed = discord.Embed(
             title=f"📜 Herald’s Week — {get_name_for_tag(tag)}",
             description=f"Week of **{monday.strftime('%B %d')}**",
             color=get_color_for_tag(tag)
         )
+
+        # Add mention for the tag or @everyone
+        mention = TAG_NAMES.get(tag, "@everyone")
+        await send_embed(bot, embed=embed, content=f"{mention}")
 
         for i in range(7):
             day = monday + timedelta(days=i)
