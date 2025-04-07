@@ -11,244 +11,353 @@ import ssl
 import socket
 import hashlib
 import requests
-from datetime import datetime, date, timedelta
-from typing import Any, Dict, List, Optional, Tuple, Union
-
-from icalendar import Calendar as ICalParser
+import time
+import random
+from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Optional, Any
+from ics import Calendar as ICS_Calendar
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from dateutil.rrule import rrulestr
-from dateutil import tz
-from zoneinfo import ZoneInfo
-from pytz import UTC
-
-from environ import (
-    GOOGLE_APPLICATION_CREDENTIALS,
-    CALENDAR_SOURCES,
-    USER_TAG_MAPPING
-)
+from googleapiclient.errors import HttpError
+from environ import GOOGLE_APPLICATION_CREDENTIALS
+from server_config import get_all_server_ids, load_server_config
 from log import logger
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🔐 Google Calendar API Setup
 # ╚════════════════════════════════════════════════════════════════════╝
+SERVICE_ACCOUNT_FILE = GOOGLE_APPLICATION_CREDENTIALS
+SCOPES = ["https://www.googleapis.com/auth/calendar"]
+EVENTS_FILE = "/data/events.json"
 
-SERVICE_ACCOUNT_FILE: str = GOOGLE_APPLICATION_CREDENTIALS
-SCOPES: List[str] = ["https://www.googleapis.com/auth/calendar"]
-EVENTS_FILE: str = "/data/events.json"
-SNAPSHOT_DIR: str = "/data/snapshots"
-METADATA_CACHE: str = "/data/calendar_meta.json"
+# In-memory cache
+_calendar_metadata_cache = {}
+_api_last_error_time = None
+_api_error_count = 0
+_API_BACKOFF_RESET = timedelta(minutes=30)
+_MAX_API_ERRORS = 10
 
-os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+# Fallback directory for events if primary location is unavailable
+FALLBACK_EVENTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
-logger.debug(f"[events.py] Loading Google credentials from: {SERVICE_ACCOUNT_FILE}")
-credentials = service_account.Credentials.from_service_account_file(
-    SERVICE_ACCOUNT_FILE, scopes=SCOPES
-)
-service = build("calendar", "v3", credentials=credentials)
-socket.setdefaulttimeout(10)
-
+logger.debug(f"Loading Google credentials from: {SERVICE_ACCOUNT_FILE}")
+try:
+    credentials = service_account.Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE, scopes=SCOPES
+    )
+    service = build("calendar", "v3", credentials=credentials, cache_discovery=False)
+    logger.info("Google Calendar service initialized.")
+except Exception as e:
+    logger.exception(f"Error initializing Google Calendar service: {e}")
+    service = None  # Will trigger fallback behavior in functions
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# 👥 Tag Mapping
+# ║ 🧰 Service Account Info                                           ║
 # ╚════════════════════════════════════════════════════════════════════╝
+def get_service_account_email() -> str:
+    """Get the service account email for sharing Google Calendars."""
+    try:
+        if not os.path.exists(SERVICE_ACCOUNT_FILE):
+            return "Service account file not found"
+            
+        with open(SERVICE_ACCOUNT_FILE, 'r') as f:
+            service_info = json.load(f)
+            return service_info.get('client_email', 'Email not found in credentials')
+    except Exception as e:
+        logger.exception(f"Error reading service account email: {e}")
+        return "Error reading service account info"
 
-def get_user_tag_mapping() -> Dict[int, str]:
-    """
-    Parses the USER_TAG_MAPPING environment variable, which maps
-    Discord user IDs to calendar tags (e.g., "123456:T").
-
-    Returns:
-        A dictionary where keys are user IDs (int),
-        and values are uppercase tag strings.
-    """
-    mapping: Dict[int, str] = {}
-    for entry in USER_TAG_MAPPING.split(","):
-        if ":" in entry:
-            user_id_str, tag = entry.strip().split(":", 1)
-            try:
-                user_id = int(user_id_str)
-                mapping[user_id] = tag.strip().upper()
-            except ValueError:
-                logger.warning(f"[events.py] Invalid user ID in USER_TAG_MAPPING: {entry}")
-    return mapping
-
-USER_TAG_MAP: Dict[int, str] = get_user_tag_mapping()
-TAG_NAMES: Dict[str, str] = {}
-TAG_COLORS: Dict[str, int] = {}
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 👥 Server Config Based Calendar Loading                           ║
+# ╚════════════════════════════════════════════════════════════════════╝
+# Populated from server config files during bot startup
+GROUPED_CALENDARS = {}
+TAG_NAMES = {}
+TAG_COLORS = {}
+USER_TAG_MAP = {}
 
 def get_name_for_tag(tag: str) -> str:
-    """
-    Returns a human-readable name for a given calendar tag, if available.
-    Otherwise, returns the tag itself.
-    """
+    """Get a display name for a tag with fallback to the tag itself."""
+    if not tag:
+        return "Unknown"
     return TAG_NAMES.get(tag, tag)
 
 def get_color_for_tag(tag: str) -> int:
-    """
-    Returns a Discord-compatible integer color code for a tag, if available.
-    Otherwise, returns a default neutral color.
-    """
-    return TAG_COLORS.get(tag, 0x95A5A6)
+    """Get a color for a tag with fallback to a default gray."""
+    if not tag:
+        return 0x95a5a6  # Default gray
+    return TAG_COLORS.get(tag, 0x95a5a6)
 
+def load_calendars_from_server_configs():
+    """Load all calendar configurations from server JSON files."""
+    global GROUPED_CALENDARS, USER_TAG_MAP
+    
+    GROUPED_CALENDARS = {}
+    USER_TAG_MAP = {}
+    
+    server_ids = get_all_server_ids()
+    if not server_ids:
+        logger.warning("No server configurations found. Please use /setup to configure calendars.")
+        return
+        
+    logger.info(f"Loading calendar configurations from {len(server_ids)} servers...")
+    
+    for server_id in server_ids:
+        config = load_server_config(server_id)
+        calendars = config.get("calendars", [])
+        user_mappings = config.get("user_mappings", {})
+        
+        # Add user mappings
+        for tag, user_id in user_mappings.items():
+            try:
+                USER_TAG_MAP[int(user_id)] = tag
+            except ValueError:
+                logger.warning(f"Invalid user ID {user_id} in server {server_id} config")
+        
+        # Add calendars
+        for calendar in calendars:
+            tag = calendar.get("tag")
+            if not tag:
+                logger.warning(f"Calendar missing tag in server {server_id} config, skipping")
+                continue
+                
+            # Convert to the format expected by the rest of the code
+            calendar_meta = {
+                "type": calendar.get("type", "google"),
+                "id": calendar.get("id", ""),
+                "name": calendar.get("name", "Unknown Calendar"),
+                "tag": tag,
+                "server_id": server_id
+            }
+            
+            GROUPED_CALENDARS.setdefault(tag, []).append(calendar_meta)
+    
+    # Log summary of loaded calendars
+    total_calendars = sum(len(cals) for cals in GROUPED_CALENDARS.values())
+    logger.info(f"Loaded {total_calendars} calendars across {len(GROUPED_CALENDARS)} tags")
+    
+    for tag, calendars in GROUPED_CALENDARS.items():
+        logger.debug(f"Tag {tag}: {len(calendars)} calendars")
+
+# Remaining functions from events.py stay the same, but we'll change the old 
+# parse_calendar_sources and get_user_tag_mapping functions to be deprecated
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# 🕒 Time & Date Utilities
+# ║ 🔁 retry_api_call                                                  ║
+# ║ Helper to retry Google API calls with exponential backoff         ║
 # ╚════════════════════════════════════════════════════════════════════╝
-
-def clean(text: str) -> str:
-    """
-    Trims extra whitespace from a string and collapses multiple spaces.
-
-    Args:
-        text: The input string to clean.
-
-    Returns:
-        A cleaned-up version of `text`.
-    """
-    return " ".join(text.strip().split()) if text else ""
-
-def resolve_tz(tzid: str) -> ZoneInfo:
-    """
-    Attempts to resolve a TZID string to a valid time zone. Falls back to UTC if unknown.
-
-    Args:
-        tzid: A time zone identifier string (e.g., 'America/New_York').
-
-    Returns:
-        A ZoneInfo object, defaulting to UTC if tzid is invalid or unknown.
-    """
-    try:
-        return ZoneInfo(tzid)
-    except Exception:
-        logger.warning(f"[events.py] Unknown TZID: {tzid}, defaulting to UTC.")
-        return UTC
-
-def normalize_time(val: str) -> str:
-    """
-    Converts an ISO 8601 date/time string (potentially with 'Z') into a consistent
-    UTC-based format.
-
-    Args:
-        val: The date/time string to normalize (e.g. '2025-04-04T13:00:00Z').
-
-    Returns:
-        A string in '%Y-%m-%dT%H:%M' format, in UTC.
-    """
-    if "Z" in val:
-        val = val.replace("Z", "+00:00")
-    dt = datetime.fromisoformat(val)
-    return dt.astimezone(tz.UTC).strftime("%Y-%m-%dT%H:%M")
-
+def retry_api_call(func, *args, max_retries=3, **kwargs):
+    """Retry a Google API call with exponential backoff on transient errors."""
+    global _api_last_error_time, _api_error_count
+    
+    # Check if we've had too many errors recently
+    if _api_last_error_time and _api_error_count >= _MAX_API_ERRORS:
+        # Check if enough time has passed to reset the counter
+        if datetime.now() - _api_last_error_time > _API_BACKOFF_RESET:
+            logger.info("API error count reset after backoff period")
+            _api_error_count = 0
+        else:
+            logger.warning(f"Too many API errors ({_api_error_count}), backing off")
+            return None
+    
+    last_exception = None
+    
+    for attempt in range(max_retries):
+        try:
+            return func(*args, **kwargs)
+            
+        except HttpError as e:
+            status_code = e.resp.status
+            
+            # Don't retry on client errors except for 429 (rate limit)
+            if status_code < 500 and status_code != 429:
+                logger.warning(f"Non-retryable Google API error: {status_code} - {str(e)}")
+                _api_error_count += 1
+                _api_last_error_time = datetime.now()
+                raise
+                
+            # For rate limits and server errors, retry with backoff
+            backoff = (2 ** attempt) + random.uniform(0, 1)
+            logger.warning(f"Retryable Google API error ({status_code}), attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
+            time.sleep(backoff)
+            last_exception = e
+            
+        except requests.exceptions.RequestException as e:
+            # Network errors are retryable
+            backoff = (2 ** attempt) + random.uniform(0, 1)
+            logger.warning(f"Network error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
+            time.sleep(backoff)
+            last_exception = e
+            
+        except Exception as e:
+            # Other errors are not retried
+            logger.exception(f"Unexpected error in API call: {e}")
+            _api_error_count += 1
+            _api_last_error_time = datetime.now()
+            raise
+    
+    # If we've exhausted retries, record the error and return None
+    if last_exception:
+        _api_error_count += 1
+        _api_last_error_time = datetime.now()
+        logger.error(f"All {max_retries} retries failed for API call: {last_exception}")
+        
+    return None
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 📄 Metadata Caching
 # ╚════════════════════════════════════════════════════════════════════╝
-
-def load_metadata_cache() -> Dict[str, Dict[str, Any]]:
-    """
-    Loads calendar metadata cache from disk (JSON). If the file is missing
-    or corrupted, returns an empty dictionary.
-
-    Returns:
-        A dictionary mapping "cache_key" -> {"cached_at": float, "data": {...}}
-    """
-    if os.path.exists(METADATA_CACHE):
-        try:
-            with open(METADATA_CACHE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            logger.warning("[events.py] Metadata cache corrupted. Starting fresh.")
-    return {}
-
-def save_metadata_cache(data: Dict[str, Any]) -> None:
-    """
-    Writes the provided metadata dictionary to the METADATA_CACHE file as JSON.
-
-    Args:
-        data: The metadata dictionary to save.
-    """
-    with open(METADATA_CACHE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
-
-METADATA: Dict[str, Any] = load_metadata_cache()
-
-def fetch_google_calendar_metadata(calendar_id: str) -> Dict[str, str]:
-    """
-    Fetches metadata for a Google calendar ID, caching results for 24 hours.
-    If the metadata is cached and not stale, returns the cached data.
-
-    Args:
-        calendar_id: The Google calendar ID.
-
-    Returns:
-        A dictionary containing at least { "type": "google", "id": calendar_id, "name": <name> }.
-    """
-    cache_key = f"google:{calendar_id}"
-    cached = METADATA.get(cache_key)
-    if cached and (time.time() - cached.get("cached_at", 0) < 86400):
-        return cached["data"]
-
+def fetch_google_calendar_metadata(calendar_id: str) -> Dict[str, Any]:
+    """Fetch Google Calendar metadata with caching and robust error handling."""
+    # Check cache first
+    cache_key = f"google_{calendar_id}"
+    if cache_key in _calendar_metadata_cache:
+        logger.debug(f"Using cached metadata for calendar {calendar_id}")
+        return _calendar_metadata_cache[cache_key]
+    
+    # Verify service is available
+    if not service:
+        logger.error(f"Google Calendar service not initialized, can't fetch metadata for {calendar_id}")
+        return {"type": "google", "id": calendar_id, "name": calendar_id, "error": True}
+    
+    # First try to add the calendar to the list (might already be there)
     try:
-        cal = service.calendarList().get(calendarId=calendar_id).execute()
-        name = cal.get("summaryOverride") or cal.get("summary") or calendar_id
+        retry_api_call(
+            service.calendarList().insert(body={"id": calendar_id}).execute
+        )
     except Exception as e:
-        logger.warning(f"[events.py] Couldn't get metadata for Google calendar {calendar_id}: {e}")
-        name = calendar_id
-
-    meta = {"type": "google", "id": calendar_id, "name": name}
-    METADATA[cache_key] = {"cached_at": time.time(), "data": meta}
-    save_metadata_cache(METADATA)
-    return meta
-
-def fetch_ics_calendar_metadata(url: str) -> Dict[str, str]:
-    """
-    Fetches metadata for an ICS URL, caching results for 24 hours.
-    If the metadata is cached and not stale, returns the cached data.
-
-    Args:
-        url: The ICS feed URL.
-
-    Returns:
-        A dictionary containing at least { "type": "ics", "id": url, "name": <derived from URL> }.
-    """
-    cache_key = f"ics:{url}"
-    cached = METADATA.get(cache_key)
-    if cached and (time.time() - cached.get("cached_at", 0) < 86400):
-        return cached["data"]
-
-    name = url.split("/")[-1].split("?")[0] or "ICS Calendar"
-    meta = {"type": "ics", "id": url, "name": name}
-    METADATA[cache_key] = {"cached_at": time.time(), "data": meta}
-    save_metadata_cache(METADATA)
-    return meta
-
+        # Ignore 'Already Exists' errors
+        if "Already Exists" not in str(e):
+            logger.warning(f"Couldn't subscribe to {calendar_id}: {e}")
+    
+    # Now try to get calendar details
+    try:
+        cal = retry_api_call(
+            service.calendarList().get(calendarId=calendar_id).execute
+        )
+        
+        if not cal:
+            logger.warning(f"Failed to get metadata for calendar {calendar_id} after retries")
+            result = {"type": "google", "id": calendar_id, "name": calendar_id, "error": True}
+        else:
+            # Extract calendar name, preferring the override name if available
+            name = cal.get("summaryOverride") or cal.get("summary") or calendar_id
+            timezone = cal.get("timeZone")
+            color = cal.get("backgroundColor", "#95a5a6")
+            
+            result = {
+                "type": "google", 
+                "id": calendar_id, 
+                "name": name,
+                "timezone": timezone,
+                "color": color
+            }
+            
+            logger.debug(f"Loaded Google calendar metadata: {name}")
+            
+        # Cache the result
+        _calendar_metadata_cache[cache_key] = result
+        return result
+        
+    except Exception as e:
+        logger.warning(f"Error getting metadata for Google calendar {calendar_id}: {e}")
+        result = {"type": "google", "id": calendar_id, "name": calendar_id, "error": True}
+        _calendar_metadata_cache[cache_key] = result
+        return result
+    
+def fetch_ics_calendar_metadata(url: str) -> Dict[str, Any]:
+    """Fetch ICS Calendar metadata with basic validation and fallback."""
+    # Check cache first
+    cache_key = f"ics_{url}"
+    if cache_key in _calendar_metadata_cache:
+        logger.debug(f"Using cached metadata for ICS calendar {url}")
+        return _calendar_metadata_cache[cache_key]
+    
+    try:
+        # Do a HEAD request to validate URL exists (with timeout)
+        response = requests.head(url, timeout=5)
+        response.raise_for_status()
+        
+        # Try to extract a meaningful name from the URL
+        if "?" in url:
+            url_parts = url.split("?")[0].split("/")
+        else:
+            url_parts = url.split("/")
+            
+        name = next((part for part in reversed(url_parts) if part), "ICS Calendar")
+        
+        # Decode URL-encoded characters
+        if "%" in name:
+            try:
+                from urllib.parse import unquote
+                name = unquote(name)
+            except Exception:
+                pass
+                
+        result = {"type": "ics", "id": url, "name": name}
+        logger.debug(f"Loaded ICS calendar metadata: {name}")
+        
+        # Cache the result
+        _calendar_metadata_cache[cache_key] = result
+        return result
+        
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Error validating ICS calendar URL {url}: {e}")
+        result = {"type": "ics", "id": url, "name": "ICS Calendar", "error": True}
+        _calendar_metadata_cache[cache_key] = result
+        return result
+    except Exception as e:
+        logger.warning(f"Error getting metadata for ICS calendar {url}: {e}")
+        result = {"type": "ics", "id": url, "name": "ICS Calendar", "error": True}
+        _calendar_metadata_cache[cache_key] = result
+        return result
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 📆 Google Calendar Event Fetching
 # ╚════════════════════════════════════════════════════════════════════╝
+def load_calendar_sources():
+    """DEPRECATED: Use load_calendars_from_server_configs() instead.
+    This function is kept for backward compatibility and now just calls
+    the new server-config based loading function."""
+    logger.warning("load_calendar_sources() is deprecated. Use load_calendars_from_server_configs() instead.")
+    load_calendars_from_server_configs()
+    return GROUPED_CALENDARS
 
-def get_google_events(
-    start_date: date,
-    end_date: date,
-    calendar_id: str
-) -> List[Dict[str, Any]]:
-    """
-    Queries the Google Calendar API for events between start_date and end_date.
-
-    Args:
-        start_date: The start of the date range (inclusive).
-        end_date: The end of the date range (inclusive).
-        calendar_id: The Google calendar ID.
-
-    Returns:
-        A list of event dictionaries in a standardized format.
-    """
-    start_utc = f"{start_date.isoformat()}T00:00:00Z"
-    end_utc = f"{end_date.isoformat()}T23:59:59Z"
-    logger.debug(f"[events.py] Fetching Google events for {calendar_id} from {start_utc} to {end_utc}")
-
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 💾 Event Snapshot Persistence                                      ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def load_previous_events():
     try:
+        if os.path.exists(EVENTS_FILE):
+            with open(EVENTS_FILE, "r", encoding="utf-8") as f:
+                logger.debug("Loaded previous event snapshot from disk.")
+                return json.load(f)
+    except json.JSONDecodeError:
+        logger.warning("Previous events file corrupted. Starting fresh.")
+    except Exception as e:
+        logger.exception(f"Error loading previous events: {e}")
+    return {}
+
+def save_current_events_for_key(key, events):
+    try:
+        logger.debug(f"Saving {len(events)} events under key: {key}")
+        all_data = load_previous_events()
+        all_data[key] = events
+        with open(EVENTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(all_data, f, ensure_ascii=False)
+        logger.info(f"Saved events for key '{key}'.")
+    except Exception as e:
+        logger.exception(f"Error saving events for key {key}: {e}")
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📆 Event Fetching                                                  ║
+# ║ Retrieves events from Google or ICS sources                        ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def get_google_events(start_date, end_date, calendar_id):
+    try:
+        start_utc = start_date.isoformat() + "T00:00:00Z"
+        end_utc = end_date.isoformat() + "T23:59:59Z"
+        logger.debug(f"Fetching Google events for calendar {calendar_id} from {start_utc} to {end_utc}")
         result = service.events().list(
             calendarId=calendar_id,
             timeMin=start_utc,
@@ -257,243 +366,40 @@ def get_google_events(
             orderBy="startTime"
         ).execute()
     except Exception as e:
-        logger.exception(f"[events.py] Google API error for calendar {calendar_id}: {e}")
+        logger.exception(f"Error fetching Google events from calendar {calendar_id}: {e}")
         return []
 
-    events: List[Dict[str, Any]] = []
-    seen_ids = set()
-
-    for e in result.get("items", []):
-        try:
-            event_id = e["id"]
-            if event_id in seen_ids:
-                continue
-            seen_ids.add(event_id)
-
-            events.append({
-                "id": event_id,
-                "summary": clean(e.get("summary", "")),
-                "description": clean(e.get("description", "")),
-                "location": clean(e.get("location", "")),
-                "start": e["start"],
-                "end": e["end"],
-                "allDay": "date" in e["start"]
-            })
-        except Exception as ex:
-            logger.warning(f"[events.py] Skipped malformed Google event: {e} — {ex}")
-
-    return events
-
-
-# ╔════════════════════════════════════════════════════════════════════╗
-# 📆 ICS Calendar Event Fetching
-# ╚════════════════════════════════════════════════════════════════════╝
-
-def fetch_ics_content(url: str, max_retries: int = 2) -> Optional[bytes]:
-    """
-    Attempts to fetch the raw ICS file content from the given URL,
-    with a simple retry mechanism.
-
-    Args:
-        url: The ICS feed URL to fetch.
-        max_retries: Maximum number of fetch attempts.
-
-    Returns:
-        The raw bytes of the ICS file if successful, otherwise None.
-    """
-    for attempt in range(1, max_retries + 1):
-        try:
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            return response.content.strip()
-        except Exception as e:
-            logger.error(f"[events.py] Failed to fetch ICS from {url} (attempt {attempt}): {e}")
-            if attempt == max_retries:
-                logger.error("[events.py] Max retries reached for ICS fetch.")
-                return None
-    return None  # Should not reach here if loop covers all attempts
-
-
-def get_ics_events(
-    start_date: date,
-    end_date: date,
-    url: str
-) -> List[Dict[str, Any]]:
-    """
-    Downloads and parses an ICS feed for events between start_date and end_date.
-
-    Args:
-        start_date: The start of the date range (inclusive).
-        end_date: The end of the date range (inclusive).
-        url: The ICS feed URL.
-
-    Returns:
-        A list of event dictionaries in a standardized format.
-    """
-    content = fetch_ics_content(url, max_retries=2)
-    if not content:
-        logger.exception(f"[events.py] Failed to fetch/parse ICS from {url} after retries.")
-        return []
-
-    events: List[Dict[str, Any]] = []
-    seen_ids = set()
-
+def get_ics_events(start_date, end_date, url):
     try:
-        cal = ICalParser.from_ical(content)
-    except Exception:
-        logger.exception(f"[events.py] icalendar parsing error for {url}")
-        return []
+        logger.debug(f"Fetching ICS events from {url}")
+        response = requests.get(url)
+        response.encoding = 'utf-8'
+        cal = ICS_Calendar(response.text)
+        events = []
+        for e in cal.events:
+            if start_date <= e.begin.date() <= end_date:
+                id_source = f"{e.name}|{e.begin}|{e.end}|{e.location or ''}"
+                event = {
+                    "summary": e.name,
+                    "start": {"dateTime": e.begin.isoformat()},
+                    "end": {"dateTime": e.end.isoformat()},
+                    "location": e.location or "",
+                    "description": e.description or "",
+                    "id": hashlib.md5(id_source.encode("utf-8")).hexdigest()
+                }
+                events.append(event)
 
-    for component in cal.walk():
-        if component.name != "VEVENT":
-            continue
-        try:
-            dtstart = component.decoded("DTSTART")
-            try:
-                dtend = component.decoded("DTEND")
-            except KeyError:
-                dtend = dtstart + timedelta(hours=1)
-                logger.warning(f"[events.py] Missing DTEND; defaulted to 1 hour after DTSTART for {component.get('SUMMARY', 'Unknown')}")
-
-            tzid = str(component.get("DTSTART").params.get("TZID", "UTC"))
-            tzinfo = resolve_tz(tzid)
-
-            # Check if it's a datetime or date
-            if isinstance(dtstart, datetime):
-                dtstart = dtstart.replace(tzinfo=tzinfo)
-                dtend = dtend.replace(tzinfo=tzinfo)
-                all_day = False
-            else:
-                all_day = True
-
-            summary = str(component.get("SUMMARY", "Untitled"))
-            location = str(component.get("LOCATION", ""))
-            description = str(component.get("DESCRIPTION", ""))
-            uid = str(component.get("UID", f"{summary}|{dtstart}|{dtend}|{location}"))
-            if uid in seen_ids:
-                continue
-            seen_ids.add(uid)
-
-            rrule = component.get("RRULE")
-            exdates = set()
-            if component.get("EXDATE"):
-                ex = component.get("EXDATE")
-                if not isinstance(ex, list):
-                    ex = [ex]
-                exdates = {d.dt.date() for d in ex}
-
-            if rrule:
-                rule = rrulestr(rrule.to_ical().decode(), dtstart=dtstart)
-                for recur_dt in rule.between(start_date, end_date, inc=True):
-                    if recur_dt.date() in exdates:
-                        continue
-                    recur_end = recur_dt + (dtend - dtstart)
-                    events.append({
-                        "id": uid + str(recur_dt),
-                        "summary": summary,
-                        "description": description,
-                        "location": location,
-                        "start": {"dateTime": recur_dt.isoformat()} if not all_day else {"date": recur_dt.date().isoformat()},
-                        "end": {"dateTime": recur_end.isoformat()} if not all_day else {"date": recur_end.date().isoformat()},
-                        "allDay": all_day
-                    })
-            else:
-                # Single event with no recurrence
-                if not (start_date <= dtstart.date() <= end_date):
-                    continue
-                events.append({
-                    "id": uid,
-                    "summary": summary,
-                    "description": description,
-                    "location": location,
-                    "start": {"dateTime": dtstart.isoformat()} if not all_day else {"date": dtstart.date().isoformat()},
-                    "end": {"dateTime": dtend.isoformat()} if not all_day else {"date": dtend.date().isoformat()},
-                    "allDay": all_day
-                })
-
-        except Exception:
-            logger.exception("[events.py] Skipping broken VEVENT in ICS.")
-
-    return events
-
-
-# ╔════════════════════════════════════════════════════════════════════╗
-# 💾 Snapshot Persistence and Archiving
-# ╚════════════════════════════════════════════════════════════════════╝
-
-def load_previous_events() -> Dict[str, Any]:
-    """
-    Loads previously saved events from disk (JSON). If missing or corrupted,
-    returns an empty dictionary.
-
-    Returns:
-        A dictionary structured as { 'some_key': [events], ... }
-    """
-    if os.path.exists(EVENTS_FILE):
-        try:
-            with open(EVENTS_FILE, "r", encoding="utf-8") as f:
-                logger.debug("[events.py] Loaded previous event snapshot from disk.")
-                return json.load(f)
-        except json.JSONDecodeError:
-            logger.warning("[events.py] Snapshot file corrupted. Starting fresh.")
-    return {}
-
-def save_current_events_for_key(key: str, events: List[Dict[str, Any]], versioned: bool = False) -> None:
-    """
-    Saves the current list of events under a specific key in the snapshot file,
-    optionally creating a versioned daily archive.
-
-    Args:
-        key: A string key identifying the event set (e.g., 'tag_full').
-        events: The list of event dictionaries to store.
-        versioned: If True, also save a copy to a dated subdirectory for archival.
-    """
-    logger.debug(f"[events.py] Saving {len(events)} events to snapshot key: {key}")
-    all_data = load_previous_events()
-    all_data[key] = events
-    os.makedirs(os.path.dirname(EVENTS_FILE), exist_ok=True)
-
-    with open(EVENTS_FILE, "w", encoding="utf-8") as f:
-        json.dump(all_data, f, ensure_ascii=False, indent=2)
-
-    if versioned and "_full" in key:
-        tag = key.replace("_full", "")
-        date_str = date.today().isoformat()
-        path = os.path.join(SNAPSHOT_DIR, tag)
-        os.makedirs(path, exist_ok=True)
-        archive_file_path = os.path.join(path, f"{date_str}.json")
-        with open(archive_file_path, "w", encoding="utf-8") as f:
-            json.dump(events, f, ensure_ascii=False, indent=2)
-        logger.info(f"[events.py] 📦 Archived snapshot for '{tag}' on {date_str}")
-
-
-def compute_event_fingerprint(event: Dict[str, Any]) -> str:
-    """
-    Computes a stable hash representing the given event, used to detect duplicates or changes.
-
-    Args:
-        event: A dictionary representing a calendar event.
-
-    Returns:
-        A string hash uniquely identifying this event.
-    """
-    return event.get("id") or hashlib.md5(json.dumps(event, sort_keys=True).encode()).hexdigest()
-
-
-# ╔════════════════════════════════════════════════════════════════════╗
-# 🗃️ Grouped Calendar Source Loader
-# ╚════════════════════════════════════════════════════════════════════╝
-
-def parse_calendar_sources() -> List[Tuple[str, str, str]]:
-    """
-    Parses CALENDAR_SOURCES environment variable (comma-separated),
-    which should consist of entries like "google:CalendarID:TAG" or "ics:URL:TAG".
-
-    Returns:
-        A list of tuples (type, id_or_url, tag).
-    """
-    if not CALENDAR_SOURCES:
-        logger.warning("[events.py] No CALENDAR_SOURCES provided.")
+        seen_fps = set()
+        deduped = []
+        for e in events:
+            fp = compute_event_fingerprint(e)
+            if fp not in seen_fps:
+                seen_fps.add(fp)
+                deduped.append(e)
+        logger.debug(f"Deduplicated to {len(deduped)} ICS events")
+        return deduped
+    except Exception as e:
+        logger.exception(f"Error fetching/parsing ICS calendar: {url}")
         return []
 
     parsed: List[Tuple[str, str, str]] = []
@@ -568,3 +474,52 @@ def get_events(
     elif source_meta["type"] == "ics":
         return get_ics_events(start_date, end_date, source_meta["id"])
     return []
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🧬 compute_event_fingerprint                                       ║
+# ║ Generates a stable hash for an event's core details               ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def compute_event_fingerprint(event: dict) -> str:
+    try:
+        def normalize_time(val: str) -> str:
+            if "Z" in val:
+                val = val.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(val)
+            return dt.isoformat(timespec="minutes")
+
+        def clean(text: str) -> str:
+            return " ".join(text.strip().split())
+
+        summary = clean(event.get("summary", ""))
+        location = clean(event.get("location", ""))
+        description = clean(event.get("description", ""))
+
+        start_raw = event["start"].get("dateTime", event["start"].get("date", ""))
+        end_raw = event["end"].get("dateTime", event["end"].get("date", ""))
+        start = normalize_time(start_raw)
+        end = normalize_time(end_raw)
+
+        trimmed = {
+            "summary": summary,
+            "start": start,
+            "end": end,
+            "location": location,
+            "description": description
+        }
+
+        normalized_json = json.dumps(trimmed, sort_keys=True)
+        return hashlib.md5(normalized_json.encode("utf-8")).hexdigest()
+    except Exception as e:
+        logger.exception(f"Error computing event fingerprint: {e}")
+        return ""
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ ⚠️ Legacy Functions (Deprecated)                                   ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def parse_calendar_sources():
+    """DEPRECATED: Returns an empty list for backward compatibility."""
+    logger.warning("parse_calendar_sources() is deprecated. Use load_calendars_from_server_configs() instead.")
+    return []
+
+# Initialize calendars on module load
+load_calendars_from_server_configs()

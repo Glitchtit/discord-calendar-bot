@@ -4,173 +4,342 @@ plus utilities for sending embeds to a predefined announcement channel.
 """
 
 import os
-from typing import List, Optional
-
+import asyncio
+import random
+from datetime import datetime, timedelta
+from dateutil import tz
 import discord
-from discord import app_commands, Interaction
-from discord.ext.commands import Bot
+from discord import app_commands, errors as discord_errors
+from collections import defaultdict
 
-import dateparser
-
-from events import GROUPED_CALENDARS, get_events, get_name_for_tag, get_color_for_tag
-from utils import format_event, get_today
+from events import (
+    GROUPED_CALENDARS,
+    get_events,
+    get_name_for_tag,
+    get_color_for_tag,
+    TAG_NAMES
+)
 from log import logger
 from ai import generate_greeting_text, generate_greeting_image
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# 📤 Helper Function: send_embed
+# ║ 🔄 _retry_discord_operation                                        ║
+# ║ Helper function to retry Discord API operations with backoff      ║
 # ╚════════════════════════════════════════════════════════════════════╝
-async def send_embed(
-    bot: Bot,
-    embed: Optional[discord.Embed] = None,
-    title: str = "",
-    description: str = "",
-    color: int = 0x58B9FF,
-    image_path: Optional[str] = None
-) -> None:
-    """
-    Sends a Discord embed (with optional attached image) to the configured
-    announcement channel. If the channel or image is not found, logs a warning.
-
-    Args:
-        bot: The instance of discord.ext.commands.Bot.
-        embed: A preconstructed Embed object, or None if creating a new embed.
-        title: The title of the embed (used if embed is None).
-        description: The description text for the embed (used if embed is None).
-        color: Integer color code for the embed border (used if embed is None).
-        image_path: Filesystem path to an image to attach.
-
-    Returns:
-        None
-    """
-    from environ import ANNOUNCEMENT_CHANNEL_ID  # to avoid circular import
-    if not ANNOUNCEMENT_CHANNEL_ID:
-        logger.warning("[commands.py] ANNOUNCEMENT_CHANNEL_ID is not set.")
-        return
-
-    channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
-    if channel is None:
-        logger.error("[commands.py] Announcement channel not found. Check ANNOUNCEMENT_CHANNEL_ID.")
-        return
-
-    # If the caller didn't supply an embed, build a new one
-    if embed is None:
-        embed = discord.Embed(title=title, description=description, color=color)
-
-    # If an image path is specified, attach the image
-    if image_path and os.path.exists(image_path):
-        file = discord.File(image_path, filename="image.png")
-        embed.set_image(url="attachment://image.png")
-        await channel.send(embed=embed, file=file)
-    else:
-        await channel.send(embed=embed)
+async def _retry_discord_operation(operation, max_retries=3):
+    last_error = None
+    
+    for attempt in range(max_retries):
+        try:
+            return await operation()
+        except discord_errors.Forbidden as e:
+            # Permission errors should not be retried
+            logger.error(f"Permission error during Discord operation: {e}")
+            raise
+        except (discord_errors.HTTPException, discord_errors.GatewayNotFound) as e:
+            backoff = (2 ** attempt) + random.random()
+            logger.warning(f"Discord API error (attempt {attempt+1}/{max_retries}): {e}")
+            logger.info(f"Retrying in {backoff:.2f} seconds...")
+            last_error = e
+            await asyncio.sleep(backoff)
+    
+    # If we've exhausted all retries, raise the last error
+    if last_error:
+        raise last_error
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# 🎨 /greet — AI Greeting Command
+# ║ 🔍 check_channel_permissions                                        ║
+# ║ Verifies the bot has necessary permissions in the channel          ║
 # ╚════════════════════════════════════════════════════════════════════╝
-@app_commands.command(name="greet2", description="Post an AI-generated greeting with today's schedule")
-async def greet(interaction: discord.Interaction) -> None:
-    """
-    Generates an AI-based greeting text and image, then sends them as
-    an embed to the announcement channel.
-
-    Usage: /greet
-    """
-    await interaction.response.defer()
-    logger.info(f"[commands.py] 🎨 Generating AI greeting for user {interaction.user}.")
-
-    try:
-        # Generate greeting text
-        greeting_text: str = await generate_greeting_text()
-
-        # Generate AI image
-        image_path: Optional[str] = await generate_greeting_image(greeting_text)
-
-        # Send embed with greeting
-        await send_embed(
-            bot=interaction.client,  # "interaction.client" is our Bot instance
-            title="📣 Daily AI Greeting",
-            description=greeting_text,
-            image_path=image_path
-        )
-        logger.info("[commands.py] ✅ AI greeting posted successfully.")
-
-    except Exception as e:
-        logger.exception("[commands.py] Error in /greet command.", exc_info=e)
-        await interaction.followup.send("⚠️ An error occurred while generating the greeting.")
-
-
-# ╔════════════════════════════════════════════════════════════════════╗
-# 👥 Async Autocomplete for the Herald Command
-# ╚════════════════════════════════════════════════════════════════════╝
-async def herald_tag_autocomplete(
-    interaction: Interaction,
-    current: str
-) -> List[app_commands.Choice[str]]:
-    """
-    Provides autocomplete suggestions for the tag parameter of /herald.
-    Suggests tags that start with the current input, or all tags if input is empty.
-
-    Args:
-        interaction: The current Interaction (not used in logic, but required by signature).
-        current: The user’s partial input in the slash command.
-
-    Returns:
-        A list of Choice objects for the user to pick from.
-    """
-    return [
-        app_commands.Choice(name=tag, value=tag)
-        for tag in sorted(GROUPED_CALENDARS)
-        if tag.startswith(current.upper()) or current == ""
+def check_channel_permissions(channel, bot_member):
+    required_permissions = [
+        "view_channel",
+        "send_messages",
+        "embed_links",
+        "attach_files"
     ]
+    
+    missing = []
+    permissions = channel.permissions_for(bot_member)
+    
+    for perm in required_permissions:
+        if not getattr(permissions, perm, False):
+            missing.append(perm)
+    
+    return not missing, missing
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📤 send_embed                                                      ║
+# ║ Sends an embed to the announcement channel, optionally with image ║
+# ╚════════════════════════════════════════════════════════════════════╝
+async def send_embed(bot, embed: discord.Embed = None, title: str = "", description: str = "", color: int = 5814783, image_path: str | None = None):
+    try:
+        if isinstance(embed, str):
+            logger.warning("send_embed() received a string instead of an Embed. Converting values assuming misuse.")
+            description = embed
+            embed = None
+            
+        from environ import ANNOUNCEMENT_CHANNEL_ID
+        if not ANNOUNCEMENT_CHANNEL_ID:
+            logger.warning("ANNOUNCEMENT_CHANNEL_ID not set.")
+            return
+            
+        # Get channel with retry
+        channel = None
+        for _ in range(2):  # Try twice in case of cache issues
+            channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+            if channel:
+                break
+            # If not found in cache, try to fetch it
+            try:
+                channel = await bot.fetch_channel(ANNOUNCEMENT_CHANNEL_ID)
+                break
+            except Exception as e:
+                logger.warning(f"Error fetching channel: {e}")
+                await asyncio.sleep(1)
+        
+        if not channel:
+            logger.error("Channel not found. Check ANNOUNCEMENT_CHANNEL_ID.")
+            return
+            
+        # Check permissions
+        bot_member = channel.guild.get_member(bot.user.id)
+        has_permissions, missing_perms = check_channel_permissions(channel, bot_member)
+        
+        if not has_permissions:
+            logger.error(f"Missing permissions in channel {channel.name}: {', '.join(missing_perms)}")
+            return
+            
+        # Create embed if none was provided
+        if embed is None:
+            embed = discord.Embed(title=title, description=description, color=color)
+            
+        # Check if embed is too large (Discord limit is 6000 characters)
+        embed_size = len(embed.title) + len(embed.description or "")
+        for field in embed.fields:
+            embed_size += len(field.name) + len(field.value)
+            
+        if embed_size > 5900:  # Leave some buffer
+            logger.warning(f"Embed exceeds Discord's size limit ({embed_size}/6000 chars). Splitting content.")
+            
+            # Create a new embed with just title and description
+            main_embed = discord.Embed(title=embed.title, description=embed.description, color=embed.color)
+            if embed.footer:
+                main_embed.set_footer(text=embed.footer.text)
+                
+            # Send the main embed first
+            await _retry_discord_operation(lambda: channel.send(embed=main_embed))
+            
+            # Then send fields as separate embeds, grouping a few fields per embed
+            field_groups = []
+            current_group = []
+            current_size = 0
+            
+            for field in embed.fields:
+                field_size = len(field.name) + len(field.value)
+                if current_size + field_size > 4000:  # Conservative field size limit
+                    field_groups.append(current_group)
+                    current_group = [field]
+                    current_size = field_size
+                else:
+                    current_group.append(field)
+                    current_size += field_size
+                    
+            if current_group:
+                field_groups.append(current_group)
+                
+            for i, group in enumerate(field_groups):
+                continuation_embed = discord.Embed(color=embed.color)
+                if i < len(field_groups) - 1:
+                    continuation_embed.set_footer(text=f"Continued ({i+1}/{len(field_groups)})")
+                else:
+                    if embed.footer:
+                        continuation_embed.set_footer(text=embed.footer.text)
+                        
+                for field in group:
+                    continuation_embed.add_field(name=field.name, value=field.value, inline=field.inline)
+                    
+                await _retry_discord_operation(lambda: channel.send(embed=continuation_embed))
+                
+            return
+            
+        # Process image if provided
+        file = None
+        if image_path and os.path.exists(image_path):
+            try:
+                file = discord.File(image_path, filename="image.png")
+                embed.set_image(url="attachment://image.png")
+            except Exception as e:
+                logger.warning(f"Failed to load image from {image_path}: {e}")
+                # Continue without the image
+        
+        # Send the message with retry
+        if file:
+            await _retry_discord_operation(lambda: channel.send(embed=embed, file=file))
+        else:
+            await _retry_discord_operation(lambda: channel.send(embed=embed))
+            
+    except Exception as e:
+        logger.exception(f"Error in send_embed: {e}")
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📅 post_tagged_events                                              ║
+# ║ Sends an embed of events for a specific tag on a given day        ║
+# ║ Returns True if events were posted, False otherwise               ║
+# ╚════════════════════════════════════════════════════════════════════╝
+async def post_tagged_events(bot, tag: str, day: datetime.date) -> bool:
+    try:
+        calendars = GROUPED_CALENDARS.get(tag)
+        if not calendars:
+            logger.warning(f"No calendars found for tag: {tag}")
+            return False
+
+        events_by_source = defaultdict(list)
+        for meta in calendars:
+            try:
+                events = get_events(meta, day, day)
+                for e in events:
+                    events_by_source[meta["name"]].append(e)
+            except Exception as e:
+                logger.exception(f"Error getting events for {meta['name']}: {e}")
+                # Continue with other calendars even if one fails
+
+        if not events_by_source:
+            logger.debug(f"Skipping {tag} — no events for {day}")
+            return False
+            
+        embed = discord.Embed(
+            title=f"🗓️ Herald's Scroll — {get_name_for_tag(tag)}",
+            description=f"Events for **{day.strftime('%A, %B %d')}**",
+            color=get_color_for_tag(tag)
+        )
+
+        # Check if we have too many calendars (Discord limits to 25 fields per embed)
+        if len(events_by_source) > 20:  # Leave buffer for other fields
+            logger.warning(f"Too many calendar sources ({len(events_by_source)}) for a single embed. Sending multiple embeds.")
+            
+            # Send the main embed header first
+            await send_embed(bot, embed=embed)
+            
+            # Then send each calendar as its own embed
+            for i, (source_name, events) in enumerate(sorted(events_by_source.items())):
+                if not events:
+                    continue
+                    
+                source_embed = discord.Embed(
+                    title=f"📖 {source_name}",
+                    color=get_color_for_tag(tag)
+                )
+                
+                # Format events with a character limit
+                formatted_events = []
+                total_length = 0
+                MAX_EMBED_VALUE_LENGTH = 900  # Discord limit is 1024, leave buffer
+                
+                for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
+                    event_text = f" {format_event(e)}"
+                    if total_length + len(event_text) > MAX_EMBED_VALUE_LENGTH:
+                        formatted_events.append("... and more events (truncated)")
+                        break
+                    formatted_events.append(event_text)
+                    total_length += len(event_text)
+                
+                source_embed.description = "\n".join(formatted_events)
+                source_embed.set_footer(text=f"Calendar {i+1}/{len(events_by_source)}")
+                
+                await send_embed(bot, embed=source_embed)
+            
+            return True
+        
+        # Standard flow - add all events to a single embed
+        for source_name, events in sorted(events_by_source.items()):
+            if not events:
+                continue
+                
+            # Format events with a character limit to avoid Discord's field value limit
+            formatted_events = []
+            total_length = 0
+            MAX_FIELD_LENGTH = 900  # Discord limit is 1024, leave buffer
+            
+            for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
+                event_text = f" {format_event(e)}"
+                if total_length + len(event_text) > MAX_FIELD_LENGTH:
+                    formatted_events.append("... and more events (truncated)")
+                    break
+                formatted_events.append(event_text)
+                total_length += len(event_text)
+
+            embed.add_field(
+                name=f"📖 {source_name}",
+                value="\n".join(formatted_events) + "\n\u200b",
+                inline=False
+            )
+
+        embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
+        await send_embed(bot, embed=embed)
+        return True
+        
+    except Exception as e:
+        logger.exception(f"Error in post_tagged_events for tag {tag} on {day}: {e}")
+        return False
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 📅 /herald [tag] — Posts today's events for a calendar tag
 # ╚════════════════════════════════════════════════════════════════════╝
-@app_commands.command(name="herald2", description="Post today's events for a calendar tag")
-@app_commands.describe(tag="Tag name (e.g., A, B, T)")
-@app_commands.autocomplete(tag=herald_tag_autocomplete)
-async def herald(interaction: discord.Interaction, tag: str) -> None:
-    """
-    Fetches today's events for a specific calendar tag (e.g., 'A', 'B', etc.)
-    and sends them as an embed to the announcement channel.
-
-    Usage: /herald <tag>
-    """
-    await interaction.response.defer()
-    logger.info(f"[commands.py] 📣 /herald called by {interaction.user} for tag '{tag}'")
-
+async def post_tagged_week(bot, tag: str, monday: datetime.date):
     try:
-        today = get_today()
-        all_events = []
-        for source in GROUPED_CALENDARS.get(tag.upper(), []):
-            events = await interaction.client.loop.run_in_executor(None, get_events, source, today, today)
-            all_events.extend(events)
-
-        # Sort by start time
-        all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
-
-        if not all_events:
-            await interaction.followup.send(f"⚠️ No events found today for tag `{tag}`.")
+        calendars = GROUPED_CALENDARS.get(tag)
+        if not calendars:
+            logger.warning(f"No calendars for tag {tag}")
             return
 
+        end = monday + timedelta(days=6)
+        all_events = []
+        for meta in calendars:
+            all_events += get_events(meta, monday, end)
+
+        if not all_events:
+            logger.debug(f"Skipping {tag} — no weekly events from {monday} to {end}")
+            return
+
+        events_by_day = defaultdict(list)
+        for e in all_events:
+            start_str = e["start"].get("dateTime", e["start"].get("date"))
+            dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
+            events_by_day[dt.date()].append(e)
+
         embed = discord.Embed(
-            title=f"📅 Today’s Events — {get_name_for_tag(tag)}",
-            color=get_color_for_tag(tag),
-            description="\n\n".join(format_event(e) for e in all_events)
+            title=f"📜 Herald’s Week — {get_name_for_tag(tag)}",
+            description=f"Week of **{monday.strftime('%B %d')}**",
+            color=get_color_for_tag(tag)
         )
-        embed.set_footer(text=f"{len(all_events)} event(s) • {today.strftime('%A, %d %B %Y')}")
 
-        # Use our send_embed helper
-        await send_embed(bot=interaction.client, embed=embed)
-        logger.info("[commands.py] ✅ Herald command posted events successfully.")
+        for i in range(7):
+            day = monday + timedelta(days=i)
+            day_events = events_by_day.get(day, [])
+            if not day_events:
+                continue
 
+            formatted_events = [
+                f" {format_event(e)}"
+                for e in sorted(day_events, key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
+            ]
+
+            embed.add_field(
+                name=f"📅 {day.strftime('%A')}",
+                value="\n".join(formatted_events) + "\n\u200b",
+                inline=False
+            )
+
+        embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
+        await send_embed(bot, embed=embed)
     except Exception as e:
-        logger.exception("[commands.py] Error in /herald command.", exc_info=e)
-        await interaction.followup.send("⚠️ An error occurred while fetching today's events.")
+        logger.exception(f"Error in post_tagged_week for tag {tag} starting {monday}: {e}")
 
 
 # ╔════════════════════════════════════════════════════════════════════╗

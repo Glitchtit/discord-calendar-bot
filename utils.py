@@ -1,145 +1,281 @@
-"""
-utils.py: General utilities to support event formatting, date/time handling, etc.
-"""
+from datetime import datetime, timedelta, date
+from dateutil import tz
+from log import logger  # Import logger from log.py
+import functools
+import re
 
-from datetime import date, datetime, timedelta
-from typing import Dict, Any
+# Cache for expensive operations
+_timezone_cache = None
+_date_str_pattern = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+_datetime_str_pattern = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}')
 
-from events import GROUPED_CALENDARS
-from zoneinfo import ZoneInfo
-from log import logger
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🌐 get_local_timezone                                              ║
+# ║ Gets local timezone with fallback to UTC if detection fails        ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def get_local_timezone():
+    global _timezone_cache
+    if _timezone_cache is not None:
+        return _timezone_cache
+    
+    try:
+        _timezone_cache = tz.tzlocal()
+        return _timezone_cache
+    except Exception as e:
+        logger.warning(f"Failed to get local timezone: {e}. Falling back to UTC.")
+        _timezone_cache = tz.UTC
+        return _timezone_cache
+
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 📆 Date Utilities
 # ╚════════════════════════════════════════════════════════════════════╝
 
 def get_today() -> date:
-    """
-    Retrieves the current local date (no time component).
-
-    Returns:
-        A date object representing today's date in local time.
-    """
-    today = datetime.now().date()
-    logger.debug(f"[utils.py] get_today() -> {today}")
-    return today
-
-def get_monday_of_week(ref: date = None) -> date:
-    """
-    Given a reference date, returns the Monday of that week. If no ref is provided,
-    uses today's date.
-
-    Args:
-        ref: The reference date (default: today's date).
-
-    Returns:
-        The date object corresponding to Monday of the same week as ref.
-    """
-    if ref is None:
-        ref = get_today()
-    monday = ref - timedelta(days=ref.weekday())
-    logger.debug(f"[utils.py] get_monday_of_week({ref}) -> {monday}")
-    return monday
-
-def is_in_current_week(event_start: str) -> bool:
-    """
-    Checks if an event's start date/time falls in the current week
-    (Monday–Sunday) based on local time.
-
-    Args:
-        event_start: An ISO 8601 datetime string, potentially with 'Z' for UTC.
-
-    Returns:
-        True if the event's start is between Monday of the current local week
-        and Sunday of that same week, else False.
-    """
     try:
-        dt = datetime.fromisoformat(event_start.replace("Z", "+00:00"))
-        today = get_today()
-        monday = get_monday_of_week(today)
-        in_week = monday <= dt.date() <= monday + timedelta(days=6)
-        logger.debug(f"[utils.py] is_in_current_week({event_start}) -> {in_week}")
-        return in_week
-    except ValueError as e:
-        logger.warning(f"[utils.py] Failed to parse date '{event_start}': {e}")
-        return False
-
-def resolve_tz(tzid: str) -> ZoneInfo:
-    """
-    Attempts to resolve a TZID string to a valid zone. Defaults to UTC if invalid.
-
-    Args:
-        tzid: Time zone identifier string (e.g., "America/New_York").
-
-    Returns:
-        A ZoneInfo object representing the resolved time zone.
-    """
-    try:
-        return ZoneInfo(tzid)
-    except Exception:
-        logger.warning(f"[utils.py] Unknown TZID: {tzid}, defaulting to UTC.")
-        return ZoneInfo("UTC")
+        return datetime.now(tz=get_local_timezone()).date()
+    except Exception as e:
+        logger.exception(f"Error getting today's date: {e}. Using UTC.")
+        # Fallback to UTC in case of error
+        return datetime.now(tz=tz.UTC).date()
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ✨ Event Formatting
 # ╚════════════════════════════════════════════════════════════════════╝
+def get_monday_of_week(day: date = None) -> date:
+    if day is None:
+        day = get_today()
+    
+    # Ensure we have a date object
+    if isinstance(day, datetime):
+        day = day.date()
+    
+    try:
+        return day - timedelta(days=day.weekday())
+    except Exception as e:
+        logger.exception(f"Error calculating Monday of week for {day}: {e}")
+        # Return today's Monday as fallback
+        today = get_today()
+        return today - timedelta(days=today.weekday())
 
-def format_event(event: Dict[str, Any]) -> str:
-    """
-    Formats an event dictionary into a user-facing string for Discord embeds.
 
-    Args:
-        event: A dictionary containing event fields such as 'summary', 'location',
-               'start', 'end', and 'allDay'.
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🔤 emoji_for_event                                                 ║
+# ║ Attempts to guess an emoji based on event title                    ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def emoji_for_event(title: str) -> str:
+    # Handle None or non-string inputs
+    if not title or not isinstance(title, str):
+        return "•"
+        
+    try:
+        title = title.lower()
+        if "class" in title or "lecture" in title or "em" in title or "ia" in title:
+            return "📚"
+        if "meeting" in title:
+            return "📞"
+        if "lunch" in title:
+            return "🥪"
+        if "dinner" in title or "banquet" in title:
+            return "🍽️"
+        if "party" in title:
+            return "🎉"
+        if "exam" in title or "test" in title:
+            return "📝"
+        if "appointment" in title:
+            return "📅"
+        return "•"
+    except Exception as e:
+        logger.exception(f"Error determining emoji for title '{title}': {e}")
+        return "•"
 
-    Returns:
-        A formatted string describing the event's title, time (or all-day),
-        and location if available.
-    """
-    summary = event.get("summary", "Untitled")
-    location = event.get("location", "")
-    is_all_day = event.get("allDay", False)
 
-    start = event["start"].get("dateTime", event["start"].get("date"))
-    end = event["end"].get("dateTime", event["end"].get("date"))
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🕒 parse_date_string                                               ║
+# ║ Safely parses ISO date/datetime strings with fallbacks             ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def parse_date_string(date_str: str, default_timezone=None):
+    """Parse a date string safely, handling different formats and edge cases."""
+    if not date_str:
+        logger.warning("Empty date string provided")
+        return None
+        
+    if default_timezone is None:
+        default_timezone = get_local_timezone()
+    
+    try:
+        # Handle date-only format (YYYY-MM-DD)
+        if _date_str_pattern.match(date_str):
+            return datetime.fromisoformat(date_str)
+            
+        # Handle Z (UTC) timezone indicator
+        if date_str.endswith('Z'):
+            date_str = date_str[:-1] + '+00:00'
+            
+        # Handle missing timezone information
+        if '+' not in date_str and '-' not in date_str[-6:]:
+            # If no timezone info, assume UTC then convert to local
+            dt = datetime.fromisoformat(date_str)
+            dt = dt.replace(tzinfo=tz.UTC)
+            return dt.astimezone(default_timezone)
+            
+        # Normal case with timezone info
+        return datetime.fromisoformat(date_str)
+        
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Failed to parse date string '{date_str}': {e}")
+        return None
 
-    time_str = "📌 All day"
-    # If not all-day, extract time portion (HH:MM)
-    if not is_all_day and "T" in start:
-        start_time = datetime.fromisoformat(start.replace("Z", "+00:00")).strftime("%H:%M")
-        end_time = datetime.fromisoformat(end.replace("Z", "+00:00")).strftime("%H:%M")
-        time_str = f"🕒 {start_time}–{end_time}"
 
-    loc_str = f"📍 {location}" if location else ""
-    formatted = f"**{summary}**\n{time_str} {loc_str}".strip()
-    logger.debug(f"[utils.py] format_event(...) -> {formatted}")
-    return formatted
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📝 format_event                                                    ║
+# ║ Converts an event dictionary into a stylized, readable string     ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def format_event(event: dict) -> str:
+    try:
+        # Validate event data
+        if not event or not isinstance(event, dict):
+            logger.warning(f"Invalid event data: {event}")
+            return "⚠️ **Invalid event data**"
+            
+        # Get event start/end times with validation
+        start_data = event.get("start", {})
+        end_data = event.get("end", {})
+        
+        if not isinstance(start_data, dict) or not isinstance(end_data, dict):
+            logger.warning(f"Invalid start/end data format in event: {event}")
+            return "⚠️ **Invalid event format**"
+            
+        start = start_data.get("dateTime", start_data.get("date", ""))
+        end = end_data.get("dateTime", end_data.get("date", ""))
+        
+        # Get and sanitize title (prevent markdown injection)
+        title = event.get("summary", "Untitled")
+        if isinstance(title, str):
+            # Truncate long titles to prevent display issues
+            if len(title) > 50:
+                title = title[:47] + "..."
+            # Escape characters that could break markdown formatting
+            title = title.replace("*", "\\*").replace("_", "\\_").replace("`", "\\`")
+        else:
+            title = "Untitled"
+            
+        # Get and sanitize location
+        location = event.get("location", "")
+        if isinstance(location, str):
+            location = location.replace("*", "\\*").replace("_", "\\_")
+        else:
+            location = ""
+            
+        # Get appropriate emoji
+        emoji = emoji_for_event(title)
+
+        # Parse start time
+        local_timezone = get_local_timezone()
+        start_str = "All Day"
+        
+        if start and "T" in start:
+            start_dt = parse_date_string(start, local_timezone)
+            if start_dt:
+                start_str = start_dt.strftime("%H:%M")
+
+        # Parse end time
+        end_str = ""
+        if end and "T" in end:
+            end_dt = parse_date_string(end, local_timezone)
+            if end_dt:
+                end_str = end_dt.strftime("%H:%M")
+
+        # Format the time range and location
+        time_range = f"{start_str}–{end_str}" if end_str else start_str
+        location_str = f" *({location})*" if location else ""
+
+        return f"{emoji} **{title}** `{time_range}`{location_str}"
+    except Exception as e:
+        logger.exception(f"Error formatting event: {e}")
+        return "⚠️ **Error formatting event**"
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🔤 Tag Resolution
 # ╚════════════════════════════════════════════════════════════════════╝
+def is_in_current_week(event: dict, reference: date = None) -> bool:
+    try:
+        # Validate inputs
+        if not event or not isinstance(event, dict):
+            return False
+            
+        reference = reference or get_today()
+        monday = get_monday_of_week(reference)
+        week_range = {monday + timedelta(days=i) for i in range(7)}
+        
+        # Get and validate start date
+        start_data = event.get("start", {})
+        if not isinstance(start_data, dict):
+            return False
+            
+        start_str = start_data.get("dateTime", start_data.get("date", ""))
+        if not start_str:
+            return False
+            
+        # Parse the date
+        dt = parse_date_string(start_str)
+        if not dt:
+            return False
+            
+        return dt.date() in week_range
+    except Exception as e:
+        logger.exception(f"Error checking if event is in current week: {e}")
+        return False
 
-def resolve_input_to_tags(value: str) -> list[str]:
-    """
-    Converts a user-provided tag-like string to a list of valid tags. If
-    the user input is something like '*', 'ALL', or 'BOTH', returns all known tags.
 
-    Args:
-        value: The user-provided tag string.
-
-    Returns:
-        A list of uppercase tags that exist in GROUPED_CALENDARS.
-    """
-    value = value.strip().upper()
-    if value in ("*", "ALL", "BOTH"):
-        tags = list(GROUPED_CALENDARS.keys())
-        logger.debug(f"[utils.py] resolve_input_to_tags('{value}') -> ALL TAGS: {tags}")
-        return tags
-    if value in GROUPED_CALENDARS:
-        logger.debug(f"[utils.py] resolve_input_to_tags('{value}') -> SINGLE TAG: {value}")
-        return [value]
-
-    logger.debug(f"[utils.py] resolve_input_to_tags('{value}') -> NONE")
-    return []
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🔍 resolve_input_to_tags                                           ║
+# ║ Maps user-friendly input strings to internal calendar tags        ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def resolve_input_to_tags(input_str: str, tag_names: dict, grouped_calendars: dict) -> list[str]:
+    try:
+        # Handle invalid inputs
+        if not input_str or not isinstance(input_str, str):
+            return []
+            
+        if not isinstance(tag_names, dict) or not isinstance(grouped_calendars, dict):
+            logger.warning("Invalid tag_names or grouped_calendars provided to resolve_input_to_tags")
+            return []
+            
+        requested = [s.strip().lower() for s in input_str.split(",") if s.strip()]
+        matched = set()
+        
+        for item in requested:
+            # First check for exact tag match (case insensitive)
+            item_upper = item.upper()
+            if item_upper in grouped_calendars:
+                matched.add(item_upper)
+                continue
+                
+            # Then check against display names
+            matched_by_name = False
+            for tag, name in tag_names.items():
+                if not isinstance(name, str):
+                    continue
+                    
+                if name.lower() == item:
+                    matched.add(tag)
+                    matched_by_name = True
+                    break
+                    
+            if not matched_by_name:
+                # Try partial matches if no exact match found
+                for tag, name in tag_names.items():
+                    if not isinstance(name, str):
+                        continue
+                        
+                    if item in name.lower():
+                        matched.add(tag)
+                        break
+                        
+        return list(matched)
+    except Exception as e:
+        logger.exception(f"Error resolving input to tags: {e}")
+        return []
