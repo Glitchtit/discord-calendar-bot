@@ -341,15 +341,13 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
             elif start_date:
                 events_by_day[start_date].append(e)
 
+        # Use Discord mention for the tag
+        mention = "@everyone" if tag.upper() == "EVERYONE" else f"<@{tag}>"
         embed = discord.Embed(
-            title=f"📜 Herald’s Week — {TAG_NAMES.get(tag, tag)}",  # Use Discord username
+            title=f"📜 Herald’s Week — {mention}",
             description=f"Week of **{monday.strftime('%B %d')}**",
             color=get_color_for_tag(tag)
         )
-
-        # Add mention for the tag or @everyone
-        mention = "@everyone" if tag.upper() == "EVERYONE" else TAG_NAMES.get(tag, tag)
-        await send_embed(bot, embed=embed, content=f"{mention}")
 
         for i in range(7):
             day = monday + timedelta(days=i)
@@ -369,7 +367,7 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
             )
 
         embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
-        await send_embed(bot, embed=embed)
+        await send_embed(bot, embed=embed, content=f"{mention}")
     except Exception as e:
         logger.exception(f"Error in post_tagged_week for tag {tag} starting {monday}: {e}")
 
