@@ -529,8 +529,8 @@ class CalendarSetupView(View):
             
             # Find the user associated with this tag
             user_id = None
-            for uid, tag in config.get("user_mappings", {}).items():
-                if tag == cal_tag:
+            for tag_key, uid in config.get("user_mappings", {}).items():
+                if tag_key == cal_tag:
                     user_id = uid
                     break
                     
