@@ -308,10 +308,11 @@ async def greet_command(interaction: discord.Interaction):
 async def reload_command(interaction: discord.Interaction):
     try:
         await interaction.response.defer()
-        # Use the updated reinitialize_events to reload all calendars dynamically
-        from events import reinitialize_events
-        await reinitialize_events()
-        await resolve_tag_mappings()
+        # Reload calendars from server configurations
+        from events import load_calendars_from_server_configs, reinitialize_events
+        load_calendars_from_server_configs()  # Ensure GROUPED_CALENDARS is updated
+        await reinitialize_events()  # Reinitialize events for all calendars
+        await resolve_tag_mappings()  # Update tag mappings
         await interaction.followup.send("Reloaded calendar sources and tag mappings.")
     except Exception as e:
         logger.exception(f"Error in /reload command: {e}")
@@ -339,12 +340,12 @@ async def who_command(interaction: discord.Interaction):
 # ╚═════════════════════════════════════════════════════════════╝
 async def resolve_tag_mappings():
     """Resolve tag names from server data and populate member display names."""
-    from events import USER_TAG_MAP, TAG_NAMES, TAG_COLORS
-    
-    # TAG_NAMES is a global dictionary in events.py
+    from events import USER_TAG_MAP, TAG_NAMES, TAG_COLORS, GROUPED_CALENDARS
+
+    # Clear existing mappings
     TAG_NAMES.clear()
     TAG_COLORS.clear()
-    
+
     # Pre-defined colors for different tags
     default_colors = {
         "ANDY": 0xf39c12,    # Orange
@@ -355,41 +356,30 @@ async def resolve_tag_mappings():
         "SHARED": 0x95a5a6,  # Gray
         "FAMILY": 0xe74c3c,  # Red
     }
-    
-    # First assign default colors for known tags
+
+    # Assign default colors for known tags
     for tag, color in default_colors.items():
         TAG_COLORS[tag] = color
-    
-    # Now try to resolve member names from the guild
+
+    # Resolve member names for tags
     resolved_count = 0
-    
-    # Loop through all guilds the bot is connected to
     for guild in bot.guilds:
-        # Loop through members in each guild
         for member in guild.members:
-            # Check if this member has a tag mapping
             if member.id in USER_TAG_MAP:
                 tag = USER_TAG_MAP[member.id]
-                # Use their display name for the tag
                 TAG_NAMES[tag] = member.display_name
                 resolved_count += 1
-                
-                # If not already assigned, give random color
+
+                # Assign a random color if not already assigned
                 if tag not in TAG_COLORS:
-                    # Generate random but visually pleasing color
                     import random
-                    h = random.random()  # Random hue
-                    s = 0.6 + random.random() * 0.4  # High saturation
-                    v = 0.6 + random.random() * 0.4  # Decent brightness
-                    
-                    # Convert HSV to RGB
-                    import colorsys
-                    r, g, b = colorsys.hsv_to_rgb(h, s, v)
-                    
-                    # Convert to hex
-                    color = (int(r * 255) << 16) + (int(g * 255) << 8) + int(b * 255)
-                    TAG_COLORS[tag] = color
-                    
+                    TAG_COLORS[tag] = random.randint(0x100000, 0xFFFFFF)
+
+    # Ensure all tags in GROUPED_CALENDARS have a display name
+    for tag in GROUPED_CALENDARS:
+        if tag not in TAG_NAMES:
+            TAG_NAMES[tag] = tag  # Fallback to the tag itself
+
     logger.info(f"Resolved {resolved_count} tag mappings to member names")
 
 

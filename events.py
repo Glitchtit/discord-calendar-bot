@@ -96,54 +96,23 @@ def get_color_for_tag(tag: str) -> int:
 
 def load_calendars_from_server_configs():
     """Load all calendar configurations from server JSON files."""
-    global GROUPED_CALENDARS, USER_TAG_MAP
-    
-    GROUPED_CALENDARS = {}
-    USER_TAG_MAP = {}
-    
-    server_ids = get_all_server_ids()
-    if not server_ids:
-        logger.warning("No server configurations found. Please use /setup to configure calendars.")
-        return
-        
-    logger.info(f"Loading calendar configurations from {len(server_ids)} servers...")
-    
-    for server_id in server_ids:
+    global GROUPED_CALENDARS
+    GROUPED_CALENDARS.clear()  # Clear existing calendars
+
+    for server_id in get_all_server_ids():
         config = load_server_config(server_id)
-        calendars = config.get("calendars", [])
-        user_mappings = config.get("user_mappings", {})
-        
-        # Add user mappings
-        for tag, user_id in user_mappings.items():
-            try:
-                USER_TAG_MAP[int(user_id)] = tag
-            except ValueError:
-                logger.warning(f"Invalid user ID {user_id} in server {server_id} config")
-        
-        # Add calendars
-        for calendar in calendars:
-            tag = calendar.get("tag")
-            if not tag:
-                logger.warning(f"Calendar missing tag in server {server_id} config, skipping")
-                continue
-                
-            # Convert to the format expected by the rest of the code
-            calendar_meta = {
-                "type": calendar.get("type", "google"),
-                "id": calendar.get("id", ""),
-                "name": calendar.get("name", "Unknown Calendar"),
-                "tag": tag,
-                "server_id": server_id
-            }
-            
-            GROUPED_CALENDARS.setdefault(tag, []).append(calendar_meta)
-    
-    # Log summary of loaded calendars
-    total_calendars = sum(len(cals) for cals in GROUPED_CALENDARS.values())
-    logger.info(f"Loaded {total_calendars} calendars across {len(GROUPED_CALENDARS)} tags")
-    
-    for tag, calendars in GROUPED_CALENDARS.items():
-        logger.debug(f"Tag {tag}: {len(calendars)} calendars")
+        for calendar in config.get("calendars", []):
+            tag = calendar["tag"]
+            if tag not in GROUPED_CALENDARS:
+                GROUPED_CALENDARS[tag] = []
+            GROUPED_CALENDARS[tag].append({
+                "server_id": server_id,
+                "type": calendar["type"],
+                "id": calendar["id"],
+                "name": calendar.get("name", "Unnamed Calendar")
+            })
+
+    logger.info(f"Loaded {len(GROUPED_CALENDARS)} calendar tags from server configurations.")
 
 # Remaining functions from events.py stay the same, but we'll change the old 
 # parse_calendar_sources and get_user_tag_mapping functions to be deprecated
