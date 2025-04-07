@@ -13,7 +13,7 @@ import hashlib
 import requests
 import time
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Dict, List, Tuple, Optional, Any
 from ics import Calendar as ICS_Calendar
 from google.oauth2 import service_account
