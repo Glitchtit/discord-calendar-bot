@@ -176,18 +176,18 @@ def detect_calendar_type(url_or_id: str) -> Optional[str]:
     """
     # Check for ICS URL format
     if url_or_id.startswith(('http://', 'https://')):
-        # Check simple .ics in the URL
+        # Check for .ics in the URL, even with non-standard ports
         if '.ics' in url_or_id.lower():
             return 'ics'
         
         # Fallback detection by checking content-type
         try:
-            r = requests.head(url_or_id, timeout=5)
+            r = requests.head(url_or_id, timeout=5, allow_redirects=True)
             ct = r.headers.get('Content-Type', '').lower()
             if any(x in ct for x in ('text/calendar', 'text/ical', 'application/ics', 'application/calendar')):
                 return 'ics'
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Error detecting calendar type for URL {url_or_id}: {e}")
 
     # Google Calendar ID formats:
     # - email format: xxx@group.calendar.google.com
