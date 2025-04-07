@@ -645,14 +645,26 @@ class UserSelectView(View):
                 description=f"User ID: {member.id}"
             )
             
+        select.add_option(
+            label="@everyone",
+            value="EVERYONE",
+            description="Assign this calendar to all server members"
+        )
+            
         async def select_callback(interaction):
             """Handle user selection."""
-            user_id = select.values[0]
-            user = guild.get_member(int(user_id))
+            if select.values[0] == "EVERYONE":
+                user_id = "EVERYONE"
+                user = None
+            else:
+                user_id = select.values[0]
+                user = guild.get_member(int(user_id))
             
             # If display name wasn't provided, use user's name + "Calendar"
             final_display_name = self.display_name
-            if not final_display_name:
+            if not final_display_name and user_id == "EVERYONE":
+                final_display_name = "Everyone's Calendar"
+            elif not final_display_name:
                 final_display_name = f"{user.display_name}'s Calendar"
                 
             # Add the calendar

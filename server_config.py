@@ -109,8 +109,10 @@ def add_calendar(server_id: int, calendar_url: str, user_id: str, display_name: 
             break
     
     if not user_tag:
-        # Create a new tag based on username if possible, otherwise use USER_{id}
-        user_tag = f"USER_{user_id_str[-4:]}"  # Use last 4 digits of user ID
+        if user_id_str == "EVERYONE":
+            user_tag = "EVERYONE"
+        else:
+            user_tag = f"USER_{user_id_str[-4:]}"
         config.setdefault("user_mappings", {})[user_tag] = user_id_str
     
     # Add calendar to config
@@ -169,20 +171,23 @@ def detect_calendar_type(url_or_id: str) -> Optional[str]:
     """Detect if a calendar URL/ID is Google or ICS format.
     
     Returns:
-        'google' or 'ics' or None if format is unrecognized
+        'google', 'ics', or None if format is unrecognized
     """
     # Check for ICS URL format
     if url_or_id.startswith(('http://', 'https://')):
+        # Check simple .ics in the URL
         if '.ics' in url_or_id.lower():
             return 'ics'
+        
+        # Fallback detection by checking content-type
         try:
             r = requests.head(url_or_id, timeout=5)
             ct = r.headers.get('Content-Type', '').lower()
-            if 'text/calendar' in ct or 'text/ical' in ct:
+            if any(x in ct for x in ('text/calendar', 'text/ical', 'application/ics', 'application/calendar')):
                 return 'ics'
         except:
             pass
-    
+
     # Google Calendar ID formats:
     # - email format: xxx@group.calendar.google.com
     # - standard format: alphanumeric_with_dashes@group.calendar.google.com
