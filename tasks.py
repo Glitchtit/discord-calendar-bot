@@ -514,6 +514,8 @@ async def initialize_event_snapshots():
                     logger.debug(f"Initial snapshot saved for '{tag}' with {len(all_events)} events")
                 else:
                     logger.warning(f"No events found for tag '{tag}' during initialization")
+                    save_current_events_for_key(meta["server_id"], f"{tag}_full", [])
+                    logger.debug(f"Empty initial snapshot saved for '{tag}'")
             except Exception as e:
                 failed += 1
                 logger.exception(f"Error initializing snapshot for tag {tag}: {e}")
