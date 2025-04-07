@@ -10,7 +10,8 @@ from ics import Calendar as ICS_Calendar
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from environ import GOOGLE_APPLICATION_CREDENTIALS, CALENDAR_SOURCES, USER_TAG_MAPPING
+from environ import GOOGLE_APPLICATION_CREDENTIALS
+from server_config import get_all_server_ids, load_server_config
 from log import logger
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -43,71 +44,29 @@ except Exception as e:
     service = None  # Will trigger fallback behavior in functions
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# ║ 👥 Tag Mapping (User ID → Tag)                                     ║
+# ║ 🧰 Service Account Info                                           ║
 # ╚════════════════════════════════════════════════════════════════════╝
-def get_user_tag_mapping() -> Dict[int, str]:
-    """Parse USER_TAG_MAPPING into a dictionary of user IDs to tags with robust error handling."""
+def get_service_account_email() -> str:
+    """Get the service account email for sharing Google Calendars."""
     try:
-        mapping = {}
-        
-        # Handle None or empty case
-        if not USER_TAG_MAPPING:
-            logger.warning("USER_TAG_MAPPING is empty or not set")
-            return {}
+        if not os.path.exists(SERVICE_ACCOUNT_FILE):
+            return "Service account file not found"
             
-        entries = [entry.strip() for entry in USER_TAG_MAPPING.split(",") if entry.strip()]
-        
-        if not entries:
-            logger.warning("No valid entries found in USER_TAG_MAPPING")
-            return {}
-            
-        for entry in entries:
-            try:
-                if ":" not in entry:
-                    logger.warning(f"Skipping invalid tag mapping (missing colon): '{entry}'")
-                    continue
-                    
-                parts = entry.split(":", 1)
-                if len(parts) != 2:
-                    logger.warning(f"Skipping invalid tag mapping format: '{entry}'")
-                    continue
-                    
-                user_id_str, tag = parts
-                
-                # Validate user_id is numeric
-                if not user_id_str.strip().isdigit():
-                    logger.warning(f"Invalid user ID (non-numeric) in USER_TAG_MAPPING: '{entry}'")
-                    continue
-                    
-                user_id = int(user_id_str.strip())
-                tag = tag.strip().upper()
-                
-                # Validate tag is not empty
-                if not tag:
-                    logger.warning(f"Empty tag for user ID {user_id}, skipping")
-                    continue
-                    
-                mapping[user_id] = tag
-                logger.debug(f"Mapped user {user_id} to tag {tag}")
-                
-            except ValueError:
-                logger.warning(f"Invalid user ID format in USER_TAG_MAPPING: '{entry}'")
-            except Exception as e:
-                logger.warning(f"Error processing tag mapping entry '{entry}': {e}")
-                
-        if not mapping:
-            logger.warning("No valid user-tag mappings found")
-            
-        return mapping
+        with open(SERVICE_ACCOUNT_FILE, 'r') as f:
+            service_info = json.load(f)
+            return service_info.get('client_email', 'Email not found in credentials')
     except Exception as e:
-        logger.exception(f"Error in get_user_tag_mapping: {e}")
-        return {}
+        logger.exception(f"Error reading service account email: {e}")
+        return "Error reading service account info"
 
-USER_TAG_MAP = get_user_tag_mapping()
-
-# Populated during bot startup
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 👥 Server Config Based Calendar Loading                           ║
+# ╚════════════════════════════════════════════════════════════════════╝
+# Populated from server config files during bot startup
+GROUPED_CALENDARS = {}
 TAG_NAMES = {}
 TAG_COLORS = {}
+USER_TAG_MAP = {}
 
 def get_name_for_tag(tag: str) -> str:
     """Get a display name for a tag with fallback to the tag itself."""
@@ -121,68 +80,59 @@ def get_color_for_tag(tag: str) -> int:
         return 0x95a5a6  # Default gray
     return TAG_COLORS.get(tag, 0x95a5a6)
 
-# ╔════════════════════════════════════════════════════════════════════╗
-# ║ 📦 Calendar Source Parsing                                         ║
-# ║ Parses CALENDAR_SOURCES into structured source info               ║
-# ╚════════════════════════════════════════════════════════════════════╝
-def parse_calendar_sources() -> List[Tuple[str, str, str]]:
-    """Parse CALENDAR_SOURCES with robust validation and error handling."""
-    parsed = []
+def load_calendars_from_server_configs():
+    """Load all calendar configurations from server JSON files."""
+    global GROUPED_CALENDARS, USER_TAG_MAP
     
-    # Handle empty/None case
-    if not CALENDAR_SOURCES:
-        logger.warning("CALENDAR_SOURCES is empty or not set")
-        return []
+    GROUPED_CALENDARS = {}
+    USER_TAG_MAP = {}
     
-    entries = [entry.strip() for entry in CALENDAR_SOURCES.split(",") if entry.strip()]
-    
-    if not entries:
-        logger.warning("No valid entries found in CALENDAR_SOURCES")
-        return []
+    server_ids = get_all_server_ids()
+    if not server_ids:
+        logger.warning("No server configurations found. Please use /setup to configure calendars.")
+        return
         
-    for entry in entries:
-        try:
-            # Check for valid prefix
-            if not (entry.startswith("google:") or entry.startswith("ics:")):
-                logger.warning(f"Skipping invalid calendar source (unknown type): '{entry}'")
-                continue
-                
-            prefix, rest = entry.split(":", 1)
-            
-            # Check for valid format (needs second colon for tag)
-            if ":" not in rest:
-                logger.warning(f"Skipping invalid calendar source (missing tag): '{entry}'")
-                continue
-                
-            id_or_url, tag = rest.rsplit(":", 1)
-            id_or_url = id_or_url.strip()
-            tag = tag.strip().upper()
-            
-            # Validate parts aren't empty
-            if not id_or_url:
-                logger.warning(f"Empty calendar ID/URL in source: '{entry}'")
-                continue
-                
+    logger.info(f"Loading calendar configurations from {len(server_ids)} servers...")
+    
+    for server_id in server_ids:
+        config = load_server_config(server_id)
+        calendars = config.get("calendars", [])
+        user_mappings = config.get("user_mappings", {})
+        
+        # Add user mappings
+        for tag, user_id in user_mappings.items():
+            try:
+                USER_TAG_MAP[int(user_id)] = tag
+            except ValueError:
+                logger.warning(f"Invalid user ID {user_id} in server {server_id} config")
+        
+        # Add calendars
+        for calendar in calendars:
+            tag = calendar.get("tag")
             if not tag:
-                logger.warning(f"Empty tag for calendar {id_or_url}, using 'MISC' instead")
-                tag = "MISC"
+                logger.warning(f"Calendar missing tag in server {server_id} config, skipping")
+                continue
                 
-            # Additional URL validation for ICS sources
-            if prefix == "ics":
-                if not (id_or_url.startswith("http://") or id_or_url.startswith("https://")):
-                    logger.warning(f"Invalid ICS URL format: '{id_or_url}', skipping")
-                    continue
-                    
-            parsed.append((prefix, id_or_url, tag))
-            logger.debug(f"Parsed calendar source: {prefix}:{id_or_url} (tag={tag})")
-                
-        except Exception as e:
-            logger.warning(f"Error parsing calendar source '{entry}': {e}")
+            # Convert to the format expected by the rest of the code
+            calendar_meta = {
+                "type": calendar.get("type", "google"),
+                "id": calendar.get("id", ""),
+                "name": calendar.get("name", "Unknown Calendar"),
+                "tag": tag,
+                "server_id": server_id
+            }
             
-    if not parsed:
-        logger.warning("No valid calendar sources found")
-        
-    return parsed
+            GROUPED_CALENDARS.setdefault(tag, []).append(calendar_meta)
+    
+    # Log summary of loaded calendars
+    total_calendars = sum(len(cals) for cals in GROUPED_CALENDARS.values())
+    logger.info(f"Loaded {total_calendars} calendars across {len(GROUPED_CALENDARS)} tags")
+    
+    for tag, calendars in GROUPED_CALENDARS.items():
+        logger.debug(f"Tag {tag}: {len(calendars)} calendars")
+
+# Remaining functions from events.py stay the same, but we'll change the old 
+# parse_calendar_sources and get_user_tag_mapping functions to be deprecated
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔁 retry_api_call                                                  ║
@@ -359,23 +309,12 @@ def fetch_ics_calendar_metadata(url: str) -> Dict[str, Any]:
 # ║ Groups calendar sources by tag and loads them into memory         ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def load_calendar_sources():
-    try:
-        logger.info("Loading calendar sources...")
-        grouped = {}
-        for ctype, cid, tag in parse_calendar_sources():
-            try:
-                meta = fetch_google_calendar_metadata(cid) if ctype == "google" else fetch_ics_calendar_metadata(cid)
-                meta["tag"] = tag
-                grouped.setdefault(tag, []).append(meta)
-                logger.debug(f"Calendar loaded: {meta}")
-            except Exception as e:
-                logger.exception(f"Error loading calendar source {cid} for tag {tag}: {e}")
-        return grouped
-    except Exception as e:
-        logger.exception(f"Error in load_calendar_sources: {e}")
-        return {}
-
-GROUPED_CALENDARS = load_calendar_sources()
+    """DEPRECATED: Use load_calendars_from_server_configs() instead.
+    This function is kept for backward compatibility and now just calls
+    the new server-config based loading function."""
+    logger.warning("load_calendar_sources() is deprecated. Use load_calendars_from_server_configs() instead.")
+    load_calendars_from_server_configs()
+    return GROUPED_CALENDARS
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 💾 Event Snapshot Persistence                                      ║
@@ -504,3 +443,14 @@ def compute_event_fingerprint(event: dict) -> str:
     except Exception as e:
         logger.exception(f"Error computing event fingerprint: {e}")
         return ""
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ ⚠️ Legacy Functions (Deprecated)                                   ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def parse_calendar_sources():
+    """DEPRECATED: Returns an empty list for backward compatibility."""
+    logger.warning("parse_calendar_sources() is deprecated. Use load_calendars_from_server_configs() instead.")
+    return []
+
+# Initialize calendars on module load
+load_calendars_from_server_configs()

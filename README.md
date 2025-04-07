@@ -68,6 +68,21 @@ DEBUG=true
 
 ---
 
+## ⚙️ Server-Specific Configuration (New Method)
+
+CalendarBot now uses server-specific configuration files instead of environment variables:
+
+1. Use the `/setup add` command to add calendars (requires Admin permission)
+2. Each server maintains its own set of calendars and user mappings
+3. Configurations are stored in `/data/servers/{server_id}.json`
+
+Example:
+```bash
+/setup add calendar_url:your_calendar_id@group.calendar.google.com user:@username
+```
+
+---
+
 ## 🐋 Running with Docker
 
 ### 1. Build and Run

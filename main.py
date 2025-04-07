@@ -12,8 +12,7 @@ from bot import bot
 from environ import (
     DISCORD_BOT_TOKEN, 
     ANNOUNCEMENT_CHANNEL_ID, 
-    GOOGLE_APPLICATION_CREDENTIALS, 
-    CALENDAR_SOURCES
+    GOOGLE_APPLICATION_CREDENTIALS
 )
 from log import logger, get_log_file_location
 
@@ -37,9 +36,8 @@ def validate_environment() -> bool:
         missing_vars.append("ANNOUNCEMENT_CHANNEL_ID")
     elif ANNOUNCEMENT_CHANNEL_ID == 0:
         logger.warning("ANNOUNCEMENT_CHANNEL_ID is set to default value (0). Bot may not post messages.")
-        
-    if not CALENDAR_SOURCES:
-        missing_vars.append("CALENDAR_SOURCES")
+    
+    # Note: CALENDAR_SOURCES is no longer required as we use server-specific configurations
     
     # Check if Google credentials file exists
     if not os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
@@ -129,14 +127,22 @@ def setup_watchdog():
 # ╚════════════════════════════════════════════════════════════════════╝
 def display_startup_info():
     """Display information about the bot's configuration."""
+    import sys
+    import os
+    from server_config import get_all_server_ids
+    
     logger.info("========== Calendar Bot Starting ==========")
     logger.info(f"Python version: {sys.version}")
     logger.info(f"Log file: {get_log_file_location()}")
     logger.info(f"Working directory: {os.getcwd()}")
     
-    # Calendar and environment info
-    calendar_count = len(CALENDAR_SOURCES.split(",")) if CALENDAR_SOURCES else 0
-    logger.info(f"Configured calendars: {calendar_count}")
+    # Calendar configuration info using server configs
+    server_ids = get_all_server_ids()
+    logger.info(f"Configured servers: {len(server_ids)}")
+    if server_ids:
+        logger.info(f"Server IDs: {', '.join(str(sid) for sid in server_ids)}")
+    else:
+        logger.warning("No servers configured. Use /setup to add calendars.")
     
     # Discord connection info
     logger.info("Discord connection: Establishing...")
