@@ -235,7 +235,8 @@ async def watch_for_event_changes(bot):
 
                 # Compare with previous snapshot
                 key = f"{tag}_full"
-                prev_snapshot = load_previous_events().get(key, [])
+                server_id = calendars[0]["server_id"]
+                prev_snapshot = load_previous_events(server_id).get(key, [])
                 
                 # Create fingerprints, with added error handling
                 prev_fps = {}
