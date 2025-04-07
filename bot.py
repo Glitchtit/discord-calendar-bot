@@ -703,8 +703,8 @@ class CalendarRemoveView(View):
                 display_id = cal_id
                 
             select.add_option(
-                label=cal_name,
-                value=cal_id,
+                label=cal_name[:80] if len(cal_name) > 80 else cal_name,
+                value=cal_id[:100] if len(cal_id) > 100 else cal_id,
                 description=f"ID: {display_id}"
             )
             
