@@ -103,13 +103,14 @@ async def on_ready():
         synced = await bot.tree.sync()
         logger.info(f"Synced {len(synced)} commands.")
 
-        # Add commands from commands.py
-        bot.tree.add_command(agenda)
-        bot.tree.add_command(greet)
-        bot.tree.add_command(reload)
-        bot.tree.add_command(who)
-        bot.tree.add_command(daily)
-        bot.tree.add_command(setup)
+        # Add command handlers
+        bot.tree.add_command(herald_command)
+        bot.tree.add_command(agenda_command)
+        bot.tree.add_command(greet_command)
+        bot.tree.add_command(reload_command)
+        bot.tree.add_command(who_command)
+        bot.tree.add_command(daily_command)
+        bot.tree.add_command(setup_command)
 
         bot.is_initialized = True
         logger.info("Bot initialization completed successfully")
