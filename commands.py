@@ -246,54 +246,22 @@ async def post_tagged_events(bot, user_id: str, day: datetime.date) -> bool:
         if not events_by_source:
             logger.debug(f"Skipping {user_id} — no events for {day}")
             return False
-            
-        embed = discord.Embed(
-            title=f"🗓️ Herald's Scroll — {user_id}",
-            description=f"Events for **{day.strftime('%A, %B %d')}**",
-            color=get_color_for_tag(user_id)
-        )
 
-        # Add mention for the user ID
-        mention = f"<@{user_id}>"
-        await send_embed(bot, embed=embed, content=f"{mention}")
-
+        # Construct plain text message
+        message_lines = [f"🗓️ **Today's Events for {day.strftime('%A, %B %d')}**"]
         for source_name, events in sorted(events_by_source.items()):
             if not events:
                 continue
 
-            formatted_events = []
-            total_length = 0
-            MAX_FIELD_LENGTH = 900  # Discord limit is 1024, leave buffer
-            
+            message_lines.append(f"\n📖 **{source_name}**")
             for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
-                start = e["start"].get("dateTime", e["start"].get("date"))
-                end = e["end"].get("dateTime", e["end"].get("date"))
-                if start and end:
-                    start_date = datetime.fromisoformat(start.replace("Z", "+00:00")).date()
-                    end_date = datetime.fromisoformat(end.replace("Z", "+00:00")).date()
-                    if start_date != end_date:
-                        event_text = f" {format_event(e)} (Multi-day: {start_date} to {end_date})"
-                    else:
-                        event_text = f" {format_event(e)}"
-                else:
-                    event_text = f" {format_event(e)}"
+                message_lines.append(f" {format_event(e)}")
 
-                if total_length + len(event_text) > MAX_FIELD_LENGTH:
-                    formatted_events.append("... and more events (truncated)")
-                    break
-                formatted_events.append(event_text)
-                total_length += len(event_text)
-
-            embed.add_field(
-                name=f"📖 {source_name}",
-                value="\n".join(formatted_events) + "\n\u200b",
-                inline=False
-            )
-
-        embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
-        await send_embed(bot, embed=embed)
+        # Send the message to the user
+        user = await bot.fetch_user(user_id)
+        await user.send("\n".join(message_lines))
         return True
-        
+
     except Exception as e:
         logger.exception(f"Error in post_tagged_events for user ID {user_id} on {day}: {e}")
         return False
@@ -304,86 +272,60 @@ async def post_tagged_events(bot, user_id: str, day: datetime.date) -> bool:
 # ╚════════════════════════════════════════════════════════════════════╝
 async def post_tagged_week(bot, user_id: str, monday: datetime.date):
     try:
+        events_by_day = defaultdict(list)
         calendars = GROUPED_CALENDARS.get(user_id)
         if not calendars:
-            logger.warning(f"No calendars for user ID {user_id}")
+            logger.warning(f"No calendars found for user ID: {user_id}")
             return
 
-        end = monday + timedelta(days=6)
-        all_events = []
         for meta in calendars:
-            events = get_events(meta, monday, end)
-            if not events:
-                events = []
-            all_events += events
+            try:
+                events = get_events(meta, monday, monday + timedelta(days=6))
+                if not events:
+                    events = []
+                for e in events:
+                    start_str = e["start"].get("dateTime", e["start"].get("date"))
+                    end_str = e["end"].get("dateTime", e["end"].get("date"))
+                    start_date = datetime.fromisoformat(start_str.replace("Z", "+00:00")).date()
+                    end_date = datetime.fromisoformat(end_str.replace("Z", "+00:00")).date() if end_str else None
 
-        if not all_events:
-            logger.debug(f"Skipping {user_id} — no weekly events from {monday} to {end}")
-            return
+                    if start_date and end_date and start_date != end_date:
+                        # Add multi-day events to all relevant days
+                        current_date = start_date
+                        while current_date <= end_date:
+                            events_by_day[current_date].append(e)
+                            current_date += timedelta(days=1)
+                    elif start_date:
+                        events_by_day[start_date].append(e)
+            except Exception as e:
+                logger.exception(f"Error getting events for calendar {meta['name']}: {e}")
 
-        events_by_day = defaultdict(list)
-        for e in all_events:
-            start_str = e["start"].get("dateTime", e["start"].get("date"))
-            end_str = e["end"].get("dateTime", e["end"].get("date"))
-            start_date = datetime.fromisoformat(start_str.replace("Z", "+00:00")).date() if start_str else None
-            end_date = datetime.fromisoformat(end_str.replace("Z", "+00:00")).date() if end_str else None
-
-            if start_date and end_date and start_date != end_date:
-                # Add multi-day events to all relevant days
-                current_date = start_date
-                while current_date <= end_date:
-                    events_by_day[current_date].append(e)
-                    current_date += timedelta(days=1)
-            elif start_date:
-                events_by_day[start_date].append(e)
-
-        # Resolve user mention from user_mappings
-        from server_config import load_server_config
-        server_config = load_server_config(bot.guilds[0].id)  # Assuming single guild context
-        user_id = server_config.get("user_mappings", {}).get(user_id, None)
-        mention = f"<@{user_id}>" if user_id else "@everyone"
-
-        embed = discord.Embed(
-            title=f"📜 Herald’s Week — {mention}",
-            description=f"Week of **{monday.strftime('%B %d')}**",
-            color=get_color_for_tag(user_id)
-        )
-
+        # Construct plain text message
+        message_lines = [f"📜 **Weekly Events for the Week of {monday.strftime('%B %d')}**"]
         for i in range(7):
             day = monday + timedelta(days=i)
             day_events = events_by_day.get(day, [])
             if not day_events:
                 continue
 
-            formatted_events = [
-                f" {format_event(e)}"
-                for e in sorted(day_events, key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
-            ]
+            message_lines.append(f"\n📅 **{day.strftime('%A')}**")
+            for e in sorted(day_events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
+                message_lines.append(f" {format_event(e)}")
 
-            embed.add_field(
-                name=f"📅 {day.strftime('%A')}",
-                value="\n".join(formatted_events) + "\n\u200b",
-                inline=False
-            )
+        # Send the message to the user
+        user = await bot.fetch_user(user_id)
+        await user.send("\n".join(message_lines))
 
-        embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
-        await send_embed(bot, embed=embed, content=f"{mention}")
     except Exception as e:
-        logger.exception(f"Error in post_tagged_week for user ID {user_id} starting {monday}: {e}")
+        logger.exception(f"Error in post_tagged_week for user ID {user_id}: {e}")
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 📅 /agenda [date] — Returns events for a specific date
 # ╚════════════════════════════════════════════════════════════════════╝
-@app_commands.command(name="agenda2", description="See events for a specific date (natural language supported)")
+@app_commands.command(name="agenda", description="See events for a specific date (natural language supported)")
 @app_commands.describe(date="Examples: today, tomorrow, next Thursday")
 async def agenda(interaction: discord.Interaction, date: str) -> None:
-    """
-    Accepts a natural-language date string, resolves it to a day, and
-    fetches all events from all calendars for that day.
-
-    Usage: /agenda <natural-language-date>
-    """
     await interaction.response.defer()
     logger.info(f"[commands.py] 📅 /agenda called by {interaction.user} with date '{date}'")
 
@@ -407,16 +349,14 @@ async def agenda(interaction: discord.Interaction, date: str) -> None:
             await interaction.followup.send(f"No events found for `{date}`.")
             return
 
-        embed = discord.Embed(
-            title=f"🗓️ Agenda for {interaction.user.display_name} on {day.strftime('%A, %d %B %Y')}",
-            color=0x3498db,
-            description="\n\n".join(format_event(e) for e in all_events)
-        )
-        embed.set_footer(text=f"{len(all_events)} event(s)")
+        # Construct plain text message
+        message_lines = [f"🗓️ **Agenda for {interaction.user.display_name} on {day.strftime('%A, %d %B %Y')}**"]
+        for e in all_events:
+            message_lines.append(f" {format_event(e)}")
 
-        mention = f"<@{interaction.user.id}>"
-        await send_embed(bot=interaction.client, embed=embed, content=f"{mention}")
-        logger.info("[commands.py] ✅ Agenda command posted events successfully.")
+        # Send the message to the user
+        await interaction.user.send("\n".join(message_lines))
+        await interaction.followup.send("Agenda sent to your DMs.")
 
     except Exception as e:
         logger.exception("[commands.py] Error in /agenda command.", exc_info=e)

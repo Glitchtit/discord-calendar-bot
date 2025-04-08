@@ -276,16 +276,18 @@ async def watch_for_event_changes(bot):
                             lines.append("**📤 Removed Events This Week:**")
                             lines += [f"➖ {format_event(e)}" for e in removed_week]
 
+                        # Update embed formatting
                         await send_embed(
                             bot,
-                            title=f"📣 Event Changes – User {meta['user_id']}",  # Use user_id from meta
+                            title="📣 Event Changes",
                             description="\n".join(lines),
-                            color=0x3498db  # Default color
+                            color=0x3498db,  # Default color
+                            content=f"<@{meta['user_id']}>"  # Mention user in content
                         )
-                        logger.info(f"Detected changes for user ID '{meta['user_id']}', snapshot updated.")  # Use user_id
+                        logger.info(f"Detected changes for user ID '{meta['user_id']}', snapshot updated.")
                         save_current_events_for_key(meta["server_id"], f"{meta['user_id']}_full", all_events)
                     except Exception as e:
-                        logger.exception(f"Error posting changes for tag {tag}: {e}")
+                        logger.exception(f"Error posting changes for user ID '{meta['user_id']}': {e}")
                 else:
                     # Only save if we have data and it differs from previous
                     if all_events and (len(all_events) != len(prev_snapshot)):
@@ -432,24 +434,13 @@ async def post_todays_happenings(bot, include_greeting: bool = False):
                     )
 
                     if greeting:
-                        # Generate image with timeout
-                        image_path = None
-                        try:
-                            image_path = await asyncio.wait_for(
-                                asyncio.to_thread(generate_image, greeting, persona),
-                                timeout=60
-                            )
-                        except asyncio.TimeoutError:
-                            logger.warning("Image generation timed out, continuing without image")
-                        
-                        # Send the greeting embed
-                        await send_embed(
-                            bot,
-                            title=f"The Morning Proclamation 📜 — {persona}",
-                            description=greeting,
-                            color=0xffe4b5,
-                            image_path=image_path
-                        )
+                        # Send the greeting as a plain text message
+                        for member in guild.members:
+                            if not member.bot:
+                                try:
+                                    await member.send(f"The Morning Proclamation 📜 — {persona}\n\n{greeting}")
+                                except Exception as e:
+                                    logger.warning(f"Failed to send greeting to {member.display_name}: {e}")
                     break  # Success, exit retry loop
                     
                 except asyncio.TimeoutError:
