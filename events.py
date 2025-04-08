@@ -20,7 +20,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from environ import GOOGLE_APPLICATION_CREDENTIALS
-from server_config import get_all_server_ids, load_server_config
+from server_config import get_all_server_ids, load_server_config, save_server_config
 from log import logger
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -99,9 +99,27 @@ def load_calendars_from_server_configs():
     global GROUPED_CALENDARS
     GROUPED_CALENDARS.clear()  # Clear existing calendars
 
+    # Track problematic calendars for logging
+    missing_user_id_count = 0
+    
     for server_id in get_all_server_ids():
         config = load_server_config(server_id)
         for calendar in config.get("calendars", []):
+            # Skip calendars without user_id instead of crashing
+            if "user_id" not in calendar:
+                missing_user_id_count += 1
+                logger.warning(f"Calendar in server {server_id} missing user_id field: {calendar.get('name', 'Unnamed')}, ID: {calendar.get('id', 'Unknown')}")
+                # Attempt to fix the config by adding a default user_id
+                try:
+                    # Use the server_id as a fallback user_id
+                    calendar["user_id"] = str(server_id)
+                    # Save the updated config back to disk
+                    save_server_config(server_id, config)
+                    logger.info(f"Added default user_id to calendar in server {server_id}")
+                except Exception as e:
+                    logger.error(f"Failed to update calendar in server {server_id}: {e}")
+                    continue
+            
             user_id = calendar["user_id"]
             if user_id not in GROUPED_CALENDARS:
                 GROUPED_CALENDARS[user_id] = []
@@ -109,10 +127,14 @@ def load_calendars_from_server_configs():
                 "server_id": server_id,
                 "type": calendar["type"],
                 "id": calendar["id"],
-                "name": calendar.get("name", "Unnamed Calendar")
+                "name": calendar.get("name", "Unnamed Calendar"),
+                "user_id": user_id  # Make sure this is included in the meta
             })
 
-    logger.info(f"Loaded {len(GROUPED_CALENDARS)} user-specific calendars from server configurations.")
+    calendar_count = sum(len(calendars) for calendars in GROUPED_CALENDARS.values())
+    logger.info(f"Loaded {len(GROUPED_CALENDARS)} user-specific calendars ({calendar_count} total calendars) from server configurations.")
+    if missing_user_id_count > 0:
+        logger.warning(f"Fixed {missing_user_id_count} calendars with missing user_id field.")
 
 # Remaining functions from events.py stay the same, but we'll change the old 
 # parse_calendar_sources and get_user_tag_mapping functions to be deprecated
