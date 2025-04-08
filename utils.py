@@ -336,9 +336,33 @@ def load_server_config(server_id: int) -> Dict[str, Any]:
     return {"calendars": [], "user_mappings": {}}
 
 
-def add_calendar(server_id, calendar_data):
-    """Adds a calendar to the server configuration."""
-    # ...implementation for adding a calendar...
+def add_calendar(server_id: int, calendar_data: dict) -> bool:
+    """
+    Adds a calendar to the server configuration.
+    Returns True if successful, False otherwise.
+    """
+    try:
+        # Load the server configuration
+        config = load_server_config(server_id)
+        calendars = config.get("calendars", [])
+        
+        # Check if the calendar already exists
+        if any(calendar.get("id") == calendar_data.get("id") for calendar in calendars):
+            logger.warning(f"Calendar with ID {calendar_data.get('id')} already exists for server {server_id}.")
+            return False
+        
+        # Add the new calendar
+        calendars.append(calendar_data)
+        config["calendars"] = calendars
+        
+        # Save the updated configuration
+        with open(f"./data/servers/{server_id}.json", "w", encoding="utf-8") as file:
+            json.dump(config, file, indent=4)
+        return True
+    except Exception as e:
+        logger.exception(f"Error adding calendar {calendar_data.get('id')} for server {server_id}: {e}")
+        return False
+
 
 def remove_calendar(server_id: int, calendar_id: str) -> bool:
     """
