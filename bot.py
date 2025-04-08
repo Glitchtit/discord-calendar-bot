@@ -155,7 +155,7 @@ async def on_resumed():
 )
 async def herald_command(interaction: discord.Interaction):
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)  # Make the response ephemeral
         today = get_today()
         monday = get_monday_of_week(today)
         
@@ -260,7 +260,6 @@ async def herald_command(interaction: discord.Interaction):
             current_chunk = weekly_header
             
             for part in weekly_message_parts:
-                # Discord has a 2000 character limit per message
                 if len(current_chunk) + len(part) > 1900:
                     weekly_chunks.append(current_chunk)
                     current_chunk = part
@@ -270,9 +269,9 @@ async def herald_command(interaction: discord.Interaction):
             if current_chunk != weekly_header:
                 weekly_chunks.append(current_chunk)
             
-            # Send all weekly chunks except the first (which is just the header)
+            # Send all weekly chunks
             for chunk in weekly_chunks[1:]:
-                await interaction.user.send(chunk)
+                await interaction.followup.send(chunk, ephemeral=True)  # Send as ephemeral messages
         
         # Then send all daily messages
         if daily_message_parts:
@@ -290,15 +289,15 @@ async def herald_command(interaction: discord.Interaction):
             if current_chunk != daily_header:
                 daily_chunks.append(current_chunk)
             
-            # Send all daily chunks except the first (which is just the header)
+            # Send all daily chunks
             for chunk in daily_chunks[1:]:
-                await interaction.user.send(chunk)
+                await interaction.followup.send(chunk, ephemeral=True)  # Send as ephemeral messages
         
         # Confirmation message
-        await interaction.followup.send("Herald events for all users have been sent to your DMs.")
+        await interaction.followup.send("Herald events for all users have been sent.", ephemeral=True)
     except Exception as e:
         logger.exception(f"Error in /herald command: {e}")
-        await interaction.followup.send("An error occurred while posting the herald.")
+        await interaction.followup.send("An error occurred while posting the herald.", ephemeral=True)
 
 
 # ╔═════════════════════════════════════════════════════════════╗
@@ -376,13 +375,13 @@ async def autocomplete_agenda_target(
 @app_commands.autocomplete(input=autocomplete_agenda_input, target=autocomplete_agenda_target)
 async def agenda_command(interaction: discord.Interaction, input: str, target: str = ""):
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)  # Make the response ephemeral
 
         today = get_today()
         tags = resolve_input_to_tags(target, TAG_NAMES, GROUPED_CALENDARS) if target.strip() else list(GROUPED_CALENDARS.keys())
 
         if not tags:
-            await interaction.followup.send("No matching tags or names found.")
+            await interaction.followup.send("No matching tags or names found.", ephemeral=True)
             return
 
         any_posted = False
@@ -400,7 +399,7 @@ async def agenda_command(interaction: discord.Interaction, input: str, target: s
         else:
             parsed = dateparser.parse(input)
             if not parsed:
-                await interaction.followup.send("Could not understand the date. Try 'today', 'week', or a real date.")
+                await interaction.followup.send("Could not understand the date. Try 'today', 'week', or a real date.", ephemeral=True)
                 return
             day = parsed.date()
             for tag in tags:
@@ -410,12 +409,12 @@ async def agenda_command(interaction: discord.Interaction, input: str, target: s
 
         tag_names = ", ".join(TAG_NAMES.get(t, t) for t in tags)
         if any_posted:
-            await interaction.followup.send(f"Agenda posted for **{tag_names}** on **{label}**.")
+            await interaction.followup.send(f"Agenda posted for **{tag_names}** on **{label}**.", ephemeral=True)
         else:
-            await interaction.followup.send(f"No events found for **{tag_names}** on **{label}**.")
+            await interaction.followup.send(f"No events found for **{tag_names}** on **{label}**.", ephemeral=True)
     except Exception as e:
         logger.exception(f"Error in /agenda command: {e}")
-        await interaction.followup.send("An error occurred while processing the agenda.")
+        await interaction.followup.send("An error occurred while processing the agenda.", ephemeral=True)
 
 
 # ╔═════════════════════════════════════════════════════════════╗
