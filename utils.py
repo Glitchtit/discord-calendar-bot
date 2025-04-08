@@ -228,3 +228,44 @@ def is_in_current_week(event: dict, reference: date = None) -> bool:
     except Exception as e:
         logger.exception(f"Error checking if event is in current week: {e}")
         return False
+
+
+def resolve_input_to_tags(input_text: str, tag_names: dict, grouped_calendars: dict) -> list:
+    """
+    Resolves user input text to a list of calendar tags.
+    
+    Args:
+        input_text: The text to resolve (could be a tag ID, display name, or partial match)
+        tag_names: Dictionary mapping tag IDs to display names
+        grouped_calendars: Dictionary of available calendars grouped by tag
+        
+    Returns:
+        List of matching tag IDs
+    """
+    if not input_text or not input_text.strip():
+        return list(grouped_calendars.keys())
+    
+    input_lower = input_text.lower().strip()
+    matches = []
+    
+    # Check for exact match with tag ID first
+    if input_text in grouped_calendars:
+        return [input_text]
+    
+    # Look for matches in tag names (case-insensitive)
+    for tag_id, name in tag_names.items():
+        if input_lower == name.lower():
+            return [tag_id]  # Exact display name match
+        if input_lower in name.lower():
+            matches.append(tag_id)  # Partial display name match
+    
+    # If we found partial matches, return those
+    if matches:
+        return matches
+    
+    # Try partial matches with tag IDs as a last resort
+    for tag_id in grouped_calendars:
+        if input_lower in str(tag_id).lower():
+            matches.append(tag_id)
+    
+    return matches
