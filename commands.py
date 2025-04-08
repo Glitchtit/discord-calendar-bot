@@ -234,11 +234,13 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
 # ║ Sends an embed of events for a specific tag on a given day        ║
 # ║ Returns True if events were posted, False otherwise               ║
 # ╚════════════════════════════════════════════════════════════════════╝
-async def post_tagged_events(bot, user_id: str, day: datetime.date) -> bool:
+async def post_tagged_events(interaction: discord.Interaction, day: datetime.date) -> bool:
     try:
+        user_id = str(interaction.user.id)
         calendars = GROUPED_CALENDARS.get(user_id)
         if not calendars:
             logger.warning(f"No calendars found for user ID: {user_id}")
+            await interaction.followup.send("No calendars found for your account.", ephemeral=True)
             return False
 
         events_by_source = defaultdict(list)
@@ -254,13 +256,11 @@ async def post_tagged_events(bot, user_id: str, day: datetime.date) -> bool:
 
         if not events_by_source:
             logger.debug(f"Skipping {user_id} — no events for {day}")
+            await interaction.followup.send(f"No events found for {day.strftime('%A, %B %d')}.", ephemeral=True)
             return False
 
-        # Construct formatted message with user mention
-        user_mention = f"<@{user_id}>"
-        user_name = TAG_NAMES.get(user_id, "User")
-        
-        message_lines = [f"🗓️ **Today's Events for {user_mention} — {day.strftime('%A, %B %d')}**\n"]
+        # Construct formatted message
+        message_lines = [f"🗓️ **Today's Events for {interaction.user.mention} — {day.strftime('%A, %B %d')}**\n"]
         for source_name, events in sorted(events_by_source.items()):
             if not events:
                 continue
@@ -269,37 +269,32 @@ async def post_tagged_events(bot, user_id: str, day: datetime.date) -> bool:
                 start_time = e["start"].get("dateTime", e["start"].get("date"))
                 end_time = e["end"].get("dateTime", e["end"].get("date"))
                 summary = e.get("summary", "No Title")
-                
-                # Process summary to replace potential user references with mentions
-                for uid, name in TAG_NAMES.items():
-                    if name in summary:
-                        summary = summary.replace(f"@{name}", f"<@{uid}>")
-                        summary = summary.replace(name, f"<@{uid}>")
-                
                 location = e.get("location", "No Location")
                 message_lines.append(
                     f"```{summary}\nTime: {start_time} - {end_time}\nLocation: {location}```"
                 )
 
-        # Send the message to the user
-        user = await bot.fetch_user(user_id)
-        await user.send("\n".join(message_lines))
+        # Send the message as an ephemeral response
+        await interaction.followup.send("\n".join(message_lines), ephemeral=True)
         return True
 
     except Exception as e:
         logger.exception(f"Error in post_tagged_events for user ID {user_id} on {day}: {e}")
+        await interaction.followup.send("⚠️ An error occurred while fetching events.", ephemeral=True)
         return False
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 📅 /herald [tag] — Posts today's events for a calendar tag
 # ╚════════════════════════════════════════════════════════════════════╝
-async def post_tagged_week(bot, user_id: str, monday: datetime.date):
+async def post_tagged_week(interaction: discord.Interaction, monday: datetime.date):
     try:
+        user_id = str(interaction.user.id)
         events_by_day = defaultdict(list)
         calendars = GROUPED_CALENDARS.get(user_id)
         if not calendars:
             logger.warning(f"No calendars found for user ID: {user_id}")
+            await interaction.followup.send("No calendars found for your account.", ephemeral=True)
             return
 
         for meta in calendars:
@@ -313,15 +308,17 @@ async def post_tagged_week(bot, user_id: str, monday: datetime.date):
 
         if not events_by_day:
             logger.debug(f"Skipping {user_id} — no events for the week starting {monday}")
+            await interaction.followup.send(f"No events found for the week starting {monday.strftime('%A, %B %d')}.", ephemeral=True)
             return
 
         # Use helper function for formatting
         message_lines = format_message_lines(user_id, events_by_day, monday)
-        user = await bot.fetch_user(user_id)
-        await user.send("\n".join(message_lines))
+        await interaction.followup.send("\n".join(message_lines), ephemeral=True)
 
     except Exception as e:
         logger.exception(f"Error in post_tagged_week for user ID {user_id}: {e}")
+        await interaction.followup.send("⚠️ An error occurred while fetching weekly events.", ephemeral=True)
+
 
 # Define or import reload_calendars_and_mappings
 async def reload_calendars_and_mappings():
@@ -532,20 +529,25 @@ async def post_all_daily_events_to_channel(bot, day: datetime.date = None):
 @app_commands.command(name="daily", description="Post today's events for all users to the announcement channel")
 async def daily(interaction: discord.Interaction):
     await interaction.response.defer()
-    logger.info(f"[commands.py] 📅 /daily called by {interaction.user}")
+    logger.info(f"[commands.py] 📅 /daily called by {interaction.user} in guild {interaction.guild.name} (ID: {interaction.guild.id})")
+
+    from environ import ANNOUNCEMENT_CHANNEL_ID
+    if not ANNOUNCEMENT_CHANNEL_ID:
+        await interaction.followup.send("⚠️ Announcement channel is not configured.", ephemeral=True)
+        return
 
     try:
         day = get_today()
         messages_sent = await post_all_daily_events_to_channel(interaction.client, day)
-        
+
         if messages_sent > 0:
-            await interaction.followup.send(f"Posted daily events for {messages_sent} users to the announcement channel.")
+            await interaction.followup.send(f"Posted daily events for {messages_sent} users to the announcement channel.", ephemeral=True)
         else:
-            await interaction.followup.send("No events found for today.")
-            
+            await interaction.followup.send("No events found for today.", ephemeral=True)
+
     except Exception as e:
         logger.exception("[commands.py] Error in /daily command.", exc_info=e)
-        await interaction.followup.send("⚠️ An error occurred while posting daily events.")
+        await interaction.followup.send("⚠️ An error occurred while posting daily events.", ephemeral=True)
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
