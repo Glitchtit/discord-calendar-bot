@@ -190,8 +190,8 @@ else:
                     logger._listener.stop()
                     
                 print("Logging shutdown complete.")
-            except:
-                pass
+            except Exception as e:
+                print(f"Error during logging cleanup: {e}")
                 
         atexit.register(cleanup)
         

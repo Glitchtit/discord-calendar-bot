@@ -45,6 +45,23 @@ def get_today() -> date:
         return datetime.now(tz=tz.UTC).date()
 
 
+def get_monday_of_week(day: date = None) -> date:
+    if day is None:
+        day = get_today()
+    
+    # Ensure we have a date object
+    if isinstance(day, datetime):
+        day = day.date()
+    
+    try:
+        return day - timedelta(days=day.weekday())
+    except Exception as e:
+        logger.exception(f"Error calculating Monday of week for {day}: {e}")
+        # Return today's Monday as fallback
+        today = get_today()
+        return today - timedelta(days=today.weekday())
+
+
 # ╔════════════════════════════════════════════════════════════════════╗
 # ✨ Event Formatting
 # ╚════════════════════════════════════════════════════════════════════╝

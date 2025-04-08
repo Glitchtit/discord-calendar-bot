@@ -374,7 +374,13 @@ async def post_todays_happenings(bot, include_greeting: bool = False):
         # If a greeting is requested, generate and post it
         if include_greeting:
             # Your existing greeting code
-            pass
+            greeting = await generate_greeting()
+            await send_embed(
+                bot,
+                title="🌅 Good Morning!",
+                description=greeting,
+                color=0x00ff00  # Green color for morning greeting
+            )
             
         # Post all daily events to the public channel
         await post_all_daily_events_to_channel(bot, today)
