@@ -6,13 +6,13 @@ plus utilities for sending embeds to a predefined announcement channel.
 import os
 import asyncio
 import random
-import dateparser  # Add missing import
+import dateparser
 from datetime import datetime, timedelta
 from dateutil import tz
 import discord
 from discord import app_commands, errors as discord_errors
 from collections import defaultdict
-from typing import List  # Add this import for type hints
+from typing import List
 
 from events import (
     GROUPED_CALENDARS,
@@ -21,9 +21,15 @@ from events import (
     get_color_for_tag,
     TAG_NAMES
 )
-from utils import format_event  # Add missing import
+from utils import format_event
 from log import logger
-from ai import generate_greeting, generate_image  # Fix function references
+from ai import generate_greeting, generate_image
+
+from datetime import datetime, timedelta
+from collections import defaultdict
+from log import logger
+from events import TAG_NAMES, GROUPED_CALENDARS, get_events
+from utils import get_today, get_monday_of_week
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -241,21 +247,35 @@ async def post_tagged_events(bot, user_id: str, day: datetime.date) -> bool:
                     events_by_source[meta["name"]].append(e)
             except Exception as e:
                 logger.exception(f"Error getting events for {meta['name']}: {e}")
-                # Continue with other calendars even if one fails
 
         if not events_by_source:
             logger.debug(f"Skipping {user_id} — no events for {day}")
             return False
 
-        # Construct plain text message
-        message_lines = [f"🗓️ **Today's Events for {day.strftime('%A, %B %d')}**"]
+        # Construct formatted message with user mention
+        user_mention = f"<@{user_id}>"
+        user_name = TAG_NAMES.get(user_id, "User")
+        
+        message_lines = [f"🗓️ **Today's Events for {user_mention} — {day.strftime('%A, %B %d')}**\n"]
         for source_name, events in sorted(events_by_source.items()):
             if not events:
                 continue
-
-            message_lines.append(f"\n📖 **{source_name}**")
+            message_lines.append(f"**{source_name}**")
             for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
-                message_lines.append(f" {format_event(e)}")
+                start_time = e["start"].get("dateTime", e["start"].get("date"))
+                end_time = e["end"].get("dateTime", e["end"].get("date"))
+                summary = e.get("summary", "No Title")
+                
+                # Process summary to replace potential user references with mentions
+                for uid, name in TAG_NAMES.items():
+                    if name in summary:
+                        summary = summary.replace(f"@{name}", f"<@{uid}>")
+                        summary = summary.replace(name, f"<@{uid}>")
+                
+                location = e.get("location", "No Location")
+                message_lines.append(
+                    f"```{summary}\nTime: {start_time} - {end_time}\nLocation: {location}```"
+                )
 
         # Send the message to the user
         user = await bot.fetch_user(user_id)
@@ -284,33 +304,38 @@ async def post_tagged_week(bot, user_id: str, monday: datetime.date):
                 if not events:
                     events = []
                 for e in events:
-                    start_str = e["start"].get("dateTime", e["start"].get("date"))
-                    end_str = e["end"].get("dateTime", e["end"].get("date"))
-                    start_date = datetime.fromisoformat(start_str.replace("Z", "+00:00")).date()
-                    end_date = datetime.fromisoformat(end_str.replace("Z", "+00:00")).date() if end_str else None
-
-                    if start_date and end_date and start_date != end_date:
-                        # Add multi-day events to all relevant days
-                        current_date = start_date
-                        while current_date <= end_date:
-                            events_by_day[current_date].append(e)
-                            current_date += timedelta(days=1)
-                    elif start_date:
-                        events_by_day[start_date].append(e)
+                    start_date = datetime.fromisoformat(e["start"].get("dateTime", e["start"].get("date"))).date()
+                    events_by_day[start_date].append(e)
             except Exception as e:
                 logger.exception(f"Error getting events for calendar {meta['name']}: {e}")
 
-        # Construct plain text message
-        message_lines = [f"📜 **Weekly Events for the Week of {monday.strftime('%B %d')}**"]
+        # Construct formatted message with user mention
+        user_mention = f"<@{user_id}>"
+        user_name = TAG_NAMES.get(user_id, "User")
+        
+        message_lines = [f"📜 **Weekly Events for {user_mention} — Week of {monday.strftime('%B %d')}**\n"]
         for i in range(7):
             day = monday + timedelta(days=i)
             day_events = events_by_day.get(day, [])
             if not day_events:
                 continue
 
-            message_lines.append(f"\n📅 **{day.strftime('%A')}**")
+            message_lines.append(f"📅 **{day.strftime('%A, %B %d')}**")
             for e in sorted(day_events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
-                message_lines.append(f" {format_event(e)}")
+                start_time = e["start"].get("dateTime", e["start"].get("date"))
+                end_time = e["end"].get("dateTime", e["end"].get("date"))
+                summary = e.get("summary", "No Title")
+                
+                # Process summary to replace potential user references with mentions
+                for uid, name in TAG_NAMES.items():
+                    if name in summary:
+                        summary = summary.replace(f"@{name}", f"<@{uid}>")
+                        summary = summary.replace(name, f"<@{uid}>")
+                
+                location = e.get("location", "No Location")
+                message_lines.append(
+                    f"```{summary}\nTime: {start_time} - {end_time}\nLocation: {location}```"
+                )
 
         # Send the message to the user
         user = await bot.fetch_user(user_id)
