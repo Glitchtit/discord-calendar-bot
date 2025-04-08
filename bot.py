@@ -126,6 +126,13 @@ async def on_ready():
             # Mark as initialized despite error to prevent retry loops
             bot.is_initialized = True
 
+    # Sync commands with Discord when the bot is ready
+    try:
+        await bot.tree.sync()
+        logger.info("✅ Slash commands synced with Discord.")
+    except Exception as e:
+        logger.exception("❌ Failed to sync slash commands.", exc_info=e)
+
 
 # ╔═════════════════════════════════════════════════════════════╗
 # ║ 🔌 on_disconnect                                            ║
