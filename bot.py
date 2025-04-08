@@ -40,6 +40,13 @@ from commands import (
     post_tagged_events,
     post_tagged_week,
     send_embed,
+    handle_herald_command,
+    handle_agenda_command,
+    handle_greet_command,
+    handle_reload_command,
+    handle_who_command,
+    handle_daily_command,
+    handle_setup_command
 )
 from tasks import initialize_event_snapshots, start_all_tasks, post_todays_happenings
 from utils import get_today, get_monday_of_week, resolve_input_to_tags
@@ -137,163 +144,50 @@ async def on_resumed():
     description="Get a summary of all users' weekly and daily events"
 )
 async def herald_command(interaction: discord.Interaction):
-    try:
-        await interaction.response.defer(ephemeral=True)  # Make the response ephemeral
-        today = get_today()
-        monday = get_monday_of_week(today)
-        
-        # Create overall message to invoking user
-        weekly_message_parts = []
-        daily_message_parts = []
-        errors = []  # Track errors for partial failures
-        
-        # Collect weekly data for all users
-        for user_id in GROUPED_CALENDARS:
-            try:
-                user_name = TAG_NAMES.get(user_id, "Unknown User")
-                user_mention = f"<@{user_id}>"
-                
-                # Get weekly events for this user
-                events_by_day = defaultdict(list)
-                calendars = GROUPED_CALENDARS.get(user_id)
-                
-                if not calendars:
-                    continue
-                    
-                for meta in calendars:
-                    try:
-                        events = get_events(meta, monday, monday + timedelta(days=6))
-                        if not events:
-                            continue
-                        for e in events:
-                            start_date = datetime.fromisoformat(e["start"].get("dateTime", e["start"].get("date"))).date()
-                            events_by_day[start_date].append(e)
-                    except Exception as e:
-                        logger.warning(f"Error getting events for calendar {meta['name']} (user {user_id}): {e}")
-                
-                if not events_by_day:
-                    continue
-                    
-                # Add section for this user's weekly events
-                user_weekly = [f"\n## 📆 **{user_mention}'s Weekly Events**\n"]
-                
-                for i in range(7):
-                    day = monday + timedelta(days=i)
-                    day_events = events_by_day.get(day, [])
-                    if not day_events:
-                        continue
-                        
-                    user_weekly.append(f"### 📅 **{day.strftime('%A, %B %d')}**")
-                    for e in sorted(day_events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
-                        start_time = e["start"].get("dateTime", e["start"].get("date"))
-                        end_time = e["end"].get("dateTime", e["end"].get("date"))
-                        summary = e.get("summary", "No Title")
-                        location = e.get("location", "No Location")
-                        
-                        # Process mentions in event summary
-                        for uid, name in TAG_NAMES.items():
-                            if name in summary:
-                                summary = summary.replace(f"@{name}", f"<@{uid}>")
-                                summary = summary.replace(name, f"<@{uid}>")
-                        
-                        user_weekly.append(f"```{summary}\nTime: {start_time} - {end_time}\nLocation: {location}```")
-                
-                weekly_message_parts.append("\n".join(user_weekly))
-                
-                # Get daily events for this user
-                events_by_source = defaultdict(list)
-                for meta in calendars:
-                    try:
-                        events = get_events(meta, today, today)
-                        if not events:
-                            continue
-                        for e in events:
-                            events_by_source[meta["name"]].append(e)
-                    except Exception as e:
-                        logger.warning(f"Error getting events for {meta['name']} (user {user_id}): {e}")
-                
-                if not events_by_source:
-                    continue
-                    
-                # Add section for this user's daily events
-                user_daily = [f"\n## 🗓️ **{user_mention}'s Events Today ({today.strftime('%A, %B %d')})**\n"]
-                
-                for source_name, events in sorted(events_by_source.items()):
-                    if not events:
-                        continue
-                    user_daily.append(f"**{source_name}**")
-                    for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
-                        start_time = e["start"].get("dateTime", e["start"].get("date"))
-                        end_time = e["end"].get("dateTime", e["end"].get("date"))
-                        summary = e.get("summary", "No Title")
-                        
-                        # Process mentions in event summary
-                        for uid, name in TAG_NAMES.items():
-                            if name in summary:
-                                summary = summary.replace(f"@{name}", f"<@{uid}>")
-                                summary = summary.replace(name, f"<@{uid}>")
-                        
-                        location = e.get("location", "No Location")
-                        user_daily.append(f"```{summary}\nTime: {start_time} - {end_time}\nLocation: {location}```")
-                
-                daily_message_parts.append("\n".join(user_daily))
-            except Exception as e:
-                logger.error(f"Error processing user {user_id}: {e}")
-                errors.append(f"User {user_id}: {e}")
-        
-        # Combine and send all weekly messages first
-        if weekly_message_parts:
-            weekly_header = "# 📜 **Weekly Events Summary**\n"
-            weekly_chunks = [weekly_header]
-            current_chunk = weekly_header
-            
-            for part in weekly_message_parts:
-                if len(current_chunk) + len(part) > 1900:
-                    weekly_chunks.append(current_chunk)
-                    current_chunk = part
-                else:
-                    current_chunk += part
-            
-            if current_chunk != weekly_header:
-                weekly_chunks.append(current_chunk)
-            
-            # Send all weekly chunks
-            for chunk in weekly_chunks[1:]:
-                await interaction.followup.send(chunk, ephemeral=True)  # Send as ephemeral messages
-        
-        # Then send all daily messages
-        if daily_message_parts:
-            daily_header = "# 🗓️ **Today's Events Summary**\n"
-            daily_chunks = [daily_header]
-            current_chunk = daily_header
-            
-            for part in daily_message_parts:
-                if len(current_chunk) + len(part) > 1900:
-                    daily_chunks.append(current_chunk)
-                    current_chunk = part
-                else:
-                    current_chunk += part
-            
-            if current_chunk != daily_header:
-                daily_chunks.append(current_chunk)
-            
-            # Send all daily chunks
-            for chunk in daily_chunks[1:]:
-                await interaction.followup.send(chunk, ephemeral=True)  # Send as ephemeral messages
-        
-        # Report errors if any
-        if errors:
-            error_message = "\n".join(errors)
-            await interaction.followup.send(
-                f"⚠️ Some errors occurred while processing:\n```{error_message}```",
-                ephemeral=True
-            )
-        
-        # Confirmation message
-        await interaction.followup.send("Herald events for all users have been sent.", ephemeral=True)
-    except Exception as e:
-        logger.exception(f"Error in /herald command: {e}")
-        await interaction.followup.send("An error occurred while posting the herald.", ephemeral=True)
+    await handle_herald_command(interaction)  # Delegate to the handler in commands.py
+
+
+@bot.tree.command(
+    name="agenda",
+    description="See events for a specific date (natural language supported)"
+)
+async def agenda_command(interaction: discord.Interaction, date: str):
+    await handle_agenda_command(interaction, date)  # Delegate to the handler in commands.py
+
+@bot.tree.command(
+    name="greet",
+    description="Post the themed morning greeting with image"
+)
+async def greet_command(interaction: discord.Interaction):
+    await handle_greet_command(interaction)  # Delegate to the handler in commands.py
+
+@bot.tree.command(
+    name="reload",
+    description="Reload calendar sources and user mappings"
+)
+async def reload_command(interaction: discord.Interaction):
+    await handle_reload_command(interaction)  # Delegate to the handler in commands.py
+
+@bot.tree.command(
+    name="who",
+    description="List all calendars and their assigned users"
+)
+async def who_command(interaction: discord.Interaction):
+    await handle_who_command(interaction)  # Delegate to the handler in commands.py
+
+@bot.tree.command(
+    name="daily",
+    description="Post today's events for all users to the announcement channel"
+)
+async def daily_command(interaction: discord.Interaction):
+    await handle_daily_command(interaction)  # Delegate to the handler in commands.py
+
+@bot.tree.command(
+    name="setup",
+    description="Configure calendars for the server with guided setup"
+)
+async def setup_command(interaction: discord.Interaction):
+    await handle_setup_command(interaction)  # Delegate to the handler in commands.py
 
 
 # ╔═════════════════════════════════════════════════════════════╗

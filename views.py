@@ -1,6 +1,6 @@
 import discord
 from discord.ui import View, Modal, Button, Select, TextInput
-from server_config import load_server_config, add_calendar, remove_calendar  # Updated import
+from utils import load_server_config, add_calendar, remove_calendar  # Ensure add_calendar is imported
 from log import logger
 from events import reinitialize_events
 

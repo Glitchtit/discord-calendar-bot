@@ -31,6 +31,7 @@ from collections import defaultdict
 from log import logger
 from events import TAG_NAMES, GROUPED_CALENDARS, get_events
 from utils import get_today, get_monday_of_week
+from discord import Interaction  # Add this import to resolve the undefined Interaction issue
 
 
 # Add validation for critical environment variables
@@ -331,10 +332,9 @@ async def reload_calendars_and_mappings():
 # ╔════════════════════════════════════════════════════════════════════╗
 # 📅 /agenda [date] — Returns events for a specific date
 # ╚════════════════════════════════════════════════════════════════════╝
-@app_commands.command(name="agenda", description="See events for a specific date (natural language supported)")
-@app_commands.describe(date="Examples: today, tomorrow, next Thursday")
-async def agenda(interaction: discord.Interaction, date: str) -> None:
-    await interaction.response.defer(ephemeral=True)  # Make the response ephemeral
+async def handle_agenda_command(interaction: discord.Interaction, date: str):
+    """Handles the logic for the /agenda command."""
+    await interaction.response.defer(ephemeral=True)
     logger.info(f"[commands.py] 📅 /agenda called by {interaction.user} with date '{date}'")
 
     try:
@@ -373,8 +373,8 @@ async def agenda(interaction: discord.Interaction, date: str) -> None:
 # ╔════════════════════════════════════════════════════════════════════╗
 # 📅 /greet — Posts the morning greeting with image
 # ╚════════════════════════════════════════════════════════════════════╝
-@app_commands.command(name="greet", description="Post the morning greeting with image")
-async def greet(interaction: discord.Interaction):
+async def handle_greet_command(interaction: discord.Interaction):
+    """Handles the logic for the /greet command."""
     await interaction.response.defer()
     logger.info(f"[commands.py] 📅 /greet called by {interaction.user}")
 
@@ -398,8 +398,8 @@ async def greet(interaction: discord.Interaction):
 # ╔════════════════════════════════════════════════════════════════════╗
 # 📅 /reload — Reloads calendar sources and user mappings
 # ╚════════════════════════════════════════════════════════════════════╝
-@app_commands.command(name="reload", description="Reload calendar sources and user mappings")
-async def reload(interaction: discord.Interaction):
+async def handle_reload_command(interaction: discord.Interaction):
+    """Handles the logic for the /reload command."""
     await interaction.response.defer()
     logger.info(f"[commands.py] 📅 /reload called by {interaction.user}")
 
@@ -417,8 +417,8 @@ async def reload(interaction: discord.Interaction):
 # ╔════════════════════════════════════════════════════════════════════╗
 # 📅 /who — Lists all calendars and their assigned users
 # ╚════════════════════════════════════════════════════════════════════╝
-@app_commands.command(name="who", description="List all calendars and their assigned users")
-async def who(interaction: discord.Interaction):
+async def handle_who_command(interaction: discord.Interaction):
+    """Handles the logic for the /who command."""
     await interaction.response.defer(ephemeral=True)
     logger.info(f"[commands.py] 📅 /who called by {interaction.user}")
 
@@ -526,8 +526,8 @@ async def post_all_daily_events_to_channel(bot, day: datetime.date = None):
 # ╔════════════════════════════════════════════════════════════════════╗
 # 📅 /daily — Manually posts today's events for all users to the channel
 # ╚════════════════════════════════════════════════════════════════════╝
-@app_commands.command(name="daily", description="Post today's events for all users to the announcement channel")
-async def daily(interaction: discord.Interaction):
+async def handle_daily_command(interaction: discord.Interaction):
+    """Handles the logic for the /daily command."""
     await interaction.response.defer()
     logger.info(f"[commands.py] 📅 /daily called by {interaction.user} in guild {interaction.guild.name} (ID: {interaction.guild.id})")
 
@@ -554,9 +554,8 @@ async def daily(interaction: discord.Interaction):
 # ║ ⚙️ /setup                                                          ║
 # ║ Command to interactively configure server calendars                ║
 # ╚════════════════════════════════════════════════════════════════════╝
-@app_commands.command(name="setup", description="Configure calendars for the server with guided setup")
-async def setup(interaction: discord.Interaction):
-    """Interactive calendar setup command."""
+async def handle_setup_command(interaction: discord.Interaction):
+    """Handles the logic for the /setup command."""
     try:
         # Check for admin permissions
         if not interaction.user.guild_permissions.administrator:
@@ -586,3 +585,164 @@ async def setup(interaction: discord.Interaction):
             f"An error occurred during setup: {str(e)}", 
             ephemeral=True
         )
+
+async def handle_herald_command(interaction: Interaction):
+    """Handles the logic for the /herald command."""
+    await interaction.response.defer(ephemeral=True)
+    logger.info(f"[commands.py] 📅 /herald called by {interaction.user}")
+    try:
+        await interaction.response.defer(ephemeral=True)  # Make the response ephemeral
+        today = get_today()
+        monday = get_monday_of_week(today)
+        
+        weekly_message_parts = []
+        daily_message_parts = []
+        errors = []  # Track errors for partial failures
+        
+        # Collect weekly data for all users
+        for user_id in GROUPED_CALENDARS:
+            try:
+                user_name = TAG_NAMES.get(user_id, "Unknown User")
+                user_mention = f"<@{user_id}>"
+                
+                # Get weekly events for this user
+                events_by_day = defaultdict(list)
+                calendars = GROUPED_CALENDARS.get(user_id)
+                
+                if not calendars:
+                    continue
+                    
+                for meta in calendars:
+                    try:
+                        events = get_events(meta, monday, monday + timedelta(days=6))
+                        if not events:
+                            continue
+                        for e in events:
+                            start_date = datetime.fromisoformat(e["start"].get("dateTime", e["start"].get("date"))).date()
+                            events_by_day[start_date].append(e)
+                    except Exception as e:
+                        logger.warning(f"Error getting events for calendar {meta['name']} (user {user_id}): {e}")
+                
+                if not events_by_day:
+                    continue
+                    
+                # Add section for this user's weekly events
+                user_weekly = [f"\n## 📆 **{user_mention}'s Weekly Events**\n"]
+                
+                for i in range(7):
+                    day = monday + timedelta(days=i)
+                    day_events = events_by_day.get(day, [])
+                    if not day_events:
+                        continue
+                        
+                    user_weekly.append(f"### 📅 **{day.strftime('%A, %B %d')}**")
+                    for e in sorted(day_events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
+                        start_time = e["start"].get("dateTime", e["start"].get("date"))
+                        end_time = e["end"].get("dateTime", e["end"].get("date"))
+                        summary = e.get("summary", "No Title")
+                        location = e.get("location", "No Location")
+                        
+                        # Process mentions in event summary
+                        for uid, name in TAG_NAMES.items():
+                            if name in summary:
+                                summary = summary.replace(f"@{name}", f"<@{uid}>")
+                                summary = summary.replace(name, f"<@{uid}>")
+                        
+                        user_weekly.append(f"```{summary}\nTime: {start_time} - {end_time}\nLocation: {location}```")
+                
+                weekly_message_parts.append("\n".join(user_weekly))
+                
+                # Get daily events for this user
+                events_by_source = defaultdict(list)
+                for meta in calendars:
+                    try:
+                        events = get_events(meta, today, today)
+                        if not events:
+                            continue
+                        for e in events:
+                            events_by_source[meta["name"]].append(e)
+                    except Exception as e:
+                        logger.warning(f"Error getting events for {meta['name']} (user {user_id}): {e}")
+                
+                if not events_by_source:
+                    continue
+                    
+                # Add section for this user's daily events
+                user_daily = [f"\n## 🗓️ **{user_mention}'s Events Today ({today.strftime('%A, %B %d')})**\n"]
+                
+                for source_name, events in sorted(events_by_source.items()):
+                    if not events:
+                        continue
+                    user_daily.append(f"**{source_name}**")
+                    for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
+                        start_time = e["start"].get("dateTime", e["start"].get("date"))
+                        end_time = e["end"].get("dateTime", e["end"].get("date"))
+                        summary = e.get("summary", "No Title")
+                        
+                        # Process mentions in event summary
+                        for uid, name in TAG_NAMES.items():
+                            if name in summary:
+                                summary = summary.replace(f"@{name}", f"<@{uid}>")
+                                summary = summary.replace(name, f"<@{uid}>")
+                        
+                        location = e.get("location", "No Location")
+                        user_daily.append(f"```{summary}\nTime: {start_time} - {end_time}\nLocation: {location}```")
+                
+                daily_message_parts.append("\n".join(user_daily))
+            except Exception as e:
+                logger.error(f"Error processing user {user_id}: {e}")
+                errors.append(f"User {user_id}: {e}")
+        
+        # Combine and send all weekly messages first
+        if weekly_message_parts:
+            weekly_header = "# 📜 **Weekly Events Summary**\n"
+            weekly_chunks = [weekly_header]
+            current_chunk = weekly_header
+            
+            for part in weekly_message_parts:
+                if len(current_chunk) + len(part) > 1900:
+                    weekly_chunks.append(current_chunk)
+                    current_chunk = part
+                else:
+                    current_chunk += part
+            
+            if current_chunk != weekly_header:
+                weekly_chunks.append(current_chunk)
+            
+            # Send all weekly chunks
+            for chunk in weekly_chunks[1:]:
+                await interaction.followup.send(chunk, ephemeral=True)  # Send as ephemeral messages
+        
+        # Then send all daily messages
+        if daily_message_parts:
+            daily_header = "# 🗓️ **Today's Events Summary**\n"
+            daily_chunks = [daily_header]
+            current_chunk = daily_header
+            
+            for part in daily_message_parts:
+                if len(current_chunk) + len(part) > 1900:
+                    daily_chunks.append(current_chunk)
+                    current_chunk = part
+                else:
+                    current_chunk += part
+            
+            if current_chunk != daily_header:
+                daily_chunks.append(current_chunk)
+            
+            # Send all daily chunks
+            for chunk in daily_chunks[1:]:
+                await interaction.followup.send(chunk, ephemeral=True)  # Send as ephemeral messages
+        
+        # Report errors if any
+        if errors:
+            error_message = "\n".join(errors)
+            await interaction.followup.send(
+                f"⚠️ Some errors occurred while processing:\n```{error_message}```",
+                ephemeral=True
+            )
+        
+        # Confirmation message
+        await interaction.followup.send("Herald events for all users have been sent.", ephemeral=True)
+    except Exception as e:
+        logger.exception(f"Error in /herald command: {e}")
+        await interaction.followup.send("An error occurred while posting the herald.", ephemeral=True)

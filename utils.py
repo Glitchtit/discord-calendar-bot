@@ -334,3 +334,8 @@ def load_server_config(server_id: int) -> Dict[str, Any]:
         logger.exception(f"Error loading server config for server {server_id}: {e}")
     # Return default config if file doesn't exist or has errors
     return {"calendars": [], "user_mappings": {}}
+
+
+def add_calendar(server_id, calendar_data):
+    """Adds a calendar to the server configuration."""
+    # ...implementation for adding a calendar...
