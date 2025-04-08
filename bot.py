@@ -118,6 +118,28 @@ async def on_disconnect():
 @bot.event
 async def on_resumed():
     logger.info("Bot connection resumed")
+    
+    try:
+        # Check if any scheduled tasks need to be restarted
+        from tasks import check_tasks_running, start_all_tasks
+        
+        # Verify all tasks are running, restart if needed
+        tasks_status = await check_tasks_running()
+        if not tasks_status:
+            logger.warning("Some scheduled tasks were not running. Restarting tasks...")
+            await start_all_tasks()
+        
+        # Refresh tag mappings to ensure they're up to date
+        await resolve_tag_mappings()
+        
+        # Check for missed events during disconnection
+        logger.info("Checking for any missed events during disconnection...")
+        from tasks import check_for_missed_events
+        await check_for_missed_events()
+        
+        logger.info("Connection recovery completed successfully")
+    except Exception as e:
+        logger.exception(f"Error during connection recovery: {e}")
 
 
 # ╔═════════════════════════════════════════════════════════════╗

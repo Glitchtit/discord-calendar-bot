@@ -288,7 +288,7 @@ async def watch_for_event_changes(bot):
                         logger.info(f"Detected changes for user ID '{meta['user_id']}', snapshot updated.")
                         save_current_events_for_key(meta["server_id"], f"{meta['user_id']}_full", all_events)
                     except Exception as e:
-                        logger.exception(f"Error posting changes for user ID '{meta['user_id']}': {e}")
+                        logger.exception(f"Error posting changes for user ID '{meta['user_id']}']: {e}")
                 else:
                     # Only save if we have data and it differs from previous
                     if all_events and (len(all_events) != len(prev_snapshot)):
@@ -443,3 +443,86 @@ async def initialize_event_snapshots():
         logger.info(f"Initial snapshot {status}. Processed {processed}/{total_calendars} calendars.")
     except Exception as e:
         logger.exception(f"Error in initialize_event_snapshots: {e}")
+
+# Add this new function to check if tasks are running properly
+
+async def check_tasks_running():
+    """
+    Verifies that all scheduled tasks are still running.
+    Returns True if all tasks are running, False if any need to be restarted.
+    """
+    try:
+        # Check if task objects exist and are not done/cancelled
+        tasks_running = True
+        
+        # Check daily task
+        if not hasattr(check_tasks_running, "daily_task") or \
+           check_tasks_running.daily_task.done() or \
+           check_tasks_running.daily_task.cancelled():
+            tasks_running = False
+            
+        # Check weekly task  
+        if not hasattr(check_tasks_running, "weekly_task") or \
+           check_tasks_running.weekly_task.done() or \
+           check_tasks_running.weekly_task.cancelled():
+            tasks_running = False
+            
+        # Check snapshot task
+        if not hasattr(check_tasks_running, "snapshot_task") or \
+           check_tasks_running.snapshot_task.done() or \
+           check_tasks_running.snapshot_task.cancelled():
+            tasks_running = False
+        
+        return tasks_running
+    except Exception as e:
+        logger.exception(f"Error checking task status: {e}")
+        return False
+
+async def check_for_missed_events():
+    """
+    Checks if any events were missed during disconnection and 
+    handles them appropriately.
+    """
+    try:
+        # Get current time and calculate a reasonable window to check
+        # (e.g., past 24 hours to account for disconnection period)
+        from datetime import datetime, timedelta
+        from utils import get_today
+        
+        today = get_today()
+        yesterday = today - timedelta(days=1)
+        
+        logger.info(f"Checking for missed events between {yesterday} and {today}")
+        
+        # Re-snapshot events to ensure we have the latest data
+        await initialize_event_snapshots()
+        
+        # For each server, check if we need to post daily updates
+        from server_config import get_all_server_ids, load_server_config
+        
+        for server_id in get_all_server_ids():
+            config = load_server_config(server_id)
+            if not config:
+                continue
+                
+            # Check if daily announcements are enabled and we're in the posting window
+            if config.get("daily_announcements_enabled", False):
+                current_hour = datetime.now().hour
+                # If we're within the announcement window (usually morning)
+                if 5 <= current_hour <= 10:
+                    try:
+                        # Check if we already posted today's events
+                        # This requires a new tracking mechanism to avoid duplicate posts
+                        from events import load_post_tracking
+                        tracking = load_post_tracking(server_id)
+                        
+                        # If we haven't posted today's update yet, do it now
+                        if today.isoformat() not in tracking.get("daily_posts", []):
+                            logger.info(f"Posting missed daily update for server {server_id}")
+                            await post_todays_happenings(server_id=server_id)
+                    except Exception as e:
+                        logger.error(f"Error checking/posting missed daily update: {e}")
+        
+        logger.info("Missed event check completed")
+    except Exception as e:
+        logger.exception(f"Error in check_for_missed_events: {e}")
