@@ -339,3 +339,26 @@ def load_server_config(server_id: int) -> Dict[str, Any]:
 def add_calendar(server_id, calendar_data):
     """Adds a calendar to the server configuration."""
     # ...implementation for adding a calendar...
+
+def remove_calendar(server_id: int, calendar_id: str) -> bool:
+    """
+    Removes a calendar by its ID from the server configuration.
+    Returns True if successful, False otherwise.
+    """
+    try:
+        # Load the server configuration
+        config = load_server_config(server_id)
+        calendars = config.get("calendars", [])
+        
+        # Find and remove the calendar
+        for calendar in calendars:
+            if calendar.get("id") == calendar_id:
+                calendars.remove(calendar)
+                # Save the updated configuration
+                with open(f"./data/servers/{server_id}.json", "w", encoding="utf-8") as file:
+                    json.dump(config, file, indent=4)
+                return True
+        return False
+    except Exception as e:
+        logger.exception(f"Error removing calendar {calendar_id} for server {server_id}: {e}")
+        return False

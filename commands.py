@@ -7,10 +7,10 @@ import os
 import asyncio
 import random
 import dateparser
-from datetime import datetime, timedelta
-from dateutil import tz
+from datetime import datetime, timedelta, date
 import discord
-from discord import app_commands, errors as discord_errors
+from discord import Interaction, app_commands
+from discord.errors import Forbidden, HTTPException, GatewayNotFound
 from collections import defaultdict
 from typing import List
 
@@ -25,13 +25,6 @@ from utils import format_event, validate_env_vars, format_message_lines
 from log import logger
 from ai import generate_greeting, generate_image
 from views import CalendarSetupView
-
-from datetime import datetime, timedelta
-from collections import defaultdict
-from log import logger
-from events import TAG_NAMES, GROUPED_CALENDARS, get_events
-from utils import get_today, get_monday_of_week
-from discord import Interaction  # Add this import to resolve the undefined Interaction issue
 
 
 # Add validation for critical environment variables
@@ -77,11 +70,11 @@ async def _retry_discord_operation(operation, max_retries=3):
     for attempt in range(max_retries):
         try:
             return await operation()
-        except discord_errors.Forbidden as e:
+        except Forbidden as e:
             # Permission errors should not be retried
             logger.error(f"Permission error during Discord operation: {e}")
             raise
-        except (discord_errors.HTTPException, discord_errors.GatewayNotFound) as e:
+        except (HTTPException, GatewayNotFound) as e:
             backoff = (2 ** attempt) + random.random()
             logger.warning(f"Discord API error (attempt {attempt+1}/{max_retries}): {e}")
             logger.info(f"Retrying in {backoff:.2f} seconds...")
@@ -746,3 +739,11 @@ async def handle_herald_command(interaction: Interaction):
     except Exception as e:
         logger.exception(f"Error in /herald command: {e}")
         await interaction.followup.send("An error occurred while posting the herald.", ephemeral=True)
+
+def get_today() -> date:
+    """Returns the current date."""
+    return date.today()
+
+def get_monday_of_week(day: date) -> date:
+    """Returns the Monday of the week for the given date."""
+    return day - timedelta(days=day.weekday())

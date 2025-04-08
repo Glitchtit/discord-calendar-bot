@@ -10,19 +10,14 @@ Note: Now uses server-specific configuration via /setup command instead of
 the previous environment variable approach.
 """
 
-import sys
 import asyncio
-from typing import Any, List
+from typing import List
 
 import discord
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
-import dateparser
-import asyncio
-import random
-import os
-from discord.ui import View, Button, Select, Modal, TextInput
+from discord.ui import View, Button, Select
 
 from log import logger
 from events import (
@@ -66,14 +61,6 @@ from views import (
     AddCalendarModal,
     CalendarRemoveView,
     ConfirmRemovalView
-)
-from commands import (
-    agenda,
-    greet,
-    reload,
-    who,
-    daily,
-    setup
 )
 
 # ╔════════════════════════════════════════════════════════════════════╗
