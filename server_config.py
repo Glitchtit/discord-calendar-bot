@@ -17,6 +17,8 @@ import re
 import requests
 from typing import Dict, List, Any, Optional, Tuple
 from log import logger
+from utils import load_server_config  # Ensure this is imported from utils.py
+from threading import Lock
 
 # Directory for server configuration files
 SERVER_CONFIG_BASE = "/data"
@@ -45,26 +47,7 @@ def get_config_path(server_id: int) -> str:
     """Get the path to a server's configuration file."""
     return os.path.join(SERVER_CONFIG_BASE, str(server_id), "config.json")
 
-def load_server_config(server_id: int) -> Dict[str, Any]:
-    """Load configuration for a specific server."""
-    config_path = get_config_path(server_id)
-    
-    try:
-        if os.path.exists(config_path):
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-                logger.debug(f"Loaded configuration for server {server_id}")
-                return config
-    except json.JSONDecodeError:
-        logger.warning(f"Invalid JSON in config file for server {server_id}")
-    except Exception as e:
-        logger.exception(f"Error loading server config: {e}")
-    
-    # Return default config if file doesn't exist or has errors
-    return {
-        "calendars": [],
-        "user_mappings": {}
-    }
+_save_lock = Lock()
 
 def save_server_config(server_id: int, config: Dict[str, Any]) -> bool:
     """Save configuration for a specific server."""
@@ -72,8 +55,9 @@ def save_server_config(server_id: int, config: Dict[str, Any]) -> bool:
     
     try:
         os.makedirs(os.path.dirname(config_path), exist_ok=True)
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
+        with _save_lock:  # Ensure thread safety
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
         logger.info(f"Saved configuration for server {server_id}")
         return True
     except Exception as e:
@@ -94,6 +78,10 @@ def add_calendar(server_id: int, calendar_url: str, user_id: str, display_name: 
     """
     config = load_server_config(server_id)
     
+    # Validate config structure
+    if not isinstance(config, dict):
+        return False, "Invalid server configuration structure."
+
     # Detect calendar type (Google or ICS)
     calendar_type = detect_calendar_type(calendar_url)
     if not calendar_type:
@@ -123,6 +111,10 @@ def remove_calendar(server_id: int, calendar_id: str) -> Tuple[bool, str]:
     """Remove a calendar from a server's configuration."""
     config = load_server_config(server_id)
     
+    # Validate config structure
+    if not isinstance(config, dict):
+        return False, "Invalid server configuration structure."
+
     calendars = config.get("calendars", [])
     initial_count = len(calendars)
     

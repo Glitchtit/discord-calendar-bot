@@ -21,9 +21,10 @@ from events import (
     get_color_for_tag,
     TAG_NAMES
 )
-from utils import format_event
+from utils import format_event, validate_env_vars, format_message_lines
 from log import logger
 from ai import generate_greeting, generate_image
+from views import CalendarSetupView
 
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -31,6 +32,9 @@ from log import logger
 from events import TAG_NAMES, GROUPED_CALENDARS, get_events
 from utils import get_today, get_monday_of_week
 
+
+# Add validation for critical environment variables
+validate_env_vars(["ANNOUNCEMENT_CHANNEL_ID", "DISCORD_BOT_TOKEN"])
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔍 Autocomplete Functions                                          ║
@@ -301,48 +305,30 @@ async def post_tagged_week(bot, user_id: str, monday: datetime.date):
         for meta in calendars:
             try:
                 events = get_events(meta, monday, monday + timedelta(days=6))
-                if not events:
-                    events = []
-                for e in events:
+                for e in events or []:
                     start_date = datetime.fromisoformat(e["start"].get("dateTime", e["start"].get("date"))).date()
                     events_by_day[start_date].append(e)
             except Exception as e:
                 logger.exception(f"Error getting events for calendar {meta['name']}: {e}")
 
-        # Construct formatted message with user mention
-        user_mention = f"<@{user_id}>"
-        user_name = TAG_NAMES.get(user_id, "User")
-        
-        message_lines = [f"📜 **Weekly Events for {user_mention} — Week of {monday.strftime('%B %d')}**\n"]
-        for i in range(7):
-            day = monday + timedelta(days=i)
-            day_events = events_by_day.get(day, [])
-            if not day_events:
-                continue
+        if not events_by_day:
+            logger.debug(f"Skipping {user_id} — no events for the week starting {monday}")
+            return
 
-            message_lines.append(f"📅 **{day.strftime('%A, %B %d')}**")
-            for e in sorted(day_events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
-                start_time = e["start"].get("dateTime", e["start"].get("date"))
-                end_time = e["end"].get("dateTime", e["end"].get("date"))
-                summary = e.get("summary", "No Title")
-                
-                # Process summary to replace potential user references with mentions
-                for uid, name in TAG_NAMES.items():
-                    if name in summary:
-                        summary = summary.replace(f"@{name}", f"<@{uid}>")
-                        summary = summary.replace(name, f"<@{uid}>")
-                
-                location = e.get("location", "No Location")
-                message_lines.append(
-                    f"```{summary}\nTime: {start_time} - {end_time}\nLocation: {location}```"
-                )
-
-        # Send the message to the user
+        # Use helper function for formatting
+        message_lines = format_message_lines(user_id, events_by_day, monday)
         user = await bot.fetch_user(user_id)
         await user.send("\n".join(message_lines))
 
     except Exception as e:
         logger.exception(f"Error in post_tagged_week for user ID {user_id}: {e}")
+
+# Define or import reload_calendars_and_mappings
+async def reload_calendars_and_mappings():
+    """Reload calendar sources and user mappings."""
+    from events import load_calendars_from_server_configs, reinitialize_events
+    load_calendars_from_server_configs()
+    await reinitialize_events()
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -385,6 +371,73 @@ async def agenda(interaction: discord.Interaction, date: str) -> None:
     except Exception as e:
         logger.exception("[commands.py] Error in /agenda command.", exc_info=e)
         await interaction.followup.send("⚠️ An error occurred while fetching the agenda.", ephemeral=True)
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# 📅 /greet — Posts the morning greeting with image
+# ╚════════════════════════════════════════════════════════════════════╝
+@app_commands.command(name="greet", description="Post the morning greeting with image")
+async def greet(interaction: discord.Interaction):
+    await interaction.response.defer()
+    logger.info(f"[commands.py] 📅 /greet called by {interaction.user}")
+
+    try:
+        greeting = await generate_greeting()
+        image_path = await generate_image(greeting)
+
+        embed = discord.Embed(description=greeting, color=5814783)
+        if image_path:
+            file = discord.File(image_path, filename="greeting.png")
+            embed.set_image(url="attachment://greeting.png")
+            await interaction.followup.send(embed=embed, file=file)
+        else:
+            await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        logger.exception("[commands.py] Error in /greet command.", exc_info=e)
+        await interaction.followup.send("⚠️ An error occurred while posting the greeting.")
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# 📅 /reload — Reloads calendar sources and user mappings
+# ╚════════════════════════════════════════════════════════════════════╝
+@app_commands.command(name="reload", description="Reload calendar sources and user mappings")
+async def reload(interaction: discord.Interaction):
+    await interaction.response.defer()
+    logger.info(f"[commands.py] 📅 /reload called by {interaction.user}")
+
+    try:
+        # Reload calendar sources and user mappings
+        # Assuming you have a function to reload these
+        await reload_calendars_and_mappings()
+        await interaction.followup.send("✅ Calendar sources and user mappings reloaded.")
+
+    except Exception as e:
+        logger.exception("[commands.py] Error in /reload command.", exc_info=e)
+        await interaction.followup.send("⚠️ An error occurred while reloading calendar sources and user mappings.")
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# 📅 /who — Lists all calendars and their assigned users
+# ╚════════════════════════════════════════════════════════════════════╝
+@app_commands.command(name="who", description="List all calendars and their assigned users")
+async def who(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    logger.info(f"[commands.py] 📅 /who called by {interaction.user}")
+
+    try:
+        message_lines = ["📅 **Calendars and Assigned Users**"]
+        for user_id, sources in GROUPED_CALENDARS.items():
+            user_name = TAG_NAMES.get(user_id, "User")
+            message_lines.append(f"**{user_name}** ({user_id})")
+            for source in sources:
+                message_lines.append(f" - {source['name']}")
+
+        await interaction.followup.send("\n".join(message_lines), ephemeral=True)
+
+    except Exception as e:
+        logger.exception("[commands.py] Error in /who command.", exc_info=e)
+        await interaction.followup.send("⚠️ An error occurred while listing calendars and users.", ephemeral=True)
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -493,3 +546,41 @@ async def daily(interaction: discord.Interaction):
     except Exception as e:
         logger.exception("[commands.py] Error in /daily command.", exc_info=e)
         await interaction.followup.send("⚠️ An error occurred while posting daily events.")
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ ⚙️ /setup                                                          ║
+# ║ Command to interactively configure server calendars                ║
+# ╚════════════════════════════════════════════════════════════════════╝
+@app_commands.command(name="setup", description="Configure calendars for the server with guided setup")
+async def setup(interaction: discord.Interaction):
+    """Interactive calendar setup command."""
+    try:
+        # Check for admin permissions
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "⚠️ You need administrator permissions to use this command.", 
+                ephemeral=True
+            )
+            return
+        
+        # Start the guided setup process
+        view = CalendarSetupView(interaction.client, interaction.guild_id)
+        
+        await interaction.response.send_message(
+            "# 📅 Calendar Setup Wizard\n\n"
+            "Welcome to the guided setup process! What would you like to do?\n\n"
+            "• **Add Calendar**: Connect a Google Calendar or ICS feed\n"
+            "• **Remove Calendar**: Delete a configured calendar\n"
+            "• **List Calendars**: View currently configured calendars\n\n"
+            "Choose an option below to continue:",
+            view=view,
+            ephemeral=True
+        )
+            
+    except Exception as e:
+        logger.exception(f"Error in setup command: {e}")
+        await interaction.response.send_message(
+            f"An error occurred during setup: {str(e)}", 
+            ephemeral=True
+        )

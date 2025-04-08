@@ -3,6 +3,11 @@ from dateutil import tz
 from log import logger  # Import logger from log.py
 import functools
 import re
+import os
+from collections import defaultdict
+import json
+from typing import Dict, Any
+from threading import Lock
 
 # Cache for expensive operations
 _timezone_cache = None
@@ -269,3 +274,46 @@ def resolve_input_to_tags(input_text: str, tag_names: dict, grouped_calendars: d
             matches.append(tag_id)
     
     return matches
+
+
+def validate_env_vars(required_vars):
+    """Validate critical environment variables."""
+    for var in required_vars:
+        if not os.getenv(var):
+            logger.error(f"Environment variable {var} is not set. Please configure it.")
+            raise EnvironmentError(f"Missing required environment variable: {var}")
+
+
+def format_message_lines(user_id, events_by_day, start_date):
+    """Format message lines for weekly or daily events."""
+    user_mention = f"<@{user_id}>"
+    message_lines = [f"📜 **Weekly Events for {user_mention} — Week of {start_date.strftime('%B %d')}**\n"]
+    for day, events in sorted(events_by_day.items()):
+        message_lines.append(f"📅 **{day.strftime('%A, %B %d')}**")
+        for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
+            start_time = e["start"].get("dateTime", e["start"].get("date"))
+            end_time = e["end"].get("dateTime", e["end"].get("date"))
+            summary = e.get("summary", "No Title")
+            location = e.get("location", "No Location")
+            message_lines.append(
+                f"```{summary}\nTime: {start_time} - {end_time}\nLocation: {location}```"
+            )
+    return message_lines
+
+
+_load_lock = Lock()
+
+def load_server_config(server_id: int) -> Dict[str, Any]:
+    """Load the server-specific configuration file."""
+    config_path = f"./data/servers/{server_id}.json"
+    try:
+        with _load_lock:  # Ensure thread safety
+            if os.path.exists(config_path):
+                with open(config_path, "r", encoding="utf-8") as file:
+                    return json.load(file)
+    except json.JSONDecodeError:
+        logger.warning(f"Invalid JSON in config file for server {server_id}")
+    except Exception as e:
+        logger.exception(f"Error loading server config for server {server_id}: {e}")
+    # Return default config if file doesn't exist or has errors
+    return {"calendars": [], "user_mappings": {}}

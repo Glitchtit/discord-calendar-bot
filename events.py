@@ -22,6 +22,7 @@ from googleapiclient.errors import HttpError
 from environ import GOOGLE_APPLICATION_CREDENTIALS
 from server_config import get_all_server_ids, load_server_config, save_server_config
 from log import logger
+from asyncio import Lock
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🔐 Google Calendar API Setup
@@ -109,16 +110,8 @@ def load_calendars_from_server_configs():
             if "user_id" not in calendar:
                 missing_user_id_count += 1
                 logger.warning(f"Calendar in server {server_id} missing user_id field: {calendar.get('name', 'Unnamed')}, ID: {calendar.get('id', 'Unknown')}")
-                # Attempt to fix the config by adding a default user_id
-                try:
-                    # Use the server_id as a fallback user_id
-                    calendar["user_id"] = str(server_id)
-                    # Save the updated config back to disk
-                    save_server_config(server_id, config)
-                    logger.info(f"Added default user_id to calendar in server {server_id}")
-                except Exception as e:
-                    logger.error(f"Failed to update calendar in server {server_id}: {e}")
-                    continue
+                calendar["user_id"] = str(server_id)  # Fallback to server_id
+                save_server_config(server_id, config)
             
             user_id = calendar["user_id"]
             if user_id not in GROUPED_CALENDARS:
@@ -472,26 +465,32 @@ def compute_event_fingerprint(event: dict) -> str:
 # ║ 🔄 Reload Functions                                                ║
 # ║ Functions to handle reloading after setup changes                  ║
 # ╚════════════════════════════════════════════════════════════════════╝
+reinitialize_lock = Lock()
+
 async def reinitialize_events():
-    """
-    Re-initializes the event snapshots after calendar configuration changes.
-    This should be called after /setup or /reload commands to ensure events
-    are properly loaded into /data/events.json.
-    """
-    from tasks import initialize_event_snapshots
-    from server_config import get_all_server_ids, load_server_config
+    """Reinitialize events with concurrency control."""
+    async with reinitialize_lock:
+        if reinitialize_lock.locked():
+            logger.warning("Reinitialize events is already in progress. Skipping duplicate call.")
+            return False
 
-    # First, reload calendar configurations for all servers
-    logger.info("Reloading calendar configurations for all servers")
-    for server_id in get_all_server_ids():
-        config = load_server_config(server_id)
-        logger.debug(f"Loaded config for server {server_id}: {config}")
+        logger.info("Starting reinitialization of events.")
+        # Existing reinitialization logic
+        from tasks import initialize_event_snapshots
+        from server_config import get_all_server_ids, load_server_config
 
-    # Then initialize event snapshots
-    logger.info("Re-initializing event snapshots after configuration change")
-    await initialize_event_snapshots()
+        # First, reload calendar configurations for all servers
+        logger.info("Reloading calendar configurations for all servers")
+        for server_id in get_all_server_ids():
+            config = load_server_config(server_id)
+            logger.debug(f"Loaded config for server {server_id}: {config}")
 
-    return True
+        # Then initialize event snapshots
+        logger.info("Re-initializing event snapshots after configuration change")
+        await initialize_event_snapshots()
+
+        logger.info("Reinitialization of events completed.")
+        return True
 
 # Initialize calendars on module load
 load_calendars_from_server_configs()
