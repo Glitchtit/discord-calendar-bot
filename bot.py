@@ -60,6 +60,14 @@ from views import (
     CalendarRemoveView,
     ConfirmRemovalView
 )
+from commands import (
+    agenda,
+    greet,
+    reload,
+    who,
+    daily,
+    setup
+)
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🤖 Intents & Bot Setup
@@ -79,57 +87,27 @@ bot.is_initialized = False
 async def on_ready():
     logger.info(f"Logged in as {bot.user}")
     
-    # Prevent multiple initializations if Discord reconnects
     if bot.is_initialized:
         logger.info("Bot reconnected, skipping initialization")
         return
-    
-    # Perform initialization with progressive backoff for retries
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        try:
-            # Step 1: Load calendars from server configurations
-            load_calendars_from_server_configs()
-            
-            # Step 2: Resolve tag mappings
-            await resolve_tag_mappings()
-            
-            # Step 3: Add slight delay to avoid rate limiting
-            await asyncio.sleep(1)
-            
-            # Step 4: Sync slash commands (only once)
-            synced = await bot.tree.sync()
-            logger.info(f"Synced {len(synced)} commands.")
-            
-            # Step 5: Initialize event snapshots
-            await initialize_event_snapshots()
-            
-            # Step 6: Start recurring tasks
-            start_all_tasks(bot)
-            
-            # Mark successful initialization only after all steps succeed
-            bot.is_initialized = True
-            logger.info("Bot initialization completed successfully")
-            break
-            
-        except discord.errors.HTTPException as e:
-            # Handle Discord API issues with exponential backoff
-            retry_delay = 2 ** attempt + random.uniform(0, 1)
-            logger.warning(f"Discord API error during initialization (attempt {attempt}/{max_retries}): {e}")
-            
-            if attempt < max_retries:
-                logger.info(f"Retrying initialization in {retry_delay:.2f} seconds...")
-                await asyncio.sleep(retry_delay)
-            else:
-                logger.error("Maximum retries reached. Initialization failed.")
-                
-        except Exception as e:
-            logger.exception(f"Unexpected error during initialization: {e}")
-            # Do not mark as initialized here to allow retries
 
-    # If initialization fails completely, log an error and do not mark as initialized
-    if not bot.is_initialized:
-        logger.critical("Bot failed to initialize after maximum retries. Manual intervention required.")
+    try:
+        # Sync commands
+        synced = await bot.tree.sync()
+        logger.info(f"Synced {len(synced)} commands.")
+
+        # Add commands from commands.py
+        bot.tree.add_command(agenda)
+        bot.tree.add_command(greet)
+        bot.tree.add_command(reload)
+        bot.tree.add_command(who)
+        bot.tree.add_command(daily)
+        bot.tree.add_command(setup)
+
+        bot.is_initialized = True
+        logger.info("Bot initialization completed successfully")
+    except Exception as e:
+        logger.exception(f"Error during initialization: {e}")
 
 
 # ╔═════════════════════════════════════════════════════════════╗
