@@ -386,3 +386,111 @@ async def agenda(interaction: discord.Interaction, date: str) -> None:
     except Exception as e:
         logger.exception("[commands.py] Error in /agenda command.", exc_info=e)
         await interaction.followup.send("⚠️ An error occurred while fetching the agenda.")
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📢 post_daily_events_to_channel                                    ║
+# ║ Posts a user's daily events to the announcement channel            ║
+# ╚════════════════════════════════════════════════════════════════════╝
+async def post_daily_events_to_channel(bot, user_id: str, day: datetime.date) -> bool:
+    """Posts a user's daily events to the announcement channel instead of DMs."""
+    try:
+        calendars = GROUPED_CALENDARS.get(user_id)
+        if not calendars:
+            logger.warning(f"No calendars found for user ID: {user_id}")
+            return False
+
+        events_by_source = defaultdict(list)
+        for meta in calendars:
+            try:
+                events = get_events(meta, day, day)
+                if not events:
+                    events = []
+                for e in events:
+                    events_by_source[meta["name"]].append(e)
+            except Exception as e:
+                logger.exception(f"Error getting events for {meta['name']}: {e}")
+
+        if not events_by_source:
+            logger.debug(f"Skipping {user_id} — no events for {day}")
+            return False
+
+        # Construct formatted message with user mention
+        user_mention = f"<@{user_id}>"
+        user_name = TAG_NAMES.get(user_id, "User")
+        
+        message_lines = [f"🗓️ **Today's Events for {user_mention} — {day.strftime('%A, %B %d')}**\n"]
+        for source_name, events in sorted(events_by_source.items()):
+            if not events:
+                continue
+            message_lines.append(f"**{source_name}**")
+            for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
+                start_time = e["start"].get("dateTime", e["start"].get("date"))
+                end_time = e["end"].get("dateTime", e["end"].get("date"))
+                summary = e.get("summary", "No Title")
+                
+                # Process summary to replace potential user references with mentions
+                for uid, name in TAG_NAMES.items():
+                    if name in summary:
+                        summary = summary.replace(f"@{name}", f"<@{uid}>")
+                        summary = summary.replace(name, f"<@{uid}>")
+                
+                location = e.get("location", "No Location")
+                message_lines.append(
+                    f"```{summary}\nTime: {start_time} - {end_time}\nLocation: {location}```"
+                )
+
+        # Send the message to the announcement channel
+        embed = discord.Embed(
+            description="\n".join(message_lines),
+            color=get_color_for_tag(user_id) if callable(get_color_for_tag) else 5814783
+        )
+        await send_embed(bot, embed=embed)
+        return True
+
+    except Exception as e:
+        logger.exception(f"Error in post_daily_events_to_channel for user ID {user_id} on {day}: {e}")
+        return False
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📢 post_all_daily_events_to_channel                               ║
+# ║ Posts all users' daily events to the announcement channel         ║
+# ╚════════════════════════════════════════════════════════════════════╝
+async def post_all_daily_events_to_channel(bot, day: datetime.date = None):
+    """Posts all users' daily events to the announcement channel."""
+    if day is None:
+        day = get_today()
+    
+    try:
+        messages_sent = 0
+        for user_id in GROUPED_CALENDARS:
+            if await post_daily_events_to_channel(bot, user_id, day):
+                messages_sent += 1
+        
+        return messages_sent
+    except Exception as e:
+        logger.exception(f"Error in post_all_daily_events_to_channel: {e}")
+        return 0
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# 📅 /daily — Manually posts today's events for all users to the channel
+# ╚════════════════════════════════════════════════════════════════════╝
+@app_commands.command(name="daily", description="Post today's events for all users to the announcement channel")
+async def daily(interaction: discord.Interaction):
+    await interaction.response.defer()
+    logger.info(f"[commands.py] 📅 /daily called by {interaction.user}")
+
+    try:
+        day = get_today()
+        messages_sent = await post_all_daily_events_to_channel(interaction.client, day)
+        
+        if messages_sent > 0:
+            await interaction.followup.send(f"Posted daily events for {messages_sent} users to the announcement channel.")
+        else:
+            await interaction.followup.send("No events found for today.")
+            
+    except Exception as e:
+        logger.exception("[commands.py] Error in /daily command.", exc_info=e)
+        await interaction.followup.send("⚠️ An error occurred while posting daily events.")
