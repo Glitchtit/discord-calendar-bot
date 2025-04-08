@@ -90,14 +90,8 @@ async def on_ready():
         synced = await bot.tree.sync()
         logger.info(f"Synced {len(synced)} commands.")
 
-        # Add command handlers
-        bot.tree.add_command(herald_command)
-        bot.tree.add_command(agenda_command)
-        bot.tree.add_command(greet_command)
-        bot.tree.add_command(reload_command)
-        bot.tree.add_command(who_command)
-        bot.tree.add_command(daily_command)
-        bot.tree.add_command(setup_command)
+        # Remove redundant command registration
+        # The commands are already registered via decorators
 
         bot.is_initialized = True
         logger.info("Bot initialization completed successfully")
