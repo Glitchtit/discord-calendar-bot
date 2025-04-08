@@ -351,13 +351,13 @@ async def post_tagged_week(bot, user_id: str, monday: datetime.date):
 @app_commands.command(name="agenda", description="See events for a specific date (natural language supported)")
 @app_commands.describe(date="Examples: today, tomorrow, next Thursday")
 async def agenda(interaction: discord.Interaction, date: str) -> None:
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)  # Make the response ephemeral
     logger.info(f"[commands.py] 📅 /agenda called by {interaction.user} with date '{date}'")
 
     try:
         dt = dateparser.parse(date)
         if not dt:
-            await interaction.followup.send("⚠️ Could not understand that date.")
+            await interaction.followup.send("⚠️ Could not understand that date.", ephemeral=True)
             return
 
         day = dt.date()
@@ -371,7 +371,7 @@ async def agenda(interaction: discord.Interaction, date: str) -> None:
         all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
 
         if not all_events:
-            await interaction.followup.send(f"No events found for `{date}`.")
+            await interaction.followup.send(f"No events found for `{date}`.", ephemeral=True)
             return
 
         # Construct plain text message
@@ -379,13 +379,12 @@ async def agenda(interaction: discord.Interaction, date: str) -> None:
         for e in all_events:
             message_lines.append(f" {format_event(e)}")
 
-        # Send the message to the user
-        await interaction.user.send("\n".join(message_lines))
-        await interaction.followup.send("Agenda sent to your DMs.")
+        # Send the message as an ephemeral response
+        await interaction.followup.send("\n".join(message_lines), ephemeral=True)
 
     except Exception as e:
         logger.exception("[commands.py] Error in /agenda command.", exc_info=e)
-        await interaction.followup.send("⚠️ An error occurred while fetching the agenda.")
+        await interaction.followup.send("⚠️ An error occurred while fetching the agenda.", ephemeral=True)
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
