@@ -584,7 +584,6 @@ async def handle_herald_command(interaction: Interaction):
     await interaction.response.defer(ephemeral=True)
     logger.info(f"[commands.py] 📅 /herald called by {interaction.user}")
     try:
-        await interaction.response.defer(ephemeral=True)  # Make the response ephemeral
         today = get_today()
         monday = get_monday_of_week(today)
         
