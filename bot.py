@@ -458,10 +458,12 @@ async def reload_command(interaction: discord.Interaction):
 async def who_command(interaction: discord.Interaction):
     try:
         await interaction.response.defer()
-        lines = [
-            f"**User ID: {user_id}** → {', '.join(cal['name'] for cal in calendars)}"
-            for user_id, calendars in GROUPED_CALENDARS.items()
-        ]
+        lines = []
+        for user_id, calendars in GROUPED_CALENDARS.items():
+            user_name = TAG_NAMES.get(user_id, "Unknown User")  # Get username instead of user ID
+            calendar_names = ', '.join(cal['name'] for cal in calendars)
+            lines.append(f"**{user_name}** → {calendar_names}")
+        
         await interaction.followup.send("**Calendars and Assigned Users:**\n" + "\n".join(lines))
     except Exception as e:
         logger.exception(f"Error in /who command: {e}")
@@ -620,31 +622,21 @@ class CalendarSetupView(View):
         lines = ["**Configured Calendars:**\n"]
         
         for i, cal in enumerate(calendars, 1):
-            cal_type = cal.get("type", "unknown")
-            cal_id = cal.get("id", "unknown")
             cal_name = cal.get("name", "Unnamed Calendar")
+            cal_id = cal.get("id", "unknown")
             cal_tag = cal.get("tag", "No Tag")
-            
-            # Find the user associated with this tag
-            user_id = None
-            for tag_key, uid in config.get("user_mappings", {}).items():
-                if tag_key == cal_tag:
-                    user_id = uid
-                    break
-                    
-            user_mention = f"<@{user_id}>" if user_id else "No user"
+            user_id = cal.get("user_id", "Unknown User ID")
+            user_name = TAG_NAMES.get(user_id, "Unknown User")
             
             # Truncate long calendar IDs
-            if len(cal_id) > 30:
-                display_id = cal_id[:27] + "..."
-            else:
-                display_id = cal_id
+            display_id = cal_id[:27] + "..." if len(cal_id) > 30 else cal_id
                 
-            lines.append(f"{i}. **{cal_name}** ({cal_type})\n   ID: `{display_id}`\n   User: {user_mention}\n   Tag: `{cal_tag}`")
-        
-        # Add service account info for Google Calendar sharing
-        service_email = get_service_account_email()
-        lines.append(f"\n**Google Calendar Service Account:**\n`{service_email}`")
+            lines.append(
+                f"{i}. **{cal_name}**\n"
+                f"   ID: `{display_id}`\n"
+                f"   User: **{user_name}** (ID: `{user_id}`)\n"
+                f"   Tag: `{cal_tag}`"
+            )
         
         await interaction.followup.send("\n".join(lines), ephemeral=True)
 
