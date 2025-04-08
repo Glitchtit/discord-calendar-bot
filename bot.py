@@ -86,17 +86,20 @@ async def on_ready():
         return
 
     try:
-        # Sync commands
+        # Sync commands - only do this once during startup
         synced = await bot.tree.sync()
         logger.info(f"Synced {len(synced)} commands.")
 
-        # Remove redundant command registration
-        # The commands are already registered via decorators
-
+        # Initialize other startup tasks here
+        await resolve_tag_mappings()
+        
+        # Mark initialization as complete
         bot.is_initialized = True
         logger.info("Bot initialization completed successfully")
     except Exception as e:
         logger.exception(f"Error during initialization: {e}")
+        # Don't mark as initialized if an error occurs
+        # This allows another attempt on reconnection
 
 
 # ╔═════════════════════════════════════════════════════════════╗

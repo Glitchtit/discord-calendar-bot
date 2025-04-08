@@ -187,14 +187,8 @@ def main():
         # Track last heartbeat for monitoring
         bot.last_heartbeat = time.time()
         
-        @bot.event
-        async def on_resumed():
-            logger.info("Discord connection resumed")
-            bot.last_heartbeat = time.time()
-            
-        @bot.event 
-        async def on_heartbeat(sequence):
-            bot.last_heartbeat = time.time()
+        # Reset initialization flag when starting fresh
+        bot.is_initialized = False
         
         # Start the bot with reconnect enabled
         logger.info("Starting Discord bot...")
