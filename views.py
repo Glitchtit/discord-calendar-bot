@@ -31,7 +31,14 @@ class AddCalendarModal(Modal, title="Add Calendar"):
         display_name = self.display_name.value.strip() or "Unnamed Calendar"
 
         # Add the calendar
-        success, message = add_calendar(self.guild_id, calendar_url, interaction.user.id, display_name)
+        calendar_type = detect_calendar_type(calendar_url)
+        calendar_data = {
+            'type': calendar_type,
+            'id': calendar_url,
+            'user_id': interaction.user.id,
+            'name': display_name
+        }
+        success, message = add_calendar(self.guild_id, calendar_data)
 
         # Reload calendar configuration and reinitialize events
         if success:
@@ -93,7 +100,13 @@ class ConfirmRemovalView(View):
     @discord.ui.button(label="Confirm Removal", style=discord.ButtonStyle.danger)
     async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Remove the calendar when confirmed."""
-        success, message = remove_calendar(self.guild_id, self.calendar_id)
+        # Create removal data structure
+        removal_data = {
+            'calendar_id': self.calendar_id,
+            'confirmation_token': str(interaction.id),
+            'initiator_id': interaction.user.id
+        }
+        success, message = remove_calendar(self.guild_id, removal_data)
 
         # Reload calendar configuration and reinitialize events
         if success:

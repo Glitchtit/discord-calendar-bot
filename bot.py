@@ -354,3 +354,34 @@ class CalendarSetupView(View):
             )
         
         await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+class AddCalendarModal(discord.ui.Modal):
+    def __init__(self, bot, guild_id):
+        super().__init__(title="Add Calendar")
+        self.bot = bot
+        self.guild_id = guild_id
+        self.calendar_input = discord.ui.TextInput(
+            label="Calendar ID",
+            placeholder="Enter the calendar ID",
+            style=discord.TextInputStyle.short,
+            required=True
+        )
+        self.add_item(self.calendar_input)
+
+    async def callback(self, interaction: discord.Interaction):
+        calendar_input = self.calendar_input.value
+        detected_type = detect_calendar_type(calendar_input)
+        if detected_type is None:
+            await interaction.response.send_message("Invalid calendar ID. Please try again.", ephemeral=True)
+            return
+        
+        calendar_data = {
+            'type': detected_type,
+            'id': calendar_input,
+            'user_id': interaction.user.id
+        }
+        success, message = add_calendar(self.guild_id, calendar_data)
+        if success:
+            await interaction.response.send_message("Calendar added successfully!", ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
