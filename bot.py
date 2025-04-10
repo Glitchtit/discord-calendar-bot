@@ -45,14 +45,14 @@ from commands import (
 )
 from tasks import initialize_event_snapshots, start_all_tasks, post_todays_happenings
 from utils import get_today, get_monday_of_week, resolve_input_to_tags
+from utils.validators import detect_calendar_type
 from server_config import (
     add_calendar, 
     remove_calendar, 
     load_server_config, 
     save_server_config,
     SERVER_CONFIG_DIR,
-    get_all_server_ids,
-    detect_calendar_type
+    get_all_server_ids
 )
 from collections import defaultdict
 from datetime import timedelta

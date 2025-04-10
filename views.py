@@ -3,6 +3,8 @@ from discord.ui import View, Modal, Button, Select, TextInput
 from server_config import add_calendar, remove_calendar, load_server_config  # Import all server config functions from server_config
 from log import logger
 from events import reinitialize_events
+from utils.validators import detect_calendar_type
+from bot import Bot
 
 class AddCalendarModal(Modal, title="Add Calendar"):
     """Modal form for adding a new calendar."""
