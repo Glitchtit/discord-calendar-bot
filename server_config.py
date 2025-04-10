@@ -19,6 +19,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from log import logger
 from utils import load_server_config  # Ensure this is imported from utils.py
 from threading import Lock
+from config.calendar_config import CalendarConfig
 
 # Directory for server configuration files
 SERVER_CONFIG_BASE = "/data"
@@ -64,48 +65,10 @@ def save_server_config(server_id: int, config: Dict[str, Any]) -> bool:
         logger.exception(f"Error saving server config: {e}")
         return False
 
-def add_calendar(server_id: int, calendar_url: str, user_id: str, display_name: str = "") -> Tuple[bool, str]:
-    """Add a calendar to a server's configuration.
-    
-    Args:
-        server_id: Discord server ID
-        calendar_url: URL or ID of the calendar
-        user_id: Discord User ID to associate with this calendar
-        display_name: Optional display name for the calendar
-    
-    Returns:
-        (success, message): Tuple with success status and message
-    """
-    config = load_server_config(server_id)
-    
-    # Validate config structure
-    if not isinstance(config, dict):
-        return False, "Invalid server configuration structure."
-
-    # Detect calendar type (Google or ICS)
-    calendar_type = detect_calendar_type(calendar_url)
-    if not calendar_type:
-        return False, "Invalid calendar URL format. Please provide a valid Google Calendar ID or ICS URL."
-    
-    # Add calendar to config
-    calendar_entry = {
-        "type": calendar_type,
-        "id": calendar_url,
-        "name": display_name or f"{calendar_type.capitalize()} Calendar",
-        "user_id": user_id
-    }
-    
-    # Check for duplicates
-    for existing in config.get("calendars", []):
-        if existing["id"] == calendar_url:
-            return False, "This calendar is already added to the server."
-    
-    config.setdefault("calendars", []).append(calendar_entry)
-    
-    if save_server_config(server_id, config):
-        return True, f"Calendar successfully added and assigned to user ID {user_id}."
-    else:
-        return False, "Failed to save configuration. Please try again."
+def add_calendar(server_id: int, calendar_data: Dict) -> bool:
+    config = CalendarConfig(server_id)
+    config.add_calendar(calendar_data)
+    return True
 
 def remove_calendar(server_id: int, calendar_id: str) -> Tuple[bool, str]:
     """Remove a calendar from a server's configuration."""

@@ -15,7 +15,7 @@ from environ import (
     GOOGLE_APPLICATION_CREDENTIALS
 )
 from log import logger, get_log_file_location
-
+from server_config import get_all_server_ids
 
 # Flag to track if shutdown is in progress
 shutdown_in_progress = False
@@ -37,10 +37,11 @@ def validate_environment() -> bool:
     if not DISCORD_BOT_TOKEN:
         missing_vars.append("DISCORD_BOT_TOKEN")
     
-    if not ANNOUNCEMENT_CHANNEL_ID:
-        missing_vars.append("ANNOUNCEMENT_CHANNEL_ID")
-    elif ANNOUNCEMENT_CHANNEL_ID == 0:
-        logger.warning("ANNOUNCEMENT_CHANNEL_ID is set to default value (0). Bot may not post messages.")
+    # Check server configurations instead of environment variables
+    server_ids = get_all_server_ids()
+    if not server_ids:
+        logger.error("No servers configured. Use /setup command first")
+        return False
     
     # Check if Google credentials file exists
     if not os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):

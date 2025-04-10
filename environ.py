@@ -91,27 +91,6 @@ GOOGLE_APPLICATION_CREDENTIALS: str = get_str_env("GOOGLE_APPLICATION_CREDENTIAL
 Path to the Google service account JSON used for Calendar API calls.
 """
 
-# ╔════════════════════════════════════════════════════════════════════╗
-# ⚠️ Deprecated Variables - Use /setup command instead
-# ╚════════════════════════════════════════════════════════════════════╝
-
-CALENDAR_SOURCES: Optional[str] = get_str_env("CALENDAR_SOURCES", None)
-"""
-DEPRECATED: Use the /setup command in Discord instead.
-
-This variable was previously used to define calendars via comma-separated
-string (google:id:TAG or ics:url:TAG), but is now replaced by server-specific
-configuration via the /setup command.
-"""
-
-USER_TAG_MAPPING: str = get_str_env("USER_TAG_MAPPING", "")
-"""
-DEPRECATED: Use the /setup command in Discord instead.
-
-This variable was previously used for comma-separated user-to-tag mappings 
-(e.g., '123456789:T, 987654321:A'), but is now replaced by server-specific
-user mappings created during calendar setup.
-"""
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🧩 Other Configuration

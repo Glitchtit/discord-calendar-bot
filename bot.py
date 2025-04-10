@@ -62,6 +62,7 @@ from views import (
     CalendarRemoveView,
     ConfirmRemovalView
 )
+from config.calendar_config import CalendarConfig
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🤖 Intents & Bot Setup

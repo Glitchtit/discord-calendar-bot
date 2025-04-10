@@ -12,7 +12,6 @@ aiohttp==3.9.3
 colorlog==6.8.2
 requests==2.31.0
 rich==13.7.1
-colorlog==6.8.2
 discord.py==2.3.2
 dateparser==1.1.8
 
