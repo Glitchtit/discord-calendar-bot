@@ -67,6 +67,11 @@ def save_server_config(server_id: int, config: Dict[str, Any]) -> bool:
 
 def add_calendar(server_id: int, calendar_data: Dict) -> bool:
     config = CalendarConfig(server_id)
+    # Add Google credentials check when adding Google calendars
+    if calendar_data['type'] == 'google':
+        GOOGLE_APPLICATION_CREDENTIALS = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+        if not os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
+            return False, "Google credentials missing. Required for Google Calendar integration."
     config.add_calendar(calendar_data)
     return True
 

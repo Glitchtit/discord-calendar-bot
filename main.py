@@ -40,13 +40,8 @@ def validate_environment() -> bool:
     # Check server configurations instead of environment variables
     server_ids = get_all_server_ids()
     if not server_ids:
-        logger.error("No servers configured. Use /setup command first")
-        return False
-    
-    # Check if Google credentials file exists
-    if not os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
-        logger.error(f"Google credentials file not found: {GOOGLE_APPLICATION_CREDENTIALS}")
-        missing_vars.append("GOOGLE_APPLICATION_CREDENTIALS (file not found)")
+        logger.warning("No servers configured. Use /setup command after startup")
+        return True  # Allow bot to start for initial setup
     
     if missing_vars:
         logger.error(f"Missing required environment variables: {', '.join(missing_vars)}")
