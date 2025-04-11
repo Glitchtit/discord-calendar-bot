@@ -218,9 +218,9 @@ class CalendarSetupView(View):
     async def on_timeout(self):
         logger.info(f"CalendarSetupView for guild {self.guild_id} timed out.")
         # Optionally notify the user about the timeout
-        await self.bot.get_guild(self.guild_id).system_channel.send(
-            "The calendar setup session has timed out. Please restart the setup process."
-        )
+        #await self.bot.get_guild(self.guild_id).system_channel.send(
+        #    "The calendar setup session has timed out. Please restart the setup process."
+        #)
 
     @discord.ui.button(label="Add Calendar", style=discord.ButtonStyle.primary, emoji="➕")
     async def add_calendar_button(self, interaction: discord.Interaction, button: discord.ui.Button):
