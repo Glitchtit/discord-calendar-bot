@@ -171,3 +171,21 @@ def get_all_server_ids() -> List[int]:
     except Exception as e:
         logger.exception(f"Error listing server configurations: {e}")
         return []
+
+def get_admin_user_ids(server_id: int) -> List[str]:
+    """Get the list of admin user IDs for a server."""
+    return load_admins(server_id)
+
+def is_superadmin(server_id: int, user_id: str) -> bool:
+    """
+    Check if a user is a superadmin (server owner) for a server.
+    
+    Args:
+        server_id: The Discord server ID
+        user_id: The Discord user ID to check
+        
+    Returns:
+        bool: True if the user is a superadmin, False otherwise
+    """
+    config = load_server_config(server_id)
+    return config.get("owner_id") == user_id
