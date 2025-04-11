@@ -33,11 +33,11 @@ from bot.events import (
     load_post_tracking,
     GROUPED_CALENDARS,
     get_events,
-    compute_event_fingerprint
+    compute_event_fingerprint,
+    load_previous_events
 )
 from config.server_config import get_all_server_ids, load_server_config
 from data_processing.data import (
-    load_previous_events,
     save_current_events_for_key
 )
 
