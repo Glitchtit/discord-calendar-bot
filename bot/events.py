@@ -415,6 +415,28 @@ def save_current_events_for_key(server_id: int, key, events):
     except Exception as e:
         logger.exception(f"Error saving events for key {key}: {e}")
 
+def load_post_tracking(server_id: int) -> dict:
+    """
+    Load tracking data for daily posts from a file.
+
+    Args:
+        server_id: The ID of the server to load tracking data for.
+
+    Returns:
+        A dictionary containing tracking data, or an empty dictionary if no data exists.
+    """
+    try:
+        path = get_events_file(server_id)
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("daily_posts", {})
+    except json.JSONDecodeError:
+        logger.warning(f"Tracking file for server {server_id} is corrupted. Starting fresh.")
+    except Exception as e:
+        logger.exception(f"Error loading post tracking for server {server_id}: {e}")
+    return {}
+
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📆 Event Fetching                                                  ║
 # ║ Retrieves events from Google or ICS sources                        ║
