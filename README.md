@@ -66,15 +66,13 @@
 │   ├── cache.py          # Data caching
 │   ├── calendar_sync.py  # Real-time calendar updates
 │   ├── environ.py        # Environment configuration
+│   ├── error_handling.py # Error management
 │   ├── logging.py        # Log setup and management
 │   ├── notifications.py  # Admin notifications
 │   ├── rate_limiter.py   # API rate limiting
 │   ├── server_utils.py   # Server configuration helpers
 │   ├── timezone_utils.py # Time zone conversions
 │   └── validators.py     # Input validation
-└── 📁 data_processing/   # Data handling
-    └── data/             # Data storage
-
 ```
 
 ---
