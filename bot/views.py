@@ -21,12 +21,7 @@ class AddCalendarModal(Modal, title="Add Calendar"):
         required=False,
         style=discord.TextStyle.short
     )
-    calendar_scope = TextInput(
-        label="Calendar Scope (user/server)",
-        placeholder="Enter 'user' for user-specific or 'server' for server-wide",
-        required=True,
-        style=discord.TextStyle.short
-    )
+    # Removed calendar_scope input field - will be handled by a dropdown after modal submission
 
     def __init__(self, bot, guild_id):
         super().__init__(timeout=300)
@@ -37,16 +32,7 @@ class AddCalendarModal(Modal, title="Add Calendar"):
         """Handle the form submission."""
         await interaction.response.defer(ephemeral=True, thinking=True)
         calendar_url = self.calendar_url.value.strip()
-        display_name = self.display_name.value.strip()  # Remove the default value here
-        calendar_scope = self.calendar_scope.value.strip().lower()  # Get the entered scope
-
-        # Validate calendar scope
-        if calendar_scope not in ["user", "server"]:
-            await interaction.followup.send(
-                "❌ Invalid calendar scope. Please enter 'user' or 'server'.",
-                ephemeral=True
-            )
-            return
+        display_name = self.display_name.value.strip()
 
         # Detect calendar type
         calendar_type = detect_calendar_type(calendar_url)
@@ -78,7 +64,6 @@ class AddCalendarModal(Modal, title="Add Calendar"):
             return
 
         # Extract calendar name from the connection test message if no display name was provided
-        # The message format is "Successfully connected to 'Calendar Name'"
         if not display_name and success:
             try:
                 # Extract the name from the success message, which is between single quotes
@@ -93,46 +78,23 @@ class AddCalendarModal(Modal, title="Add Calendar"):
         elif not display_name:
             display_name = "Unnamed Calendar"
 
-        # Add the calendar
-        calendar_data = {
-            'type': calendar_type,
-            'id': calendar_url,
-            'user_id': str(interaction.user.id) if calendar_scope == "user" else None,
-            'name': display_name
-        }
+        # Now show the user selection view for assigning the calendar
+        user_selector = CalendarUserSelectView(
+            self.bot, 
+            self.guild_id, 
+            {
+                'type': calendar_type,
+                'id': calendar_url,
+                'name': display_name
+            },
+            message
+        )
         
-        success, add_message = add_calendar(self.guild_id, calendar_data)
-
-        # Reload calendar configuration and reinitialize events
-        if success:
-            try:
-                # Inform user the calendar passed connection test
-                await interaction.followup.send(
-                    f"✅ {message}\n\nAdding calendar to your configuration...",
-                    ephemeral=True
-                )
-                
-                # Reinitialize events
-                logger.info("Calling reinitialize_events from views.py, line 85")
-                await reinitialize_events()
-                
-                # Final success message
-                await interaction.followup.send(
-                    f"✅ Calendar **{display_name}** has been added successfully!",
-                    ephemeral=True
-                )
-            except Exception as e:
-                logger.error(f"Error during reinitialization: {e}")
-                await interaction.followup.send(
-                    f"⚠️ Calendar added but there was an error refreshing events: {str(e)}",
-                    ephemeral=True
-                )
-        else:
-            # Something went wrong during the add_calendar operation
-            await interaction.followup.send(
-                f"❌ {add_message}",
-                ephemeral=True
-            )
+        await interaction.followup.send(
+            f"✅ {message}\n\nPlease select which user(s) to assign this calendar to:",
+            view=user_selector,
+            ephemeral=True
+        )
 
 class CalendarRemoveView(View):
     """View for selecting which calendar to remove."""
@@ -262,3 +224,106 @@ class CalendarSetupView(View):
         for cal in calendars:
             lines.append(f"- {cal.get('name', 'Unnamed Calendar')} (ID: {cal.get('id', 'unknown')})")
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+class CalendarUserSelectView(View):
+    """View for selecting users to assign a calendar to."""
+    def __init__(self, bot, guild_id, calendar_data, connection_message):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.guild_id = guild_id
+        self.calendar_data = calendar_data
+        self.connection_message = connection_message
+        
+        # Create the dropdown for user selection
+        self.create_user_dropdown()
+    
+    def create_user_dropdown(self):
+        """Create the dropdown with server members and 'Everyone' option."""
+        guild = self.bot.get_guild(self.guild_id)
+        
+        # Create the dropdown
+        select = Select(
+            placeholder="Select user to assign calendar to...", 
+            min_values=1, 
+            max_values=1
+        )
+        
+        # Add 'Everyone' option
+        select.add_option(
+            label="Everyone (Server-wide)",
+            value="server",
+            description="Make this calendar available to everyone",
+            emoji="👥"
+        )
+        
+        # Add guild members (if we can access them)
+        if guild and guild.members:
+            # Sort members by name for easier selection
+            sorted_members = sorted(guild.members, key=lambda m: m.display_name.lower())
+            
+            for member in sorted_members:
+                # Skip bots
+                if member.bot:
+                    continue
+                    
+                # Add member to dropdown
+                select.add_option(
+                    label=member.display_name,
+                    value=str(member.id),
+                    description=f"{member.name}#{member.discriminator}" if member.discriminator != "0" else member.name,
+                    emoji="👤"
+                )
+        
+        # Set callback and add to view
+        select.callback = self.user_selected
+        self.add_item(select)
+    
+    async def user_selected(self, interaction: discord.Interaction):
+        """Handle user selection for calendar assignment."""
+        selected_value = interaction.data["values"][0]
+        
+        # Check if "server" (Everyone) was selected
+        if selected_value == "server":
+            # Server-wide calendar
+            self.calendar_data["user_id"] = None
+            user_display = "everyone in the server"
+        else:
+            # User-specific calendar
+            self.calendar_data["user_id"] = selected_value
+            # Try to get user info for display
+            try:
+                guild = self.bot.get_guild(self.guild_id)
+                member = guild.get_member(int(selected_value))
+                user_display = f"{member.display_name}" if member else f"user ID {selected_value}"
+            except:
+                user_display = f"user ID {selected_value}"
+        
+        # Add the calendar to the server config
+        success, add_message = add_calendar(self.guild_id, self.calendar_data)
+        
+        # Reload calendar configuration and reinitialize events if successful
+        if success:
+            try:
+                await interaction.response.defer(ephemeral=True)
+                
+                # Reinitialize events
+                logger.info("Calling reinitialize_events from user_selected callback")
+                await reinitialize_events()
+                
+                # Success message
+                await interaction.followup.send(
+                    f"✅ Calendar **{self.calendar_data['name']}** has been added successfully and assigned to **{user_display}**!",
+                    ephemeral=True
+                )
+            except Exception as e:
+                logger.error(f"Error during reinitialization: {e}")
+                await interaction.followup.send(
+                    f"⚠️ Calendar added and assigned to {user_display}, but there was an error refreshing events: {str(e)}",
+                    ephemeral=True
+                )
+        else:
+            # Something went wrong during the add_calendar operation
+            await interaction.response.send_message(
+                f"❌ {add_message}",
+                ephemeral=True
+            )

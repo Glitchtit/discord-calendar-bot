@@ -82,11 +82,16 @@ async def post_all_daily_events_to_channel(bot, date=None):
                 
             # Get events for all users/tags
             all_events = []
+            has_server_wide_events = False
+            
             for user_id, calendars in GROUPED_CALENDARS.items():
                 for cal in calendars:
                     if cal.get("server_id") == server_id:
                         events = await asyncio.to_thread(get_events, cal, date, date)
                         if events:
+                            # Check if this calendar is server-wide (user_id is None)
+                            if cal.get("user_id") is None:
+                                has_server_wide_events = True
                             all_events.extend(events)
             
             # If we have events, post them
@@ -97,13 +102,17 @@ async def post_all_daily_events_to_channel(bot, date=None):
                 # Format event list
                 event_list = [f"- {format_event(event)}" for event in all_events]
                 
+                # Set content to @everyone if we have server-wide events
+                content = "@everyone" if has_server_wide_events else None
+                
                 # Create embed
                 await send_embed(
                     bot,
                     title=f"📅 Events for {date.strftime('%A, %B %d')}",
                     description="\n".join(event_list) if event_list else "No events today!",
                     color=0x3498db,  # Blue color
-                    channel=channel
+                    channel=channel,
+                    content=content
                 )
                 
                 logger.info(f"Posted {len(all_events)} events to channel {channel.name} in server {server_id}")

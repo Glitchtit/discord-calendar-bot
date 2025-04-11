@@ -287,19 +287,51 @@ def validate_env_vars(required_vars):
 
 
 def format_message_lines(user_id, events_by_day, start_date):
-    """Format message lines for weekly or daily events."""
+    """Format message lines for weekly or daily events.
+    
+    Returns a list of properly formatted strings that can be passed to a Discord message.
+    Formats events in a clean, readable way with proper icons and formatting.
+    """
+    is_daily = isinstance(next(iter(events_by_day.keys()), None), str)
+    is_single_day = len(events_by_day) == 1 and isinstance(next(iter(events_by_day.keys()), None), date)
+    
+    # Include user mention in the header
     user_mention = f"<@{user_id}>"
-    message_lines = [f"📜 **Weekly Events for {user_mention} — Week of {start_date.strftime('%B %d')}**\n"]
-    for day, events in sorted(events_by_day.items()):
-        message_lines.append(f"📅 **{day.strftime('%A, %B %d')}**")
-        for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
-            start_time = e["start"].get("dateTime", e["start"].get("date"))
-            end_time = e["end"].get("dateTime", e["end"].get("date"))
-            summary = e.get("summary", "No Title")
-            location = e.get("location", "No Location")
-            message_lines.append(
-                f"```{summary}\nTime: {start_time} - {end_time}\nLocation: {location}```"
-            )
+    
+    # Determine the type of view and set the appropriate header
+    if is_daily:
+        # Calendar name -> events format
+        header = f"📅 **Today's Events for {user_mention} ({start_date.strftime('%A, %B %d')})**\n"
+    elif is_single_day:
+        # Single day view
+        day = next(iter(events_by_day.keys()))
+        header = f"📅 **Events for {user_mention} on {day.strftime('%A, %B %d')}**\n"
+    else:
+        # Weekly view
+        header = f"📆 **Weekly Events for {user_mention} — Week of {start_date.strftime('%B %d')}**\n"
+    
+    message_lines = [header]
+    
+    # Process the events based on the format they're in
+    if is_daily:
+        # Daily events grouped by calendar name
+        for calendar_name, events in sorted(events_by_day.items()):
+            if events:
+                message_lines.append(f"📁 **{calendar_name}**")
+                for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
+                    message_lines.append(format_event(e))
+                message_lines.append("")  # Add spacing between calendar sections
+    else:
+        # Weekly events grouped by day
+        for day, events in sorted(events_by_day.items()):
+            message_lines.append(f"📆 **{day.strftime('%A, %B %d')}**")
+            if not events:
+                message_lines.append("*No events scheduled*\n")
+            else:
+                for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
+                    message_lines.append(format_event(e))
+                message_lines.append("")  # Add spacing between days
+    
     return message_lines
 
 
