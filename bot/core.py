@@ -101,12 +101,13 @@ async def on_ready():
         # Load admin users from config and register them for notifications
         from config.server_config import get_admin_user_ids
         from utils.notifications import register_admins
-        admin_ids = get_admin_user_ids()
-        if admin_ids:
-            register_admins(admin_ids)
-            logger.info(f"Registered {len(admin_ids)} admins for error notifications")
-        else:
-            logger.warning("No admin users configured for notifications")
+        for server_id in get_all_server_ids():
+            admin_ids = get_admin_user_ids(server_id)
+            if admin_ids:
+                register_admins(admin_ids)
+                logger.info(f"Registered {len(admin_ids)} admins for server {server_id} error notifications")
+            else:
+                logger.warning(f"No admin users configured for server {server_id} notifications")
 
         # Sync commands - only do this once during startup
         synced = await bot.tree.sync()
