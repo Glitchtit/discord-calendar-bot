@@ -11,32 +11,29 @@ from bot.events import reinitialize_events, get_service_account_email
 async def handle_setup_command(interaction: Interaction):
     """Handle the setup command to configure calendars for a server"""
     try:
-        # Check permissions first
         if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("⚠️ You need administrator permissions to use this command.", ephemeral=True)
+            await interaction.response.send_message("\u26a0\ufe0f You need administrator permissions to use this command.", ephemeral=True)
             return
-            
-        # Create the setup view with the right guild ID
+
         setup_view = CalendarSetupView(interaction.client, interaction.guild_id)
-        
-        # Send instructions with service account email
+
         service_email = get_service_account_email()
         embed = discord.Embed(
-            title="🔧 Calendar Bot Setup",
+            title="\ud83d\udd27 Calendar Bot Setup",
             description=(
                 "Welcome to the Calendar Bot setup wizard! You can configure your calendars with the buttons below.\n\n"
                 f"**For Google Calendar:** Share your calendar with: `{service_email}`\n"
                 "**For ICS Calendars:** Have the ICS URL ready\n\n"
                 "Use the buttons below to add or manage calendars."
             ),
-            color=0x4285F4  # Google blue
+            color=0x4285F4
         )
-        
+
         await interaction.response.send_message(embed=embed, view=setup_view, ephemeral=True)
-        
+
     except Exception as e:
         logger.exception(f"Error in setup command: {e}")
-        await interaction.response.send_message("⚠️ An error occurred during setup. Please try again later.", ephemeral=True)
+        await interaction.response.send_message("\u26a0\ufe0f An error occurred during setup. Please try again later.", ephemeral=True)
 
 async def register(bot):
     """Register setup command with the bot"""

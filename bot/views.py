@@ -21,6 +21,14 @@ class AddCalendarModal(Modal, title="Add Calendar"):
         required=False,
         style=discord.TextStyle.short
     )
+    calendar_scope = Select(
+        placeholder="Select calendar scope",
+        options=[
+            discord.SelectOption(label="User-specific", value="user"),
+            discord.SelectOption(label="Server-wide", value="server")
+        ],
+        required=True
+    )
 
     def __init__(self, bot, guild_id):
         super().__init__(timeout=300)
@@ -32,6 +40,7 @@ class AddCalendarModal(Modal, title="Add Calendar"):
         await interaction.response.defer(ephemeral=True, thinking=True)
         calendar_url = self.calendar_url.value.strip()
         display_name = self.display_name.value.strip() or "Unnamed Calendar"
+        calendar_scope = self.calendar_scope.values[0]  # Get the selected scope
 
         # Detect calendar type
         calendar_type = detect_calendar_type(calendar_url)
@@ -66,7 +75,7 @@ class AddCalendarModal(Modal, title="Add Calendar"):
         calendar_data = {
             'type': calendar_type,
             'id': calendar_url,
-            'user_id': str(interaction.user.id),
+            'user_id': str(interaction.user.id) if calendar_scope == "user" else None,
             'name': display_name
         }
         
