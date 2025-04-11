@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, date
 from dateutil import tz
-from log import logger  # Import logger from log.py
+from utils.logging import logger  # Changed: Use proper logger import
 import functools
 import re
 import os
@@ -65,21 +65,6 @@ def get_monday_of_week(day: date = None) -> date:
 # ╔════════════════════════════════════════════════════════════════════╗
 # ✨ Event Formatting
 # ╚════════════════════════════════════════════════════════════════════╝
-def get_monday_of_week(day: date = None) -> date:
-    if day is None:
-        day = get_today()
-    
-    # Ensure we have a date object
-    if isinstance(day, datetime):
-        day = day.date()
-    
-    try:
-        return day - timedelta(days=day.weekday())
-    except Exception as e:
-        logger.exception(f"Error calculating Monday of week for {day}: {e}")
-        # Return today's Monday as fallback
-        today = get_today()
-        return today - timedelta(days=today.weekday())
 
 
 # ╔════════════════════════════════════════════════════════════════════╗

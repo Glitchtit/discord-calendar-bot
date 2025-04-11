@@ -11,7 +11,7 @@ Note: All tasks now work with server-specific configurations loaded via
 the /setup command, rather than the deprecated environment variables.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from dateutil import tz
 from discord.ext import tasks
 import asyncio
@@ -26,9 +26,11 @@ from utils import (
     get_monday_of_week,
     get_today,
     resolve_input_to_tags,
-    format_event  # Added this import from utils.py
+    format_event,
+    is_in_current_week as utils_is_in_current_week  # Import the original function with an alias
 )
-# Removing the problematic import and will add send_embed directly from proper location
+import discord  # Added for creating embed messages
+
 from bot.events import (
     CalendarSyncComplete,
     CalendarUpdateRequested,
@@ -50,6 +52,7 @@ from data_processing.data import (
 # Define helper functions that were missing
 def is_in_current_week(event, today):
     """Check if an event is within the current week."""
+    # We're using our own implementation here, but could use the utils version
     try:
         start_container = event.get("start", {})
         if "date" in start_container:

@@ -625,9 +625,9 @@ def get_events(
     # Implement calendar-specific fetching with enhanced error handling
     try:
         events = []
-        if calendar_type == "google":
+        if (calendar_type == "google"):
             events = get_google_events(start_date, end_date, calendar_id)
-        elif calendar_type == "ics":
+        elif (calendar_type == "ics"):
             events = get_ics_events(start_date, end_date, calendar_id)
         else:
             logger.warning(f"Unsupported calendar type: {calendar_type}")
@@ -756,8 +756,8 @@ async def reinitialize_events():
             return False
 
         logger.info("Starting reinitialization of events.")
-        # Existing reinitialization logic
-        from tasks import initialize_event_snapshots
+        # Import at function level to avoid circular imports
+        from bot.tasks import initialize_event_snapshots
         from config.server_config import get_all_server_ids, load_server_config
 
         # First, reload calendar configurations for all servers
