@@ -57,11 +57,11 @@ from config.server_config import (
 from collections import defaultdict
 from datetime import timedelta
 from bot.views import (
-    CalendarSetupView,
     AddCalendarModal,
     CalendarRemoveView,
     ConfirmRemovalView
 )
+# CalendarSetupView will be imported just before use to avoid circular import issues
 from config.calendar_config import CalendarConfig
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -312,74 +312,6 @@ async def resolve_tag_mappings():
 # ║ 🧩 Setup UI Components                                          ║
 # ║ Interactive components for the setup process                    ║
 # ╚═════════════════════════════════════════════════════════════════╝
-
-class CalendarSetupView(View):
-    """Main view for the calendar setup wizard."""
-    def __init__(self, bot, guild_id):
-        super().__init__(timeout=300)  # 5 minute timeout
-        self.bot = bot
-        self.guild_id = guild_id
-        
-    @discord.ui.button(label="Add Calendar", style=discord.ButtonStyle.primary, emoji="➕")
-    async def add_calendar_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Launch the add calendar modal when this button is clicked."""
-        modal = AddCalendarModal(self.bot, self.guild_id)
-        await interaction.response.send_modal(modal)
-        
-    @discord.ui.button(label="Remove Calendar", style=discord.ButtonStyle.danger, emoji="🗑️")
-    async def remove_calendar_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Show a dropdown of calendars that can be removed."""
-        # Load server config to get list of calendars
-        config = load_server_config(self.guild_id)
-        calendars = config.get("calendars", [])
-        
-        if not calendars:
-            await interaction.response.send_message("No calendars configured for this server yet.", ephemeral=True)
-            return
-            
-        # Create dropdown for calendar selection
-        view = CalendarRemoveView(self.bot, self.guild_id, calendars)
-        await interaction.response.send_message(
-            "Select the calendar you want to remove:", 
-            view=view, 
-            ephemeral=True
-        )
-        
-    @discord.ui.button(label="List Calendars", style=discord.ButtonStyle.secondary, emoji="📋")
-    async def list_calendars_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """List all configured calendars."""
-        await interaction.response.defer(ephemeral=True)
-        config = load_server_config(self.guild_id)
-        calendars = config.get("calendars", [])
-        
-        if not calendars:
-            await interaction.followup.send(
-                "No calendars configured for this server yet. Click 'Add Calendar' to get started.",
-                ephemeral=True
-            )
-            return
-            
-        # Format calendar list
-        lines = ["**Configured Calendars:**\n"]
-        
-        for i, cal in enumerate(calendars, 1):
-            cal_name = cal.get("name", "Unnamed Calendar")
-            cal_id = cal.get("id", "unknown")
-            cal_tag = cal.get("tag", "No Tag")
-            user_id = cal.get("user_id", "Unknown User ID")
-            user_name = TAG_NAMES.get(user_id, "Unknown User")
-            
-            # Truncate long calendar IDs
-            display_id = cal_id[:27] + "..." if len(cal_id) > 30 else cal_id
-                
-            lines.append(
-                f"{i}. **{cal_name}**\n"
-                f"   ID: `{display_id}`\n"
-                f"   User: **{user_name}** (ID: `{user_id}`)\n"
-                f"   Tag: `{cal_tag}`"
-            )
-        
-        await interaction.followup.send("\n".join(lines), ephemeral=True)
 
 class AddCalendarModal(discord.ui.Modal):
     def __init__(self, bot, guild_id):

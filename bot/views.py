@@ -4,7 +4,8 @@ from config.server_config import add_calendar, remove_calendar, load_server_conf
 from utils.logging import logger
 from bot.events import reinitialize_events
 from utils.validators import detect_calendar_type
-from bot.core import Bot
+# Removing this import to fix circular dependency
+# from bot.core import Bot
 
 class AddCalendarModal(Modal, title="Add Calendar"):
     """Modal form for adding a new calendar."""
