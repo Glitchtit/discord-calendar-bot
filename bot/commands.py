@@ -12,8 +12,8 @@ from typing import Optional
 from .views import CalendarSetupView
 from utils.logging import logger
 
-# Import command modules using relative imports
-from .commands import (
+# Import command modules using absolute imports to avoid confusion
+from bot.commands import (
     herald,
     agenda,
     greet,

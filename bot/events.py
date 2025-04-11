@@ -189,7 +189,7 @@ def retry_api_call(func, *args, max_retries=3, **kwargs):
             status_code = e.resp.status
             
             # For rate limit errors, wait longer and retry with higher backoff
-            if status_code == 429:
+            if (status_code == 429):
                 backoff = (5 ** attempt) + random.uniform(1, 3)  # More aggressive backoff
                 logger.warning(f"Rate limit hit ({status_code}), attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
                 time.sleep(backoff)
@@ -568,11 +568,17 @@ def get_events(
     # Create a unique cache key for this request
     cache_key = f"{calendar_id}_{calendar_type}_{start_date.isoformat()}_{end_date.isoformat()}"
     
-    # Import the cache module here to avoid circular imports
-    from utils.cache import event_cache
+    # Import the cache module only when needed to avoid circular imports
+    def get_cached_events(key):
+        from utils.cache import event_cache
+        return event_cache.get(key)
+    
+    def set_cached_events(key, value):
+        from utils.cache import event_cache
+        event_cache.set(key, value)
     
     # Try to get from cache first
-    cached_events = event_cache.get(cache_key)
+    cached_events = get_cached_events(cache_key)
     if cached_events is not None:
         logger.debug(f"Cache hit for {calendar_name} events ({start_date} to {end_date})")
         return cached_events
@@ -600,7 +606,7 @@ def get_events(
         
         # Cache the result before returning
         result = events or []
-        event_cache.set(cache_key, result)
+        set_cached_events(cache_key, result)
         return result
         
     except Exception as e:

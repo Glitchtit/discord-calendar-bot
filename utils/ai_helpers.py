@@ -7,6 +7,7 @@ import random
 import requests
 import json
 import os
+import pathlib
 import math
 import time
 from datetime import datetime, timedelta
@@ -233,6 +234,18 @@ def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | N
         f"with humorous medieval cartoon characters, textured linen background, and stitched-looking text."
     )
 
+    # Define data directories with platform-agnostic paths
+    # Primary data directory
+    data_dir = pathlib.Path("/data")
+    art_dir = data_dir / "art"
+    
+    # Fallback directories
+    script_dir = pathlib.Path(__file__).parent.parent  # Go up one level from utils/
+    fallback_art_dir = script_dir / "data" / "art"
+    
+    # Another fallback using temp directory
+    temp_art_dir = pathlib.Path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "art"))
+
     # Retry loop with exponential backoff
     for attempt in range(max_retries):
         try:
@@ -260,26 +273,32 @@ def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | N
                     else:
                         raise
 
-            # Ensure directory exists
-            try:
-                os.makedirs("/data/art", exist_ok=True)
-            except PermissionError:
-                logger.warning("Permission error creating /data/art directory. Trying alternate location.")
-                # Try a fallback location if we can't write to /data/art
-                art_dir = os.path.join(os.path.dirname(__file__), "art")
-                os.makedirs(art_dir, exist_ok=True)
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                image_path = os.path.join(art_dir, f"generated_{timestamp}.png")
-            else:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                image_path = f"/data/art/generated_{timestamp}.png"
-                
-            # Save the image
-            with open(image_path, "wb") as f:
-                f.write(image_response.content)
-
-            logger.info(f"Image saved to {image_path}")
-            return image_path
+            # Timestamp for unique filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"generated_{timestamp}.png"
+            
+            # Try saving to each potential directory until one works
+            for directory in [art_dir, fallback_art_dir, temp_art_dir]:
+                try:
+                    # Create directory if it doesn't exist
+                    directory.mkdir(parents=True, exist_ok=True)
+                    
+                    # Full path to the file
+                    image_path = directory / filename
+                    
+                    # Save the image
+                    with open(image_path, "wb") as f:
+                        f.write(image_response.content)
+                        
+                    logger.info(f"Image saved to {image_path}")
+                    return str(image_path)
+                except (PermissionError, OSError) as e:
+                    logger.warning(f"Could not save to {directory}: {e}")
+                    continue  # Try next directory
+            
+            # If we get here, all directories failed
+            logger.error("Failed to save image to any directory. Check permissions.")
+            return None
 
         except (RateLimitError, APITimeoutError, APIConnectionError, APIError) as e:
             error_type = handle_api_error(e, f"image generation (attempt {attempt+1})")

@@ -5,6 +5,7 @@ and helper functions for parsing.
 """
 
 import os
+import pathlib
 from typing import Optional
 
 
@@ -86,9 +87,29 @@ OpenAI API key for generating greeting text and images.
 If unset, AI features may be disabled or fail.
 """
 
-GOOGLE_APPLICATION_CREDENTIALS: str = get_str_env("GOOGLE_APPLICATION_CREDENTIALS", "/app/service_account.json")
+# Determine platform-appropriate default path for Google service account
+def get_default_service_account_path() -> str:
+    """Provide a platform-appropriate default path for service account"""
+    # First, check if we're running in Docker
+    if os.path.exists("/app/service_account.json"):
+        return "/app/service_account.json"
+    
+    # Otherwise, try a path relative to this file
+    base_dir = pathlib.Path(__file__).resolve().parent.parent
+    local_service_account = base_dir / "service_account.json"
+    if local_service_account.exists():
+        return str(local_service_account)
+        
+    # Last resort: use a filename in the current directory
+    return "./service_account.json"
+
+GOOGLE_APPLICATION_CREDENTIALS: str = get_str_env("GOOGLE_APPLICATION_CREDENTIALS", get_default_service_account_path())
 """
 Path to the Google service account JSON used for Calendar API calls.
+This will use the environment variable if set, or try to find the file:
+1. In the Docker container at /app/service_account.json
+2. In the project root directory
+3. In the current working directory
 """
 
 

@@ -16,6 +16,10 @@ import json
 from typing import Dict, List, Any, Optional, Tuple
 import logging
 import asyncio
+from utils.logging import logger
+from config.calendar_config import CalendarConfig
+
+# Import utilities from server_utils rather than redefining the same functions
 from utils.server_utils import (
     load_server_config,
     save_server_config, 
@@ -23,16 +27,13 @@ from utils.server_utils import (
     detect_calendar_type,
     migrate_env_config_to_server
 )
-from config.calendar_config import CalendarConfig
-from data_processing.data import (
-    load_calendar_events,
-    save_calendar_events,
-    load_user_mappings,
-    save_user_mappings
-)
 
-# Configure logger
-logger = logging.getLogger("calendarbot")
+# Define the server config directory for reference
+SERVER_CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'servers')
+os.makedirs(SERVER_CONFIG_DIR, exist_ok=True)
+
+# Task tracking for background operations
+_background_tasks = {}
 
 def add_calendar(server_id: int, calendar_data: Dict) -> Tuple[bool, str]:
     """
@@ -78,8 +79,37 @@ def add_calendar(server_id: int, calendar_data: Dict) -> Tuple[bool, str]:
         if save_server_config(server_id, config):
             logger.info(f"Added calendar {calendar_data.get('name')} to server {server_id}")
             
-            # Set up real-time subscription in background
-            asyncio.create_task(_subscribe_calendar(calendar_data))
+            # Set up real-time subscription in background with improved error handling
+            async def setup_subscription():
+                try:
+                    from utils.calendar_sync import subscribe_calendar
+                    await subscribe_calendar(calendar_data)
+                    logger.info(f"Successfully subscribed to updates for calendar {calendar_data.get('id')}")
+                except Exception as e:
+                    logger.error(f"Failed to subscribe to calendar updates: {e}")
+                    # Consider notifying an admin here if critical
+            
+            # Create and monitor the background task
+            task_key = f"add_calendar_{server_id}_{calendar_data.get('id', 'unknown')}"
+            task = asyncio.create_task(setup_subscription())
+            _background_tasks[task_key] = task
+            
+            # Set up a callback to remove the task when done and log any errors
+            def task_done_callback(task):
+                try:
+                    # Check if the task raised any exceptions
+                    if task.exception():
+                        logger.error(f"Background task {task_key} failed: {task.exception()}")
+                except asyncio.CancelledError:
+                    logger.warning(f"Task {task_key} was cancelled")
+                except Exception as e:
+                    logger.exception(f"Error handling task completion: {e}")
+                finally:
+                    # Remove the task from tracking
+                    if task_key in _background_tasks:
+                        del _background_tasks[task_key]
+            
+            task.add_done_callback(task_done_callback)
             
             return True, f"Added calendar {calendar_data.get('name')} successfully."
         else:
@@ -125,11 +155,40 @@ def remove_calendar(server_id: int, calendar_id: str) -> Tuple[bool, str]:
             if save_server_config(server_id, config):
                 logger.info(f"Removed calendar {calendar_id} from server {server_id}")
                 
-                # Unsubscribe from real-time updates in background if we found the calendar
+                # Unsubscribe from real-time updates in background with improved error handling
                 if removed_calendar:
-                    # Add server_id to the calendar data for reference
+                    # Add server_id to the calendar data for reference if not present
                     removed_calendar["server_id"] = server_id
-                    asyncio.create_task(_unsubscribe_calendar(removed_calendar))
+                    
+                    async def cancel_subscription():
+                        try:
+                            from utils.calendar_sync import unsubscribe_calendar
+                            await unsubscribe_calendar(removed_calendar)
+                            logger.info(f"Successfully unsubscribed from calendar {calendar_id}")
+                        except Exception as e:
+                            logger.error(f"Failed to unsubscribe from calendar updates: {e}")
+                    
+                    # Create and monitor the background task
+                    task_key = f"remove_calendar_{server_id}_{calendar_id}"
+                    task = asyncio.create_task(cancel_subscription())
+                    _background_tasks[task_key] = task
+                    
+                    # Set up a callback to remove the task when done and log any errors
+                    def task_done_callback(task):
+                        try:
+                            # Check if the task raised any exceptions
+                            if task.exception():
+                                logger.error(f"Background task {task_key} failed: {task.exception()}")
+                        except asyncio.CancelledError:
+                            logger.warning(f"Task {task_key} was cancelled")
+                        except Exception as e:
+                            logger.exception(f"Error handling task completion: {e}")
+                        finally:
+                            # Remove the task from tracking
+                            if task_key in _background_tasks:
+                                del _background_tasks[task_key]
+                    
+                    task.add_done_callback(task_done_callback)
                 
                 return True, "Calendar successfully removed."
             else:
@@ -140,31 +199,29 @@ def remove_calendar(server_id: int, calendar_id: str) -> Tuple[bool, str]:
         logger.exception(f"Error removing calendar: {e}")
         return False, f"Error removing calendar: {str(e)}"
 
-async def _subscribe_calendar(calendar_data: Dict) -> None:
+async def check_background_tasks() -> Dict[str, str]:
     """
-    Subscribe to real-time updates for a calendar in the background.
+    Check the status of any currently running background tasks.
     
-    Args:
-        calendar_data: Calendar data dictionary
+    Returns:
+        Dictionary with task keys and their status
     """
-    try:
-        from utils.calendar_sync import subscribe_calendar
-        await subscribe_calendar(calendar_data)
-    except Exception as e:
-        logger.error(f"Error subscribing to calendar updates: {e}")
-
-async def _unsubscribe_calendar(calendar_data: Dict) -> None:
-    """
-    Unsubscribe from real-time updates for a calendar in the background.
+    result = {}
+    for key, task in list(_background_tasks.items()):
+        if task.done():
+            if task.exception():
+                result[key] = f"Failed: {task.exception()}"
+            else:
+                result[key] = "Completed"
+            # Clean up completed tasks
+            del _background_tasks[key]
+        elif task.cancelled():
+            result[key] = "Cancelled"
+            del _background_tasks[key]
+        else:
+            result[key] = "Running"
     
-    Args:
-        calendar_data: Calendar data dictionary
-    """
-    try:
-        from utils.calendar_sync import unsubscribe_calendar
-        await unsubscribe_calendar(calendar_data)
-    except Exception as e:
-        logger.error(f"Error unsubscribing from calendar updates: {e}")
+    return result
 
 def get_admin_user_ids() -> list:
     """

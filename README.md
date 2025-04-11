@@ -13,7 +13,7 @@
 - 🎨 **AI-Generated Art** — DALL·E illustrations styled like the Bayeux Tapestry.
 - 🧠 **Natural Language Parsing** — `/agenda tomorrow` or `/agenda next friday Anniina`
 - 🔀 **Live Event Monitoring** — Posts alerts for added/removed events.
-- 🧩 **User–Tag Mapping** — Assign Discord users to calendar tags via env variables.
+- 🧩 **User–Tag Mapping** — Assign Discord users to calendar tags via server configuration.
 - ⚒️ **Slash Commands with Autocomplete**
 
 ---
@@ -27,25 +27,54 @@
 | `/greet`          | Post the themed morning greeting with image. |
 | `/reload`         | Reload calendars and tag mappings. |
 | `/who`            | Show current calendar tags and assigned users. |
+| `/setup`          | Configure calendars for the server (Admin only). |
+| `/status`         | Check bot status and configuration. |
 
 ---
 
 ## 📦 Project Structure
 
 ```
-📁 calendarbot/
-├── bot.py                # Discord bot & slash command logic
-├── main.py               # Bot entrypoint
-├── ai.py                 # OpenAI-based greeting and image generation
-├── tasks.py              # Scheduled daily/weekly event posters
-├── events.py             # Calendar integration (Google & ICS)
-├── commands.py           # Embed formatting and command actions
-├── utils.py              # Date utilities and formatting
-├── log.py                # Rich, color-coded logging setup
-├── environ.py            # Environment variable loading
-├── requirements.txt      # Python dependencies
-├── Dockerfile
-└── docker-compose.yml
+📁 discord-calendar-bot/
+├── main.py                # Bot entrypoint
+├── ai.py                  # Re-exports for backward compatibility
+├── utils.py               # Re-exports for backward compatibility
+├── docker-compose.yml     # Docker deployment configuration
+├── Dockerfile             # Container build definition
+├── requirements.txt       # Python dependencies
+├── 📁 bot/                # Discord bot module
+│   ├── core.py           # Discord bot & event handlers
+│   ├── events.py         # Calendar integration (Google & ICS)
+│   ├── tasks.py          # Scheduled daily/weekly event posters
+│   ├── commands.py       # Command registration system
+│   ├── views.py          # Discord UI components
+│   └── 📁 commands/      # Individual command implementations
+│       ├── agenda.py     # Date-specific events query
+│       ├── daily.py      # Daily calendar posting
+│       ├── greet.py      # AI greeting generation
+│       ├── herald.py     # Weekly calendar posting
+│       ├── reload.py     # Config reloading command
+│       ├── setup.py      # Server configuration
+│       ├── status.py     # Bot status info
+│       ├── utilities.py  # Shared command utilities
+│       └── who.py        # User mapping info
+├── 📁 config/            # Configuration handling
+│   ├── calendar_config.py # Calendar data structure
+│   └── server_config.py  # Server-specific settings
+├── 📁 utils/             # Utility modules
+│   ├── ai_helpers.py     # OpenAI integration
+│   ├── cache.py          # Data caching
+│   ├── calendar_sync.py  # Real-time calendar updates
+│   ├── environ.py        # Environment configuration
+│   ├── logging.py        # Log setup and management
+│   ├── notifications.py  # Admin notifications
+│   ├── rate_limiter.py   # API rate limiting
+│   ├── server_utils.py   # Server configuration helpers
+│   ├── timezone_utils.py # Time zone conversions
+│   └── validators.py     # Input validation
+└── 📁 data_processing/   # Data handling
+    └── data/             # Data storage
+
 ```
 
 ---
@@ -56,21 +85,16 @@ Copy `.env.example` → `.env` and fill in:
 
 ```env
 DISCORD_BOT_TOKEN=your-bot-token
-ANNOUNCEMENT_CHANNEL_ID=123456789012345678
 OPENAI_API_KEY=your-openai-api-key
-CALENDAR_SOURCES=google:your_calendar_id:T,ics:http://example.com/calendar.ics:B
-USER_TAG_MAPPING=1234567890:T,0987654321:B
+GOOGLE_APPLICATION_CREDENTIALS=./service_account.json
 DEBUG=true
 ```
 
-- `CALENDAR_SOURCES`: comma-separated list of `google:<id>:<tag>` or `ics:<url>:<tag>`
-- `USER_TAG_MAPPING`: comma-separated Discord `userID:TAG` mappings.
-
 ---
 
-## ⚙️ Server-Specific Configuration (New Method)
+## ⚙️ Server-Specific Configuration
 
-CalendarBot now uses server-specific configuration files instead of environment variables:
+CalendarBot uses server-specific configuration files instead of environment variables:
 
 1. Use the `/setup add` command to add calendars (requires Admin permission)
 2. Each server maintains its own set of calendars and user mappings
@@ -110,7 +134,7 @@ tail -f ./data/logs/bot.log
 
 <img src="example.png" width="400"/>
 
-> _“Hark, noble kin! The morrow bringeth study, questing, and banquet at sundown.”_
+> _"Hark, noble kin! The morrow bringeth study, questing, and banquet at sundown."_
 
 ---
 
@@ -118,5 +142,6 @@ tail -f ./data/logs/bot.log
 
 - Python 3.10+
 - Uses `discord.py`, `openai`, `google-api-python-client`, `ics`, `colorlog`, `dateparser`, etc.
-- Add new commands in `bot.py` and `commands.py`
-- Customize greeting styles in `ai.py`
+- Add new commands in the `bot/commands/` directory
+- Customize greeting styles in `utils/ai_helpers.py`
+- Run locally by setting `GOOGLE_APPLICATION_CREDENTIALS` to the path of your service account file

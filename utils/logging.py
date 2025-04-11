@@ -1,5 +1,5 @@
 """
-log.py: Logging setup for the calendar bot.
+logging.py: Logging setup for the calendar bot.
 
 Provides a 'logger' instance preconfigured with:
 1. A colorized console handler for debug-level logs (if DEBUG is true).
@@ -11,7 +11,7 @@ instead of environment variables, this logging module still uses the DEBUG
 environment variable to determine log level.
 
 Usage:
-    from log import logger
+    from utils.logging import logger
     logger.info("Hello, world!")
 """
 
