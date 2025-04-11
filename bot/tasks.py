@@ -23,7 +23,6 @@ from zoneinfo import ZoneInfo  # Added for proper timezone handling
 from utils.logging import logger
 from utils.ai_helpers import generate_greeting, generate_image
 from utils import (
-    format_discord_timestamp,
     get_monday_of_week,
     get_today,
     resolve_input_to_tags,
