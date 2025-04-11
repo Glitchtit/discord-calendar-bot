@@ -20,10 +20,14 @@ from ics import Calendar as ICS_Calendar
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from utils.environ import GOOGLE_APPLICATION_CREDENTIALS
-from config.server_config import get_all_server_ids, load_server_config, save_server_config
 from utils.logging import logger
 from asyncio import Lock
+
+# Removed unused imports
+from utils.cache import event_cache
+from config.server_config import load_server_config, get_all_server_ids
+from config.server_config import save_server_config  # Added missing import
+from utils.environ import GOOGLE_APPLICATION_CREDENTIALS  # Added missing import
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🔐 Google Calendar API Setup

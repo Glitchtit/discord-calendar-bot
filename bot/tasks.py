@@ -15,8 +15,6 @@ from datetime import datetime, timedelta, date
 from dateutil import tz
 from discord.ext import tasks
 import asyncio
-import random
-import time
 from typing import Dict, Optional, Set
 from zoneinfo import ZoneInfo  # Added for proper timezone handling
 
@@ -32,8 +30,6 @@ from utils import (
 import discord  # Added for creating embed messages
 
 from bot.events import (
-    NewCalendarEvent, 
-    calendar_update_lock,
     load_post_tracking,
     GROUPED_CALENDARS,
     get_events,
@@ -41,8 +37,6 @@ from bot.events import (
 )
 from config.server_config import get_all_server_ids, load_server_config
 from data_processing.data import (
-    load_event_snapshots,
-    save_event_snapshots,
     load_previous_events,
     save_current_events_for_key
 )

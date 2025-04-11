@@ -1,3 +1,4 @@
+# Removed unused imports
 import discord
 from discord import Interaction
 from utils.logging import logger

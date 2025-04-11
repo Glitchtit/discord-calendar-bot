@@ -43,8 +43,7 @@ from bot.commands import (
     handle_daily_command,
     handle_setup_command
 )
-from bot.tasks import initialize_event_snapshots, start_all_tasks, post_todays_happenings
-from utils import get_today, get_monday_of_week, resolve_input_to_tags
+# Removed unused imports
 from utils.validators import detect_calendar_type
 from config.server_config import (
     add_calendar, 
@@ -61,8 +60,8 @@ from bot.views import (
     CalendarRemoveView,
     ConfirmRemovalView
 )
-# CalendarSetupView will be imported just before use to avoid circular import issues
 from config.calendar_config import CalendarConfig
+from utils import get_today  # Added missing import
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🤖 Intents & Bot Setup

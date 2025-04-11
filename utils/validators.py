@@ -1,5 +1,11 @@
 from datetime import datetime, timedelta
 from typing import Optional, Tuple, Union
+import re
+import logging
+from googleapiclient.errors import HttpError  # Added missing import
+import asyncio  # Added missing import
+import requests  # Added missing import
+logger = logging.getLogger("calendarbot")
 
 def validate_event_dates(start: Optional[datetime], end: Optional[datetime]) -> Tuple[bool, str]:
     """
@@ -85,53 +91,6 @@ def detect_calendar_type(url_or_id: str) -> str:
         return "ics"
     
     return "unknown"
-
-import re
-import asyncio
-import logging
-import requests
-from typing import Dict, Any, Optional, Tuple
-from googleapiclient.errors import HttpError
-
-logger = logging.getLogger("calendarbot")
-
-def detect_calendar_type(input_str: str) -> Optional[str]:
-    """
-    Detect the type of calendar from a URL or ID string.
-    
-    Args:
-        input_str: The calendar identifier string to check
-        
-    Returns:
-        "google" for Google Calendar IDs, "ics" for ICS URLs, or None if unknown
-    """
-    # Strip whitespace
-    input_str = input_str.strip()
-    
-    # Check for Google Calendar ID patterns
-    if (
-        "@" in input_str and 
-        ("calendar.google.com" in input_str or "group.calendar.google" in input_str)
-    ) or re.match(r'^[\w\.-]+@[\w\.-]+\.calendar\.google\.com$', input_str):
-        return "google"
-    
-    # Check for ICS URL patterns
-    if input_str.startswith(("http://", "https://")) and input_str.endswith((".ics", ".ical")):
-        return "ics"
-    if "webcal://" in input_str:
-        # Convert webcal:// to https:// for compatibility
-        return "ics"
-        
-    # Check if it looks like a URL but without .ics extension
-    if input_str.startswith(("http://", "https://")) and "/ical" in input_str:
-        return "ics"
-        
-    # If it has an @ symbol and no URL parts, it's likely a Google ID
-    if "@" in input_str and "." in input_str and "/" not in input_str:
-        return "google"
-    
-    # Unknown format
-    return None
 
 async def test_calendar_connection(calendar_type: str, calendar_id: str) -> Tuple[bool, str]:
     """

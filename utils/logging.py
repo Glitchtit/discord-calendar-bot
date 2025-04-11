@@ -15,17 +15,16 @@ Usage:
     logger.info("Hello, world!")
 """
 
-import os
 import logging
-import os
 import sys
 import platform
-import tempfile
-from datetime import datetime
 import atexit
-from logging.handlers import TimedRotatingFileHandler, MemoryHandler
-from logging.handlers import QueueHandler, QueueListener
-import queue
+import os  # Added missing import
+import tempfile  # Added missing import
+from logging.handlers import QueueHandler, QueueListener, MemoryHandler
+from logging.handlers import TimedRotatingFileHandler  # Added missing import
+from datetime import datetime
+from queue import Queue
 from colorlog import ColoredFormatter
 from utils.environ import DEBUG
 
@@ -88,7 +87,7 @@ logger = logging.getLogger("calendarbot")
 logger.setLevel(logging.DEBUG if DEBUG else logging.INFO)
 
 # Create a logging queue for thread safety
-log_queue = queue.Queue(-1)  # No limit on size
+log_queue = Queue(-1)  # No limit on size
 queue_handler = QueueHandler(log_queue)
 logger.addHandler(queue_handler)
 
