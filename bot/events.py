@@ -28,7 +28,6 @@ from utils.cache import event_cache
 from config.server_config import load_server_config, get_all_server_ids
 from config.server_config import save_server_config  # Added missing import
 from utils.environ import GOOGLE_APPLICATION_CREDENTIALS  # Added missing import
-from config.calendar_config import DATA_DIR
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🔐 Google Calendar API Setup
@@ -73,7 +72,7 @@ def get_data_directory(server_id: int) -> pathlib.Path:
 
 def get_events_file(server_id: int) -> str:
     """Get the path to the events file for a server."""
-    server_data_dir = os.path.join(DATA_DIR, 'servers', str(server_id))
+    server_data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "servers", str(server_id))
     os.makedirs(server_data_dir, exist_ok=True)  # Ensure the directory exists
     return os.path.join(server_data_dir, 'events.json')
 

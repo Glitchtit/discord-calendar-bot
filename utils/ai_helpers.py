@@ -69,7 +69,7 @@ def setup_recovery_timer():
     
     with _recovery_lock:
         # Cancel any existing timer
-        if _recovery_timer:
+        if (_recovery_timer):
             _recovery_timer.cancel()
         
         # Create a new timer to check API availability
@@ -275,7 +275,8 @@ def generate_fallback_greeting(event_titles: list[str]) -> str:
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🎨 Generate Image from Text Prompt
 # ╚════════════════════════════════════════════════════════════════════╝
-def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | None:
+def generate_image(greeting: str, persona: str, server_id: int, max_retries: int = 3) -> str | None:
+    """Generate an image based on the greeting and persona for a specific server."""
     # Check if API is available (circuit breaker pattern)
     if not check_api_availability() or not client:
         logger.warning("OpenAI API unavailable or client not initialized. Skipping image generation.")
@@ -297,17 +298,8 @@ def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | N
         f"with humorous medieval cartoon characters, textured linen background, and stitched-looking text."
     )
 
-    # Define data directories with platform-agnostic paths
-    # Primary data directory
-    data_dir = pathlib.Path("/data")
-    art_dir = data_dir / "art"
-    
-    # Fallback directories
-    script_dir = pathlib.Path(__file__).parent.parent  # Go up one level from utils/
-    fallback_art_dir = script_dir / "data" / "art"
-    
-    # Another fallback using temp directory
-    temp_art_dir = pathlib.Path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "art"))
+    # Define data directory with platform-agnostic path
+    art_dir = pathlib.Path(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "servers", str(server_id), "art"))
 
     # Retry loop with exponential backoff
     for attempt in range(max_retries):
@@ -340,28 +332,18 @@ def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | N
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"generated_{timestamp}.png"
             
-            # Try saving to each potential directory until one works
-            for directory in [art_dir, fallback_art_dir, temp_art_dir]:
-                try:
-                    # Create directory if it doesn't exist
-                    directory.mkdir(parents=True, exist_ok=True)
-                    
-                    # Full path to the file
-                    image_path = directory / filename
-                    
-                    # Save the image
-                    with open(image_path, "wb") as f:
-                        f.write(image_response.content)
-                        
-                    logger.info(f"Image saved to {image_path}")
-                    return str(image_path)
-                except (PermissionError, OSError) as e:
-                    logger.warning(f"Could not save to {directory}: {e}")
-                    continue  # Try next directory
+            # Create directory if it doesn't exist
+            art_dir.mkdir(parents=True, exist_ok=True)
             
-            # If we get here, all directories failed
-            logger.error("Failed to save image to any directory. Check permissions.")
-            return None
+            # Full path to the file
+            image_path = art_dir / filename
+            
+            # Save the image
+            with open(image_path, "wb") as f:
+                f.write(image_response.content)
+                
+            logger.info(f"Image saved to {image_path}")
+            return str(image_path)
 
         except (RateLimitError, APITimeoutError, APIConnectionError, APIError) as e:
             error_type = handle_api_error(e, f"image generation (attempt {attempt+1})")

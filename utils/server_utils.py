@@ -10,24 +10,22 @@ from pathlib import Path
 # Configure logger
 logger = logging.getLogger("calendarbot")
 
-# Directory for server configuration files
-SERVER_CONFIG_BASE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "servers")
 _load_lock = Lock()
 _save_lock = Lock()
 
 # Create required directories if they don't exist
 try:
-    os.makedirs(SERVER_CONFIG_BASE, exist_ok=True)
+    os.makedirs(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "servers"), exist_ok=True)
 except Exception as e:
     logger.warning(f"Failed to create server config directory: {e}")
     # Fallback to a different directory if needed
-    SERVER_CONFIG_BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
-    os.makedirs(SERVER_CONFIG_BASE, exist_ok=True)
-    logger.info(f"Using fallback server config directory: {SERVER_CONFIG_BASE}")
+    fallback_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    os.makedirs(fallback_dir, exist_ok=True)
+    logger.info(f"Using fallback server config directory: {fallback_dir}")
 
 def get_config_path(server_id: int) -> str:
     """Get the path to a server's configuration file."""
-    return os.path.join(SERVER_CONFIG_BASE, str(server_id), "config.json")
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "servers", str(server_id), "config.json")
 
 def load_server_config(server_id: int) -> Dict[str, Any]:
     """Load server-specific configuration from JSON file."""
@@ -66,9 +64,10 @@ def save_server_config(server_id: int, config: Dict[str, Any]) -> bool:
 def get_all_server_ids() -> List[int]:
     """Get a list of all server IDs that have configuration files."""
     try:
+        base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "servers")
         server_ids = []
-        for entry in os.listdir(SERVER_CONFIG_BASE):
-            full_path = os.path.join(SERVER_CONFIG_BASE, entry)
+        for entry in os.listdir(base_dir):
+            full_path = os.path.join(base_dir, entry)
             if entry.isdigit() and os.path.isdir(full_path):
                 config_file = os.path.join(full_path, "config.json")
                 if os.path.exists(config_file):

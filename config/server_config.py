@@ -22,9 +22,9 @@ from utils.server_utils import (
 # Task tracking for background operations
 _background_tasks = {}
 
-# Admin configuration directory
-ADMIN_CONFIG_DIR = os.path.join(os.path.dirname(get_config_path(0)), 'admins')
-os.makedirs(ADMIN_CONFIG_DIR, exist_ok=True)
+def get_admins_file(server_id: int) -> str:
+    """Get the path to the admins file for a server."""
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "servers", str(server_id), "admins.json")
 
 def load_server_config(server_id: int) -> Dict[str, Any]:
     """Load server-specific configuration from config.json."""
@@ -74,7 +74,7 @@ def remove_calendar(server_id: int, calendar_id: str) -> Tuple[bool, str]:
 
 def load_admins(server_id: int) -> List[str]:
     """Load the list of admin user IDs for a server."""
-    admin_file = os.path.join(ADMIN_CONFIG_DIR, f"{server_id}_admins.json")
+    admin_file = get_admins_file(server_id)
     try:
         if os.path.exists(admin_file):
             with open(admin_file, 'r', encoding='utf-8') as f:
@@ -85,7 +85,7 @@ def load_admins(server_id: int) -> List[str]:
 
 def save_admins(server_id: int, admin_ids: List[str]) -> bool:
     """Save the list of admin user IDs for a server."""
-    admin_file = os.path.join(ADMIN_CONFIG_DIR, f"{server_id}_admins.json")
+    admin_file = get_admins_file(server_id)
     try:
         with open(admin_file, 'w', encoding='utf-8') as f:
             json.dump(admin_ids, f, ensure_ascii=False, indent=2)
