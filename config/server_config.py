@@ -14,9 +14,8 @@ from utils.server_utils import (
     get_config_path,
     load_server_config,
     save_server_config,
-    load_calendars,
-    save_calendars
 )
+from bot.events import load_calendars_from_server_configs as load_calendars
 
 # Task tracking for background operations
 _background_tasks = {}
