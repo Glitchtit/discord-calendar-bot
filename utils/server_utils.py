@@ -27,6 +27,10 @@ def get_config_path(server_id: int) -> str:
     """Get the path to a server's configuration file."""
     return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "servers", str(server_id), "config.json")
 
+def get_calendars_path() -> str:
+    """Get the path to the calendars directory."""
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "calendars")
+
 def load_server_config(server_id: int) -> Dict[str, Any]:
     """Load server-specific configuration from JSON file."""
     config_path = get_config_path(server_id)
