@@ -18,6 +18,9 @@ from utils.server_utils import (
 # Removing the circular import
 # from bot.events import load_calendars_from_server_configs as load_calendars
 
+# Define the server config directory path
+SERVER_CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "servers")
+
 # Task tracking for background operations
 _background_tasks = {}
 
@@ -150,3 +153,21 @@ def remove_admin_user(server_id: int, user_id: str) -> Tuple[bool, str]:
         else:
             return False, "Failed to save admin list."
     return False, f"User ID {user_id} is not an admin."
+
+def get_all_server_ids() -> List[int]:
+    """Get a list of all server IDs that have configuration files."""
+    try:
+        if not os.path.exists(SERVER_CONFIG_DIR):
+            return []
+            
+        server_ids = []
+        for entry in os.listdir(SERVER_CONFIG_DIR):
+            full_path = os.path.join(SERVER_CONFIG_DIR, entry)
+            if entry.isdigit() and os.path.isdir(full_path):
+                config_file = os.path.join(full_path, "config.json")
+                if os.path.exists(config_file):
+                    server_ids.append(int(entry))
+        return server_ids
+    except Exception as e:
+        logger.exception(f"Error listing server configurations: {e}")
+        return []
