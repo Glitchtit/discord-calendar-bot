@@ -39,31 +39,35 @@ SERVICE_ACCOUNT_FILE = GOOGLE_APPLICATION_CREDENTIALS
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 def get_data_directory(server_id: int) -> pathlib.Path:
-    """Get the appropriate data directory for a server with fallbacks."""
-    # Primary location (Docker container)
-    primary_dir = pathlib.Path("/data") / str(server_id)
+    """
+    Get the appropriate data directory for a server with fallbacks.
+    First tries Docker volume path, then local paths.
+    """
+    # Docker container path (primary location)
+    docker_dir = pathlib.Path("/data") / "servers" / str(server_id)
     
-    # Try to create primary directory
+    # Try to create/use Docker directory
     try:
-        primary_dir.mkdir(parents=True, exist_ok=True)
-        if os.access(primary_dir, os.W_OK):
-            return primary_dir
+        docker_dir.mkdir(parents=True, exist_ok=True)
+        if os.access(docker_dir, os.W_OK):
+            logger.debug(f"Using Docker volume path for server data: {docker_dir}")
+            return docker_dir
     except (PermissionError, OSError):
-        pass  # Will try fallbacks
+        logger.debug(f"Docker path {docker_dir} not writable, trying fallbacks")
         
-    # First fallback: local directory relative to this file
-    first_fallback = pathlib.Path(__file__).parent.parent / "data" / str(server_id)
+    # Local directory relative to this file
+    local_dir = pathlib.Path(__file__).parent.parent / "data" / "servers" / str(server_id)
     try:
-        first_fallback.mkdir(parents=True, exist_ok=True)
-        if os.access(first_fallback, os.W_OK):
-            logger.info(f"Using fallback data directory: {first_fallback}")
-            return first_fallback
+        local_dir.mkdir(parents=True, exist_ok=True)
+        if os.access(local_dir, os.W_OK):
+            logger.info(f"Using local data directory: {local_dir}")
+            return local_dir
     except (PermissionError, OSError):
-        pass  # Will try next fallback
+        logger.warning(f"Local path {local_dir} not writable, using temp directory")
         
-    # Second fallback: temp directory
+    # Temp directory as last resort
     import tempfile
-    temp_dir = pathlib.Path(tempfile.gettempdir()) / "discord-calendar-bot" / str(server_id)
+    temp_dir = pathlib.Path(tempfile.gettempdir()) / "discord-calendar-bot" / "servers" / str(server_id)
     try:
         temp_dir.mkdir(parents=True, exist_ok=True)
         logger.warning(f"Using temporary directory for data: {temp_dir}")
@@ -71,13 +75,15 @@ def get_data_directory(server_id: int) -> pathlib.Path:
     except (PermissionError, OSError) as e:
         logger.error(f"Failed to create any data directory: {e}")
         # Return the original even though it might not work, to maintain API
-        return primary_dir
+        return docker_dir
 
 def get_events_file(server_id: int) -> str:
-    """Get the path to the events file for a server."""
-    server_data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "servers", str(server_id))
-    os.makedirs(server_data_dir, exist_ok=True)  # Ensure the directory exists
-    return os.path.join(server_data_dir, 'events.json')
+    """
+    Get the path to the events file for a server.
+    Uses the same logic as get_data_directory to ensure consistency.
+    """
+    data_dir = get_data_directory(server_id)
+    return str(data_dir / 'events.json')
 
 # In-memory cache
 _calendar_metadata_cache = {}
@@ -441,7 +447,7 @@ def load_post_tracking(server_id: int) -> dict:
     try:
         path = get_events_file(server_id)
         if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, "r", "utf-8") as f:
                 data = json.load(f)
                 return data.get("daily_posts", {})
     except json.JSONDecodeError:

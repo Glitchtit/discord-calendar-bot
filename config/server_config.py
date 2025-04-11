@@ -41,7 +41,24 @@ def _trigger_calendar_reload():
             logger.exception(f"Error in calendar reload callback: {e}")
 
 def get_admins_file(server_id: int) -> str:
-    """Get the path to the admins file for a server."""
+    """
+    Get the path to the admins file for a server.
+    Uses the same path logic as get_config_path for consistency.
+    """
+    # First try Docker volume path
+    docker_path = os.path.join("/data", "servers", str(server_id), "admins.json")
+    docker_dir = os.path.dirname(docker_path)
+    
+    # Test if Docker path is writable
+    try:
+        if not os.path.exists(docker_dir):
+            os.makedirs(docker_dir, exist_ok=True)
+        if os.access(docker_dir, os.W_OK):
+            return docker_path
+    except (PermissionError, OSError):
+        pass  # Will try fallback
+
+    # Fall back to local path
     return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "servers", str(server_id), "admins.json")
 
 def load_server_config(server_id: int) -> Dict[str, Any]:

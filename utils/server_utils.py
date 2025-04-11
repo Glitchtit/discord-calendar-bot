@@ -13,9 +13,13 @@ logger = logging.getLogger("calendarbot")
 _load_lock = Lock()
 _save_lock = Lock()
 
+# Path constants
+DOCKER_DATA_DIR = "/data"
+LOCAL_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+
 # Create required directories if they don't exist
 try:
-    os.makedirs(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "servers"), exist_ok=True)
+    os.makedirs(os.path.join(LOCAL_DATA_DIR, "servers"), exist_ok=True)
 except Exception as e:
     logger.warning(f"Failed to create server config directory: {e}")
     # Fallback to a different directory if needed
@@ -24,8 +28,25 @@ except Exception as e:
     logger.info(f"Using fallback server config directory: {fallback_dir}")
 
 def get_config_path(server_id: int) -> str:
-    """Get the path to a server's configuration file."""
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "servers", str(server_id), "config.json")
+    """
+    Get the path to a server's configuration file.
+    First tries the Docker volume path, then falls back to local path.
+    """
+    # First try Docker volume path
+    docker_path = os.path.join(DOCKER_DATA_DIR, "servers", str(server_id), "config.json")
+    docker_dir = os.path.dirname(docker_path)
+    
+    # Test if Docker path is writable
+    try:
+        if not os.path.exists(docker_dir):
+            os.makedirs(docker_dir, exist_ok=True)
+        if os.access(docker_dir, os.W_OK):
+            return docker_path
+    except (PermissionError, OSError):
+        logger.debug(f"Docker path {docker_dir} not writable, using local path instead")
+
+    # Fall back to local path
+    return os.path.join(LOCAL_DATA_DIR, "servers", str(server_id), "config.json")
 
 def load_server_config(server_id: int) -> Dict[str, Any]:
     """Load server-specific configuration from JSON file."""
@@ -62,20 +83,38 @@ def save_server_config(server_id: int, config: Dict[str, Any]) -> bool:
         return False
 
 def get_all_server_ids() -> List[int]:
-    """Get a list of all server IDs that have configuration files."""
+    """Get a list of all server IDs that have configuration files.
+    Checks both Docker and local paths for server configurations.
+    """
+    server_ids = set()  # Use a set to avoid duplicates
+    
+    # Check Docker path first
     try:
-        base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "servers")
-        server_ids = []
-        for entry in os.listdir(base_dir):
-            full_path = os.path.join(base_dir, entry)
-            if entry.isdigit() and os.path.isdir(full_path):
-                config_file = os.path.join(full_path, "config.json")
-                if os.path.exists(config_file):
-                    server_ids.append(int(entry))
-        return server_ids
+        docker_base_dir = os.path.join(DOCKER_DATA_DIR, "servers")
+        if os.path.exists(docker_base_dir):
+            for entry in os.listdir(docker_base_dir):
+                full_path = os.path.join(docker_base_dir, entry)
+                if entry.isdigit() and os.path.isdir(full_path):
+                    config_file = os.path.join(full_path, "config.json")
+                    if os.path.exists(config_file):
+                        server_ids.add(int(entry))
     except Exception as e:
-        logger.exception(f"Error listing server configurations: {e}")
-        return []
+        logger.warning(f"Error listing Docker server configurations: {e}")
+    
+    # Then check local path
+    try:
+        local_base_dir = os.path.join(LOCAL_DATA_DIR, "servers")
+        if os.path.exists(local_base_dir):
+            for entry in os.listdir(local_base_dir):
+                full_path = os.path.join(local_base_dir, entry)
+                if entry.isdigit() and os.path.isdir(full_path):
+                    config_file = os.path.join(full_path, "config.json")
+                    if os.path.exists(config_file):
+                        server_ids.add(int(entry))
+    except Exception as e:
+        logger.warning(f"Error listing local server configurations: {e}")
+    
+    return list(server_ids)
 
 def detect_calendar_type(url_or_id: str) -> Optional[str]:
     """Detect if a calendar URL/ID is Google or ICS format.
