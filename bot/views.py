@@ -28,32 +28,78 @@ class AddCalendarModal(Modal, title="Add Calendar"):
 
     async def on_submit(self, interaction: discord.Interaction):
         """Handle the form submission."""
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
         calendar_url = self.calendar_url.value.strip()
         display_name = self.display_name.value.strip() or "Unnamed Calendar"
 
-        # Add the calendar
+        # Detect calendar type
         calendar_type = detect_calendar_type(calendar_url)
+        
+        # If we couldn't detect the calendar type, inform the user
+        if not calendar_type:
+            await interaction.followup.send(
+                "❌ Could not detect calendar type. Please provide either a Google Calendar ID or an ICS URL.",
+                ephemeral=True
+            )
+            return
+            
+        # Test the calendar connection before adding
+        from utils.validators import test_calendar_connection
+        
+        await interaction.followup.send(
+            f"⏳ Testing connection to calendar...",
+            ephemeral=True
+        )
+        
+        success, message = await test_calendar_connection(calendar_type, calendar_url)
+        
+        # If the connection test failed, don't add the calendar
+        if not success:
+            await interaction.followup.send(
+                f"❌ Connection test failed: {message}\n\nPlease check the calendar ID/URL and try again.",
+                ephemeral=True
+            )
+            return
+
+        # Add the calendar
         calendar_data = {
             'type': calendar_type,
             'id': calendar_url,
-            'user_id': interaction.user.id,
+            'user_id': str(interaction.user.id),
             'name': display_name
         }
-        success, message = add_calendar(self.guild_id, calendar_data)
+        
+        success, add_message = add_calendar(self.guild_id, calendar_data)
 
         # Reload calendar configuration and reinitialize events
         if success:
             try:
+                # Inform user the calendar passed connection test
+                await interaction.followup.send(
+                    f"✅ {message}\n\nAdding calendar to your configuration...",
+                    ephemeral=True
+                )
+                
+                # Reinitialize events
                 await reinitialize_events()
+                
+                # Final success message
+                await interaction.followup.send(
+                    f"✅ Calendar **{display_name}** has been added successfully!",
+                    ephemeral=True
+                )
             except Exception as e:
                 logger.error(f"Error during reinitialization: {e}")
-
-        # Show the result
-        await interaction.followup.send(
-            f"{'✅' if success else '❌'} {message}",
-            ephemeral=True
-        )
+                await interaction.followup.send(
+                    f"⚠️ Calendar added but there was an error refreshing events: {str(e)}",
+                    ephemeral=True
+                )
+        else:
+            # Something went wrong during the add_calendar operation
+            await interaction.followup.send(
+                f"❌ {add_message}",
+                ephemeral=True
+            )
 
 class CalendarRemoveView(View):
     """View for selecting which calendar to remove."""

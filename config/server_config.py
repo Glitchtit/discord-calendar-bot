@@ -13,12 +13,16 @@ This enables:
 
 import os
 import json
-import re
-import requests
 from typing import Dict, List, Any, Optional, Tuple
-from log import logger
-from utils import load_server_config  # Now properly imported from package
-from threading import Lock
+import logging
+import asyncio
+from utils.server_utils import (
+    load_server_config,
+    save_server_config, 
+    get_all_server_ids,
+    detect_calendar_type,
+    migrate_env_config_to_server
+)
 from config.calendar_config import CalendarConfig
 from data_processing.data import (
     load_calendar_events,
@@ -27,188 +31,211 @@ from data_processing.data import (
     save_user_mappings
 )
 
-# Directory for server configuration files
-SERVER_CONFIG_BASE = "/data"
-SERVER_CONFIG_DIR = SERVER_CONFIG_BASE
+# Configure logger
+logger = logging.getLogger("calendarbot")
 
-# Create required directories if they don't exist
-for path in [SERVER_CONFIG_BASE, os.path.dirname(SERVER_CONFIG_BASE)]:
-    if not os.path.exists(path):
-        try:
-            os.makedirs(path, exist_ok=True)
-            logger.info(f"Created directory: {path}")
-        except Exception as e:
-            logger.warning(f"Could not create directory {path}: {e}")
-
-# Ensure the server configuration directory exists
-try:
-    os.makedirs(SERVER_CONFIG_BASE, exist_ok=True)
-except Exception as e:
-    logger.warning(f"Failed to create server config directory: {e}")
-    # Fallback to local directory if /data is not writable
-    SERVER_CONFIG_BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
-    os.makedirs(SERVER_CONFIG_BASE, exist_ok=True)
-    logger.info(f"Using fallback server config directory: {SERVER_CONFIG_BASE}")
-
-def get_config_path(server_id: int) -> str:
-    """Get the path to a server's configuration file."""
-    return os.path.join(SERVER_CONFIG_BASE, str(server_id), "config.json")
-
-_save_lock = Lock()
-
-def save_server_config(server_id: int, config: Dict[str, Any]) -> bool:
-    """Save configuration for a specific server."""
-    config_path = get_config_path(server_id)
-    
-    try:
-        os.makedirs(os.path.dirname(config_path), exist_ok=True)
-        with _save_lock:  # Ensure thread safety
-            with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f, ensure_ascii=False, indent=2)
-        logger.info(f"Saved configuration for server {server_id}")
-        return True
-    except Exception as e:
-        logger.exception(f"Error saving server config: {e}")
-        return False
-
-def add_calendar(server_id: int, calendar_data: Dict) -> bool:
-    config = CalendarConfig(server_id)
-    # Add Google credentials check when adding Google calendars
-    if calendar_data['type'] == 'google':
-        GOOGLE_APPLICATION_CREDENTIALS = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
-        if not os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
-            return False, "Google credentials missing. Required for Google Calendar integration."
-    config.add_calendar(calendar_data)
-    return True
-
-def remove_calendar(server_id: int, calendar_id: str) -> Tuple[bool, str]:
-    """Remove a calendar from a server's configuration."""
-    config = load_server_config(server_id)
-    
-    # Validate config structure
-    if not isinstance(config, dict):
-        return False, "Invalid server configuration structure."
-
-    calendars = config.get("calendars", [])
-    initial_count = len(calendars)
-    
-    config["calendars"] = [cal for cal in calendars if cal["id"] != calendar_id]
-    
-    if len(config["calendars"]) < initial_count:
-        if save_server_config(server_id, config):
-            return True, "Calendar successfully removed."
-        else:
-            return False, "Failed to save configuration after removing calendar."
-    else:
-        return False, "Calendar not found in configuration."
-
-def get_all_server_ids() -> List[int]:
-    """Get a list of all server IDs that have configuration files."""
-    try:
-        server_ids = []
-        for entry in os.listdir(SERVER_CONFIG_BASE):
-            full_path = os.path.join(SERVER_CONFIG_BASE, entry)
-            if entry.isdigit() and os.path.isdir(full_path):
-                config_file = os.path.join(full_path, "config.json")
-                if os.path.exists(config_file):
-                    server_ids.append(int(entry))
-        return server_ids
-    except Exception as e:
-        logger.exception(f"Error listing server configurations: {e}")
-        return []
-
-def detect_calendar_type(url_or_id: str) -> Optional[str]:
-    """Detect if a calendar URL/ID is Google or ICS format.
-    
-    Returns:
-        'google', 'ics', or None if format is unrecognized
+def add_calendar(server_id: int, calendar_data: Dict) -> Tuple[bool, str]:
     """
-    # Check for ICS URL format
-    if url_or_id.startswith(('http://', 'https://')):
-        # Check for .ics in the URL, even with non-standard ports
-        if '.ics' in url_or_id.lower():
-            return 'ics'
-        
-        # Fallback detection by checking content-type
-        try:
-            r = requests.head(url_or_id, timeout=5, allow_redirects=True)
-            ct = r.headers.get('Content-Type', '').lower()
-            if any(x in ct for x in ('text/calendar', 'text/ical', 'application/ics', 'application/calendar')):
-                return 'ics'
-        except Exception as e:
-            logger.warning(f"Error detecting calendar type for URL {url_or_id}: {e}")
-
-    # Google Calendar ID formats:
-    # - email format: xxx@group.calendar.google.com
-    # - standard format: alphanumeric_with_dashes@group.calendar.google.com
-    google_pattern = re.compile(r'^[a-zA-Z0-9._-]+@(group\.calendar\.google\.com|gmail\.com)$')
-    if google_pattern.match(url_or_id) or url_or_id.endswith('calendar.google.com'):
-        return 'google'
-    
-    # If it has googleapis.com in the URL, it's likely a Google calendar
-    if 'googleapis.com' in url_or_id:
-        return 'google'
-    
-    # Handle direct calendar ID without domain
-    if re.match(r'^[a-zA-Z0-9_-]+$', url_or_id):
-        return 'google'  # Assume Google format if it's just alphanumeric+symbols
-    
-    return None  # Unknown format
-
-def migrate_env_config_to_server(server_id: int, calendar_sources: str, user_mapping: str) -> Tuple[bool, str]:
-    """
-    Migrate environment variable configuration to server-specific configuration.
-    
-    This helper function is used for one-time migration from the deprecated
-    environment variable approach to the new server-specific configuration.
+    Add a calendar to a server's configuration with improved validation.
     
     Args:
-        server_id: Discord server ID to create configuration for
-        calendar_sources: Value from CALENDAR_SOURCES environment variable
-        user_mapping: Value from USER_TAG_MAPPING environment variable
+        server_id: Discord server ID
+        calendar_data: Calendar data including type, id, name, user_id
         
     Returns:
-        (success, message): Tuple with migration status and message
+        tuple: (success, message)
     """
-    if not calendar_sources and not user_mapping:
-        return False, "No legacy configuration found to migrate"
+    try:
+        # Validate required fields
+        required_fields = ['type', 'id']
+        for field in required_fields:
+            if field not in calendar_data:
+                return False, f"Missing required field: {field}"
+                
+        # Load existing configuration
+        config = load_server_config(server_id)
+        
+        # Initialize calendars list if not exists
+        if "calendars" not in config:
+            config["calendars"] = []
+            
+        # Check for duplicate calendar
+        for existing in config["calendars"]:
+            if existing.get("id") == calendar_data["id"]:
+                return False, f"Calendar already exists: {calendar_data['id']}"
+                
+        # Add server_id to the calendar data for reference
+        calendar_data["server_id"] = server_id
+        
+        # Add default values for optional fields
+        if "name" not in calendar_data:
+            calendar_data["name"] = "Unnamed Calendar"
+        
+        # Add to configuration
+        config["calendars"].append(calendar_data)
+        
+        # Save configuration
+        if save_server_config(server_id, config):
+            logger.info(f"Added calendar {calendar_data.get('name')} to server {server_id}")
+            
+            # Set up real-time subscription in background
+            asyncio.create_task(_subscribe_calendar(calendar_data))
+            
+            return True, f"Added calendar {calendar_data.get('name')} successfully."
+        else:
+            return False, "Failed to save configuration."
+    except Exception as e:
+        logger.exception(f"Error adding calendar: {e}")
+        return False, f"Error adding calendar: {str(e)}"
+
+def remove_calendar(server_id: int, calendar_id: str) -> Tuple[bool, str]:
+    """
+    Remove a calendar from a server's configuration.
     
-    # Load existing config or start with empty one
+    Args:
+        server_id: Discord server ID
+        calendar_id: ID of the calendar to remove
+        
+    Returns:
+        tuple: (success, message)
+    """
+    try:
+        # Load configuration
+        config = load_server_config(server_id)
+        
+        # Validate config structure
+        if not isinstance(config, dict):
+            return False, "Invalid server configuration structure."
+
+        # Find the calendar to remove
+        calendars = config.get("calendars", [])
+        initial_count = len(calendars)
+        
+        removed_calendar = None
+        for cal in calendars:
+            if cal["id"] == calendar_id:
+                removed_calendar = cal
+                break
+                
+        # Filter out the calendar
+        config["calendars"] = [cal for cal in calendars if cal["id"] != calendar_id]
+        
+        # Check if we actually removed anything
+        if len(config["calendars"]) < initial_count:
+            if save_server_config(server_id, config):
+                logger.info(f"Removed calendar {calendar_id} from server {server_id}")
+                
+                # Unsubscribe from real-time updates in background if we found the calendar
+                if removed_calendar:
+                    # Add server_id to the calendar data for reference
+                    removed_calendar["server_id"] = server_id
+                    asyncio.create_task(_unsubscribe_calendar(removed_calendar))
+                
+                return True, "Calendar successfully removed."
+            else:
+                return False, "Failed to save configuration after removing calendar."
+        else:
+            return False, "Calendar not found in configuration."
+    except Exception as e:
+        logger.exception(f"Error removing calendar: {e}")
+        return False, f"Error removing calendar: {str(e)}"
+
+async def _subscribe_calendar(calendar_data: Dict) -> None:
+    """
+    Subscribe to real-time updates for a calendar in the background.
+    
+    Args:
+        calendar_data: Calendar data dictionary
+    """
+    try:
+        from utils.calendar_sync import subscribe_calendar
+        await subscribe_calendar(calendar_data)
+    except Exception as e:
+        logger.error(f"Error subscribing to calendar updates: {e}")
+
+async def _unsubscribe_calendar(calendar_data: Dict) -> None:
+    """
+    Unsubscribe from real-time updates for a calendar in the background.
+    
+    Args:
+        calendar_data: Calendar data dictionary
+    """
+    try:
+        from utils.calendar_sync import unsubscribe_calendar
+        await unsubscribe_calendar(calendar_data)
+    except Exception as e:
+        logger.error(f"Error unsubscribing from calendar updates: {e}")
+
+def get_admin_user_ids() -> list:
+    """
+    Get list of admin user IDs from all server configurations.
+    
+    Returns:
+        List of user IDs that should receive admin notifications
+    """
+    admin_ids = set()
+    
+    # Look through all server configs
+    for server_id in get_all_server_ids():
+        config = load_server_config(server_id)
+        
+        # Check for admin_user_ids in the config
+        if "admin_user_ids" in config and isinstance(config["admin_user_ids"], list):
+            for admin_id in config["admin_user_ids"]:
+                admin_ids.add(str(admin_id))
+        
+        # Also add the server owner if specified
+        if "owner_id" in config:
+            admin_ids.add(str(config["owner_id"]))
+    
+    return list(admin_ids)
+
+def add_admin_user(server_id: int, user_id: str) -> tuple:
+    """
+    Add a user as an admin for notifications.
+    
+    Args:
+        server_id: The Discord server ID
+        user_id: The Discord user ID to add as admin
+        
+    Returns:
+        tuple: (success, message)
+    """
     config = load_server_config(server_id)
-    changes_made = False
     
-    # Process calendar sources (format: google:id:user_id or ics:url:user_id)
-    if calendar_sources:
-        for source in calendar_sources.split(','):
-            source = source.strip()
-            if not source:
-                continue
-                
-            parts = source.split(':')
-            if len(parts) < 3:
-                continue
-                
-            cal_type, cal_id, user_id = parts[0], parts[1], parts[2]
-            
-            # Skip if this calendar already exists
-            if any(cal["id"] == cal_id for cal in config.get("calendars", [])):
-                continue
-                
-            # Add the calendar
-            calendar_entry = {
-                "type": cal_type,
-                "id": cal_id,
-                "name": f"Migrated {cal_type.capitalize()} Calendar",
-                "user_id": user_id
-            }
-            
-            config.setdefault("calendars", []).append(calendar_entry)
-            changes_made = True
-    
-    # Save if changes were made
-    if changes_made and save_server_config(server_id, config):
-        return True, f"Successfully migrated legacy configuration to server {server_id}"
-    elif not changes_made:
-        return False, "No new configuration to migrate"
+    # Initialize the admin_user_ids list if it doesn't exist
+    if "admin_user_ids" not in config:
+        config["admin_user_ids"] = []
+        
+    # Convert to strings for consistency
+    user_id = str(user_id)
+        
+    # Add the user if not already in the list
+    if user_id not in config["admin_user_ids"]:
+        config["admin_user_ids"].append(user_id)
+        save_server_config(server_id, config)
+        return True, f"Added user ID {user_id} as admin"
     else:
-        return False, "Failed to save migrated configuration"
+        return False, f"User ID {user_id} is already an admin"
+
+def remove_admin_user(server_id: int, user_id: str) -> tuple:
+    """
+    Remove a user from admin notifications.
+    
+    Args:
+        server_id: The Discord server ID
+        user_id: The Discord user ID to remove
+        
+    Returns:
+        tuple: (success, message)
+    """
+    config = load_server_config(server_id)
+    user_id = str(user_id)
+    
+    # Check if the admin_user_ids list exists and user is in it
+    if "admin_user_ids" in config and user_id in config["admin_user_ids"]:
+        config["admin_user_ids"].remove(user_id)
+        save_server_config(server_id, config)
+        return True, f"Removed user ID {user_id} from admins"
+    else:
+        return False, f"User ID {user_id} is not an admin"

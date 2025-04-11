@@ -1,8 +1,10 @@
 from datetime import date
+import discord
 from discord import Interaction
-from bot.events import GROUPED_CALENDARS
+from bot.events import GROUPED_CALENDARS, get_events
 from .utilities import send_embed
 from utils.logging import logger
+from utils import format_message_lines
 
 async def post_daily_events(bot, user_id: str, day: date):
     try:
@@ -35,3 +37,10 @@ async def handle_daily_command(interaction: Interaction):
     except Exception as e:
         logger.error(f"Daily command error: {e}")
         await interaction.followup.send("⚠️ Failed to post daily events")
+
+async def register(bot: discord.Client):
+    @bot.tree.command(name="daily")
+    @discord.app_commands.checks.has_permissions(manage_messages=True)
+    async def daily_command(interaction: discord.Interaction):
+        """Post daily summaries to announcement channel"""
+        await handle_daily_command(interaction)

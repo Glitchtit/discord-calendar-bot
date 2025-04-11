@@ -8,11 +8,14 @@ import requests
 import json
 import os
 import math
-import time  # Add missing time import
+import time
 from datetime import datetime, timedelta
+import logging
 from openai import OpenAI, APIError, RateLimitError, APITimeoutError, APIConnectionError
-from log import logger
-from environ import OPENAI_API_KEY
+from utils.environ import OPENAI_API_KEY
+
+# Configure logger
+logger = logging.getLogger("calendarbot")
 
 # Global circuit breaker state
 _circuit_open = False

@@ -1,4 +1,4 @@
-from discord import Interaction
+from discord import Interaction, Client
 from bot.events import GROUPED_CALENDARS, TAG_NAMES
 from utils.logging import logger
 
@@ -13,3 +13,9 @@ async def handle_who_command(interaction: Interaction):
     except Exception as e:
         logger.error(f"Who error: {e}")
         await interaction.followup.send("⚠️ Failed to list calendars")
+
+async def register(bot: Client):
+    @bot.tree.command(name="who")
+    async def who_command(interaction: Interaction):
+        """List configured calendars and users"""
+        await handle_who_command(interaction)

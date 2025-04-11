@@ -87,18 +87,50 @@ async def on_ready():
         return
 
     try:
+        # Register bot client for admin notifications
+        from utils.notifications import register_discord_client
+        register_discord_client(bot)
+        
+        # Load admin users from config and register them for notifications
+        from config.server_config import get_admin_user_ids
+        from utils.notifications import register_admins
+        admin_ids = get_admin_user_ids()
+        if admin_ids:
+            register_admins(admin_ids)
+            logger.info(f"Registered {len(admin_ids)} admins for error notifications")
+        else:
+            logger.warning("No admin users configured for notifications")
+        
         # Sync commands - only do this once during startup
         synced = await bot.tree.sync()
         logger.info(f"Synced {len(synced)} commands.")
 
-        # Initialize other startup tasks here
+        # Initialize calendar configurations
         await resolve_tag_mappings()
+        
+        # Initialize event snapshots
+        from tasks import initialize_event_snapshots
+        await initialize_event_snapshots()
+        
+        # Set up real-time calendar subscriptions
+        from utils.calendar_sync import initialize_subscriptions
+        await initialize_subscriptions()
+        
+        # Start scheduled tasks
+        from tasks import start_all_tasks
+        await start_all_tasks(bot)
         
         # Mark initialization as complete
         bot.is_initialized = True
         logger.info("Bot initialization completed successfully")
     except Exception as e:
         logger.exception(f"Error during initialization: {e}")
+        # Try to notify about the critical error
+        try:
+            from utils.notifications import notify_critical_error
+            await notify_critical_error("Bot Initialization", e)
+        except Exception as notify_error:
+            logger.error(f"Failed to send error notification: {notify_error}")
         # Don't mark as initialized if an error occurs
         # This allows another attempt on reconnection
 

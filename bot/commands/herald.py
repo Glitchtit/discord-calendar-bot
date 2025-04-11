@@ -1,12 +1,12 @@
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from typing import Optional
 import discord
 from discord import Interaction
 from collections import defaultdict
 
 from bot.events import GROUPED_CALENDARS, TAG_NAMES, get_events
-from utils import format_message_lines
-from .utilities import _retry_discord_operation, check_channel_permissions
+from utils import format_message_lines, get_today, get_monday_of_week
+from .utilities import _retry_discord_operation, check_channel_permissions, send_embed
 from utils.logging import logger
 
 # Herald command implementations
@@ -58,3 +58,66 @@ async def post_tagged_week(interaction: Interaction, monday: date):
     except Exception as e:
         logger.error(f"Weekly herald error: {e}")
         await interaction.followup.send("Failed to retrieve weekly schedule", ephemeral=True)
+
+async def handle_herald_command(interaction: Interaction):
+    """Main handler for the herald command that shows all events for the day and week"""
+    await interaction.response.defer()
+    try:
+        today = get_today()
+        monday = get_monday_of_week(today)
+        
+        # Post today's events
+        embed_today = discord.Embed(
+            title=f"📅 Today's Events ({today.strftime('%A, %B %d')})",
+            color=0x3498db
+        )
+        
+        # Post week's events
+        embed_week = discord.Embed(
+            title=f"📆 This Week's Schedule (Week of {monday.strftime('%B %d')})",
+            color=0x9b59b6
+        )
+        
+        # Check if user has any calendars
+        user_id = str(interaction.user.id)
+        if user_id not in GROUPED_CALENDARS:
+            await interaction.followup.send("⚠️ No calendars are configured for you. Please contact an admin to set up your calendars.", ephemeral=True)
+            return
+        
+        # Get daily events
+        daily_events = defaultdict(list)
+        for meta in GROUPED_CALENDARS[user_id]:
+            events = await _retry_discord_operation(lambda: get_events(meta, today, today))
+            for event in events or []:
+                daily_events[meta['name']].extend([event])
+        
+        # Get weekly events
+        weekly_events = defaultdict(list)
+        for meta in GROUPED_CALENDARS[user_id]:
+            events = await _retry_discord_operation(lambda: get_events(meta, monday, monday + timedelta(days=6)))
+            for event in events or []:
+                start_date = datetime.fromisoformat(event['start'].get('dateTime', event['start'].get('date'))).date()
+                weekly_events[start_date].append(event)
+        
+        # Format and send the messages
+        if not daily_events:
+            await interaction.followup.send("📅 No events scheduled for today!", ephemeral=True)
+        else:
+            daily_message = format_message_lines(user_id, daily_events, today)
+            await interaction.followup.send(daily_message, ephemeral=True)
+        
+        if not weekly_events:
+            await interaction.followup.send("📆 No events scheduled for this week!", ephemeral=True)
+        else:
+            weekly_message = format_message_lines(user_id, weekly_events, monday)
+            await interaction.followup.send(weekly_message, ephemeral=True)
+            
+    except Exception as e:
+        logger.exception(f"Herald command error: {e}")
+        await interaction.followup.send("⚠️ Failed to retrieve your events", ephemeral=True)
+
+async def register(bot: discord.Client):
+    @bot.tree.command(name="herald")
+    async def herald_command(interaction: discord.Interaction):
+        """Post today's and weekly events from your calendars"""
+        await handle_herald_command(interaction)

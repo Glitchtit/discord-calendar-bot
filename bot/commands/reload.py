@@ -15,3 +15,10 @@ async def handle_reload_command(interaction: Interaction):
     except Exception as e:
         logger.error(f"Reload error: {e}")
         await interaction.followup.send("⚠️ Failed to reload calendars")
+
+async def register(bot: discord.Client):
+    @bot.tree.command(name="reload")
+    @discord.app_commands.checks.has_permissions(administrator=True)
+    async def reload_command(interaction: discord.Interaction):
+        """Reload calendar configurations (Admin only)"""
+        await handle_reload_command(interaction)

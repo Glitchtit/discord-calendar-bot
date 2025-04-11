@@ -1,22 +1,29 @@
 # Core dependencies
 openai==1.69.0
-google-api-python-client==2.123.0
-google-auth==2.29.0
-google-auth-oauthlib==1.2.0
-ics==0.7.2            # Python package for parsing iCalendar files
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+ics>=0.7.2            # Python package for parsing iCalendar files
 
 # AI APIs
-aiohttp==3.9.3
+aiohttp>=3.8.5
 
 # Logging & utilities
 colorlog==6.8.2
-requests==2.31.0
+requests>=2.31.0
 rich==13.7.1
-discord.py==2.3.2
+discord.py>=2.3.1
 dateparser==1.1.8
+python-dotenv>=1.0.0
+python-dateutil>=2.8.2
+Pillow>=10.0.0
+click>=8.1.7
+pytz>=2023.3
+tzdata>=2023.3
+zoneinfo>=0.2.1
 
 # Stability enhancements
 tenacity==8.2.3        # Advanced retry logic
 backoff==2.2.1         # Exponential backoff
 cachetools==5.3.2      # Caching utilities
-psutil==5.9.6          # System resource monitoring
+psutil>=5.9.5          # System resource monitoring

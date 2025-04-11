@@ -137,8 +137,32 @@ def load_calendars_from_server_configs():
 # ║ Helper to retry Google API calls with exponential backoff         ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def retry_api_call(func, *args, max_retries=3, **kwargs):
-    """Retry a Google API call with exponential backoff on transient errors."""
+    """
+    Retry a Google API call with exponential backoff on transient errors
+    and token bucket rate limiting to prevent quota exhaustion.
+    
+    Args:
+        func: The API function to call
+        max_retries: Maximum number of retry attempts
+        *args, **kwargs: Arguments to pass to the function
+        
+    Returns:
+        The result of the API call or None if all retries failed
+    """
     global _api_last_error_time, _api_error_count
+    
+    # Import rate limiters
+    from utils.rate_limiter import CALENDAR_API_LIMITER, EVENT_LIST_LIMITER
+    
+    # Determine which rate limiter to use based on function signature
+    # Default to the general Calendar API limiter
+    rate_limiter = CALENDAR_API_LIMITER
+    
+    # Use more specific limiter for list operations (which can be expensive)
+    func_str = str(func)
+    if 'list(' in func_str.lower() or 'events()' in func_str:
+        rate_limiter = EVENT_LIST_LIMITER
+        logger.debug("Using event list rate limiter for API call")
     
     # Check if we've had too many errors recently
     if _api_last_error_time and _api_error_count >= _MAX_API_ERRORS:
@@ -150,6 +174,11 @@ def retry_api_call(func, *args, max_retries=3, **kwargs):
             logger.warning(f"Too many API errors ({_api_error_count}), backing off")
             return None
     
+    # Acquire a token from the rate limiter (this will wait if necessary)
+    if not rate_limiter.consume(tokens=1, wait=True):
+        logger.error("Failed to acquire rate limit token - this should not happen with wait=True")
+        return None
+    
     last_exception = None
     
     for attempt in range(max_retries):
@@ -159,14 +188,22 @@ def retry_api_call(func, *args, max_retries=3, **kwargs):
         except HttpError as e:
             status_code = e.resp.status
             
-            # Don't retry on client errors except for 429 (rate limit)
+            # For rate limit errors, wait longer and retry with higher backoff
+            if status_code == 429:
+                backoff = (5 ** attempt) + random.uniform(1, 3)  # More aggressive backoff
+                logger.warning(f"Rate limit hit ({status_code}), attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
+                time.sleep(backoff)
+                last_exception = e
+                continue
+            
+            # Don't retry on other client errors
             if status_code < 500 and status_code != 429:
                 logger.warning(f"Non-retryable Google API error: {status_code} - {str(e)}")
                 _api_error_count += 1
                 _api_last_error_time = datetime.now()
                 raise
                 
-            # For rate limits and server errors, retry with backoff
+            # For server errors, use standard backoff
             backoff = (2 ** attempt) + random.uniform(0, 1)
             logger.warning(f"Retryable Google API error ({status_code}), attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
             time.sleep(backoff)
@@ -343,55 +380,153 @@ def save_current_events_for_key(server_id: int, key, events):
 # ║ Retrieves events from Google or ICS sources                        ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def get_google_events(start_date, end_date, calendar_id):
+    """
+    Fetch events from a Google Calendar within a specified date range.
+    
+    Args:
+        start_date: The start date of the range to fetch events for
+        end_date: The end date of the range to fetch events for  
+        calendar_id: The Google Calendar ID to fetch from
+        
+    Returns:
+        A list of events in Google Calendar API format
+    """
     try:
-        start_utc = start_date.isoformat() + "T00:00:00Z"
-        end_utc = end_date.isoformat() + "T23:59:59Z"
+        # Ensure we have a valid service connection
+        if not service:
+            logger.error(f"Google Calendar service not initialized, can't fetch events for {calendar_id}")
+            return []
+            
+        # Format date ranges in UTC format as required by Google Calendar API
+        start_utc = start_date.isoformat() + "T00:00:00Z"  # Start at beginning of day in UTC
+        end_utc = end_date.isoformat() + "T23:59:59Z"      # End at end of day in UTC
+        
         logger.debug(f"Fetching Google events for calendar {calendar_id} from {start_utc} to {end_utc}")
-        result = service.events().list(
-            calendarId=calendar_id,
-            timeMin=start_utc,
-            timeMax=end_utc,
-            singleEvents=True,
-            orderBy="startTime"
-        ).execute()
+        
+        # Use retry_api_call to handle transient errors
+        result = retry_api_call(
+            lambda: service.events().list(
+                calendarId=calendar_id,
+                timeMin=start_utc,
+                timeMax=end_utc,
+                singleEvents=True,  # Expand recurring events into single instances
+                orderBy="startTime",
+                maxResults=2500     # Reasonable upper limit
+            ).execute()
+        )
+        
+        if result is None:
+            logger.warning(f"Failed to fetch events for Google Calendar {calendar_id} after retries")
+            return []
+            
         items = result.get("items", [])
-        logger.debug(f"Fetched {len(items)} events from Google Calendar {calendar_id}")
+        
+        # Add source field to all events for better tracking
+        for item in items:
+            item["source"] = "google"
+            
+        # Process events before returning
+        logger.debug(f"Successfully fetched {len(items)} events from Google Calendar {calendar_id}")
         return items
+    except HttpError as e:
+        status_code = e.resp.status
+        if status_code == 404:
+            logger.error(f"Calendar not found or not shared with service account: {calendar_id}")
+        elif status_code == 403:
+            logger.error(f"Permission denied to access calendar {calendar_id}. Ensure the calendar is shared with the service account.")
+        else:
+            logger.exception(f"Google API error ({status_code}) fetching events from {calendar_id}: {e}")
+        return []
     except Exception as e:
         logger.exception(f"Error fetching Google events from calendar {calendar_id}: {e}")
         return []
 
 def get_ics_events(start_date, end_date, url):
+    """
+    Retrieve events from an ICS calendar URL within a specified date range.
+    
+    Args:
+        start_date: The start date of the range to fetch events for
+        end_date: The end date of the range to fetch events for
+        url: The URL of the ICS calendar file
+        
+    Returns:
+        A list of events in a standardized format matching Google Calendar API format
+    """
     try:
         logger.debug(f"Fetching ICS events from {url}")
-        response = requests.get(url)
+        
+        # Fetch ICS content with timeout and proper error handling
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()  # Raise exception for HTTP errors
         response.encoding = 'utf-8'
+        
+        # Parse the calendar
         cal = ICS_Calendar(response.text)
+        
+        if not hasattr(cal, 'events'):
+            logger.warning(f"No events found in ICS calendar: {url}")
+            return []
+            
+        logger.debug(f"Parsing {len(cal.events)} events from ICS calendar")
         events = []
+        
+        # Parse each event in the calendar
         for e in cal.events:
-            if start_date <= e.begin.date() <= end_date:
+            try:
+                # Skip events outside our date range (use date component for comparison)
+                event_date = e.begin.date()
+                if not (start_date <= event_date <= end_date):
+                    continue
+                
+                # Generate a stable ID for the event based on its core properties
                 id_source = f"{e.name}|{e.begin}|{e.end}|{e.location or ''}"
+                event_id = hashlib.md5(id_source.encode("utf-8")).hexdigest()
+                
+                # Convert to standard format (compatible with Google Calendar API format)
                 event = {
-                    "summary": e.name,
+                    "id": event_id,
+                    "summary": e.name or "Unnamed Event",
                     "start": {"dateTime": e.begin.isoformat()},
                     "end": {"dateTime": e.end.isoformat()},
                     "location": e.location or "",
                     "description": e.description or "",
-                    "id": hashlib.md5(id_source.encode("utf-8")).hexdigest()
+                    "source": "ics",
+                    # Add other fields that might be useful
+                    "status": "confirmed"
                 }
+                
+                # Handle all-day events (no time component)
+                if e.all_day:
+                    event["start"] = {"date": e.begin.date().isoformat()}
+                    event["end"] = {"date": e.end.date().isoformat()}
+                
                 events.append(event)
+            except Exception as inner_e:
+                # Catch errors for individual events but continue processing others
+                logger.warning(f"Error processing individual ICS event: {inner_e}")
+                continue
 
+        # De-duplicate events using the fingerprint
         seen_fps = set()
         deduped = []
         for e in events:
             fp = compute_event_fingerprint(e)
-            if fp not in seen_fps:
+            if fp and fp not in seen_fps:
                 seen_fps.add(fp)
                 deduped.append(e)
-        logger.debug(f"Deduplicated to {len(deduped)} ICS events")
+                
+        if len(deduped) < len(events):
+            logger.info(f"Removed {len(events) - len(deduped)} duplicate events from ICS calendar")
+            
+        logger.debug(f"Successfully processed {len(deduped)} unique ICS events from {url}")
         return deduped
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Network error fetching ICS calendar {url}: {str(e)}")
+        return []
     except Exception as e:
-        logger.exception(f"Error fetching/parsing ICS calendar: {url}")
+        logger.exception(f"Error parsing ICS calendar {url}: {e}")
         return []
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -405,7 +540,7 @@ def get_events(
 ) -> List[Dict[str, Any]]:
     """
     Fetches events from a given calendar source (Google or ICS) within
-    the specified date range.
+    the specified date range with caching for improved performance.
 
     Args:
         source_meta: A dictionary describing the calendar source,
@@ -416,37 +551,135 @@ def get_events(
     Returns:
         A list of event dictionaries from this source in a unified format.
     """
-    logger.debug(f"[events.py] ⏳ Fetching events from {source_meta['name']} ({source_meta['type']})")
-    if source_meta["type"] == "google":
-        return get_google_events(start_date, end_date, source_meta["id"])
-    elif source_meta["type"] == "ics":
-        return get_ics_events(start_date, end_date, source_meta["id"])
-    return []
+    # Capture basic metadata for logging and troubleshooting
+    calendar_name = source_meta.get('name', 'Unknown Calendar')
+    calendar_type = source_meta.get('type', 'unknown')
+    calendar_id = source_meta.get('id', 'unknown-id')
+    
+    # Input validation
+    if not isinstance(start_date, date) or not isinstance(end_date, date):
+        logger.error(f"Invalid date parameters for calendar {calendar_name}")
+        return []
+    
+    if start_date > end_date:
+        logger.error(f"Start date {start_date} is after end date {end_date} for calendar {calendar_name}")
+        return []
+    
+    # Create a unique cache key for this request
+    cache_key = f"{calendar_id}_{calendar_type}_{start_date.isoformat()}_{end_date.isoformat()}"
+    
+    # Import the cache module here to avoid circular imports
+    from utils.cache import event_cache
+    
+    # Try to get from cache first
+    cached_events = event_cache.get(cache_key)
+    if cached_events is not None:
+        logger.debug(f"Cache hit for {calendar_name} events ({start_date} to {end_date})")
+        return cached_events
+    
+    # Not in cache, need to fetch from source
+    logger.debug(f"Cache miss for {calendar_name} events, fetching from {calendar_type} source")
+    
+    # Implement calendar-specific fetching with enhanced error handling
+    try:
+        events = []
+        if calendar_type == "google":
+            events = get_google_events(start_date, end_date, calendar_id)
+        elif calendar_type == "ics":
+            events = get_ics_events(start_date, end_date, calendar_id)
+        else:
+            logger.warning(f"Unsupported calendar type: {calendar_type}")
+            return []
+        
+        # Always sort events for consistent processing
+        if events:
+            events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
+            logger.info(f"Successfully fetched {len(events)} events from {calendar_name} ({calendar_type})")
+        else:
+            logger.info(f"No events found for {calendar_name} in range {start_date} to {end_date}")
+        
+        # Cache the result before returning
+        result = events or []
+        event_cache.set(cache_key, result)
+        return result
+        
+    except Exception as e:
+        logger.exception(f"Error fetching events from {calendar_name} ({calendar_type}): {e}")
+        return []
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🧬 compute_event_fingerprint                                       ║
 # ║ Generates a stable hash for an event's core details               ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def compute_event_fingerprint(event: dict) -> str:
+    """
+    Generates a stable hash for an event's core details to track changes.
+    
+    Args:
+        event: Dictionary containing event data from Google Calendar or ICS
+        
+    Returns:
+        A consistent MD5 hash string that identifies this event's core properties
+        
+    This function normalizes dates, times, and text to ensure consistent 
+    fingerprinting even when minor formatting differences exist.
+    """
+    if not event or not isinstance(event, dict):
+        logger.error("Invalid event data for fingerprinting")
+        return ""
+    
     try:
         def normalize_time(val: str) -> str:
+            """Normalize datetime strings to a consistent format."""
+            if not val:
+                return ""
+            
+            # Handle Z timezone marker
             if "Z" in val:
                 val = val.replace("Z", "+00:00")
-            dt = datetime.fromisoformat(val)
-            return dt.isoformat(timespec="minutes")
+                
+            # For date-only format (no time component)
+            if "T" not in val:
+                return val  # Return as-is for date-only format
+                
+            try:
+                dt = datetime.fromisoformat(val)
+                return dt.isoformat(timespec="minutes")
+            except (ValueError, TypeError):
+                logger.warning(f"Could not parse datetime: {val}")
+                return val
 
         def clean(text: str) -> str:
+            """Normalize text by cleaning whitespace and ensuring it's a string."""
+            if not text:
+                return ""
+            if not isinstance(text, str):
+                return str(text)
             return " ".join(text.strip().split())
 
+        # Extract and normalize core event properties
         summary = clean(event.get("summary", ""))
         location = clean(event.get("location", ""))
         description = clean(event.get("description", ""))
-
-        start_raw = event["start"].get("dateTime", event["start"].get("date", ""))
-        end_raw = event["end"].get("dateTime", event["end"].get("date", ""))
+        
+        # Handle potentially missing start/end structures
+        start_container = event.get("start", {})
+        end_container = event.get("end", {})
+        
+        if not isinstance(start_container, dict):
+            start_container = {"date": str(start_container)}
+        if not isinstance(end_container, dict):
+            end_container = {"date": str(end_container)}
+            
+        # Get raw datetime values
+        start_raw = start_container.get("dateTime", start_container.get("date", ""))
+        end_raw = end_container.get("dateTime", end_container.get("date", ""))
+        
+        # Normalize times
         start = normalize_time(start_raw)
         end = normalize_time(end_raw)
 
+        # Create minimal normalized representation
         trimmed = {
             "summary": summary,
             "start": start,
@@ -455,11 +688,17 @@ def compute_event_fingerprint(event: dict) -> str:
             "description": description
         }
 
+        # Generate stable hash from sorted JSON
         normalized_json = json.dumps(trimmed, sort_keys=True)
         return hashlib.md5(normalized_json.encode("utf-8")).hexdigest()
     except Exception as e:
-        logger.exception(f"Error computing event fingerprint: {e}")
-        return ""
+        event_id = event.get("id", "unknown")
+        event_summary = event.get("summary", "untitled")
+        logger.exception(f"Error computing fingerprint for event '{event_summary}' (ID: {event_id}): {e}")
+        
+        # Fallback fingerprinting using just id and summary when full method fails
+        fallback_str = f"{event.get('id', '')}|{event.get('summary', '')}"
+        return hashlib.md5(fallback_str.encode("utf-8")).hexdigest()
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔄 Reload Functions                                                ║

@@ -18,6 +18,7 @@ import asyncio
 import random
 import time
 from typing import Dict, Optional, Set
+from zoneinfo import ZoneInfo  # Added for proper timezone handling
 
 from utils.logging import logger
 from utils.ai_helpers import generate_greeting, generate_image
@@ -25,19 +26,19 @@ from utils import (
     format_discord_timestamp,
     get_monday_of_week,
     get_today,
-    resolve_input_to_tags
+    resolve_input_to_tags,
+    format_event  # Added this import from utils.py
 )
-from bot.commands import (
-    create_calendar_event,
-    delete_calendar_event,
-    update_calendar_event
-)
+# Removing the problematic import and will add send_embed directly from proper location
 from bot.events import (
     CalendarSyncComplete,
     CalendarUpdateRequested,
-    NewCalendarEvent,
+    NewCalendarEvent, 
     calendar_update_lock,
-    load_post_tracking
+    load_post_tracking,
+    GROUPED_CALENDARS,
+    get_events,
+    compute_event_fingerprint
 )
 from config.server_config import get_all_server_ids, load_server_config
 from data_processing.data import (
@@ -46,6 +47,76 @@ from data_processing.data import (
     load_previous_events,
     save_current_events_for_key
 )
+
+# Define helper functions that were missing
+def is_in_current_week(event, today):
+    """Check if an event is within the current week."""
+    try:
+        start_container = event.get("start", {})
+        if "date" in start_container:
+            event_date = datetime.fromisoformat(start_container["date"]).date()
+        elif "dateTime" in start_container:
+            event_date = datetime.fromisoformat(start_container["dateTime"]).date()
+        else:
+            return False
+            
+        # Check if event is within this week
+        monday = get_monday_of_week(today)
+        sunday = monday + timedelta(days=6)
+        return monday <= event_date <= sunday
+    except Exception as e:
+        logger.warning(f"Error checking if event is in current week: {e}")
+        return False
+
+async def post_all_daily_events_to_channel(bot, date=None):
+    """Post all daily events to the announcement channel."""
+    if date is None:
+        date = get_today()
+        
+    try:
+        # For each server, post events
+        for server_id in get_all_server_ids():
+            config = load_server_config(server_id)
+            
+            # Skip servers without announcement channel
+            if not config.get("announcement_channel_id"):
+                continue
+                
+            channel_id = int(config.get("announcement_channel_id"))
+            channel = bot.get_channel(channel_id)
+            if not channel:
+                logger.warning(f"Channel ID {channel_id} not found for server {server_id}")
+                continue
+                
+            # Get events for all users/tags
+            all_events = []
+            for user_id, calendars in GROUPED_CALENDARS.items():
+                for cal in calendars:
+                    if cal.get("server_id") == server_id:
+                        events = await asyncio.to_thread(get_events, cal, date, date)
+                        if events:
+                            all_events.extend(events)
+            
+            # If we have events, post them
+            if all_events:
+                # Sort by start time
+                all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
+                
+                # Format event list
+                event_list = [f"- {format_event(event)}" for event in all_events]
+                
+                # Create embed
+                await send_embed(
+                    bot,
+                    title=f"📅 Events for {date.strftime('%A, %B %d')}",
+                    description="\n".join(event_list) if event_list else "No events today!",
+                    color=0x3498db,  # Blue color
+                    channel=channel
+                )
+                
+                logger.info(f"Posted {len(all_events)} events to channel {channel.name} in server {server_id}")
+    except Exception as e:
+        logger.exception(f"Error posting daily events: {e}")
 
 # Task health monitoring
 _task_last_success = {}
@@ -149,6 +220,7 @@ def try_start_task(task_func, *args, **kwargs):
 # ╚════════════════════════════════════════════════════════════════════╝
 @tasks.loop(minutes=1)
 async def schedule_daily_posts(bot):
+    """Schedule daily posts at specific times"""
     task_name = "schedule_daily_posts"
     
     async with TaskLock(task_name) as acquired:
@@ -156,34 +228,50 @@ async def schedule_daily_posts(bot):
             return
             
         try:
-            # Use utils' timezone-safe function
-            local_now = datetime.now(tz=get_local_timezone())
-            today = local_now.date()
-
-            # Monday 08:00 — Post weekly summaries
-            if local_now.weekday() == 0 and local_now.hour == 8 and local_now.minute == 0:
-                logger.info("Starting weekly summary posting")
-                monday = get_monday_of_week(today)
+            # Get current time in UTC
+            utc_now = datetime.now(tz=ZoneInfo("UTC"))
+            
+            # For each configured server, check if we should post based on 
+            # their configured timezone and posting times
+            for server_id in get_all_server_ids():
+                config = load_server_config(server_id)
                 
-                for tag in list(GROUPED_CALENDARS.keys()):  # Use list() to prevent dict changed during iteration
-                    try:
-                        await post_tagged_week(bot, tag, monday)
-                        # Small delay between posts to avoid rate limits
-                        await asyncio.sleep(1)
-                    except Exception as e:
-                        logger.exception(f"Error posting weekly summary for tag {tag}: {e}")
-
-            # Daily 08:01 — Post today's agenda and greeting
-            if local_now.hour == 8 and local_now.minute == 1:
-                logger.info("Starting daily posts with greeting")
-                await post_todays_happenings(bot, include_greeting=True)
+                # Skip servers without proper configuration
+                if not config or not isinstance(config, dict):
+                    continue
+                    
+                # Get server timezone (default to UTC if not specified)
+                server_timezone_str = config.get("timezone", "UTC")
+                try:
+                    server_timezone = ZoneInfo(server_timezone_str)
+                except Exception:
+                    logger.warning(f"Invalid timezone {server_timezone_str} for server {server_id}. Using UTC.")
+                    server_timezone = ZoneInfo("UTC")
                 
+                # Get server local time
+                local_now = utc_now.astimezone(server_timezone)
+                
+                # Check if it's time for daily posts (default: 8am)
+                daily_hour = config.get("daily_post_hour", 8)
+                daily_minute = config.get("daily_post_minute", 0)
+                
+                if local_now.hour == daily_hour and local_now.minute == daily_minute:
+                    logger.info(f"Starting daily posts for server {server_id} at {local_now.hour}:{local_now.minute} {server_timezone_str}")
+                    await post_todays_happenings(bot, server_id=server_id, include_greeting=True)
+            
             # Update task health status
             update_task_health(task_name, True)
             
         except Exception as e:
             logger.exception(f"Error in {task_name}: {e}")
             update_task_health(task_name, False)
+            
+            # Notify admins of the critical error
+            try:
+                from utils.notifications import notify_critical_error
+                await notify_critical_error("Daily Posts Scheduler", e)
+            except Exception as notify_error:
+                logger.error(f"Failed to send error notification: {notify_error}")
             
             # Add a small delay before the next iteration if we hit an error
             await asyncio.sleep(5)
@@ -291,7 +379,7 @@ async def watch_for_event_changes(bot):
                         logger.info(f"Detected changes for user ID '{meta['user_id']}', snapshot updated.")
                         save_current_events_for_key(meta["server_id"], f"{meta['user_id']}_full", all_events)
                     except Exception as e:
-                        logger.exception(f"Error posting changes for user ID '{meta['user_id']}': {e}")
+                        logger.exception(f"Error posting changes for user ID '{meta['user_id']}']: {e}")
                 else:
                     # Only save if we have data and it differs from previous
                     if all_events and (len(all_events) != len(prev_snapshot)):
@@ -481,7 +569,7 @@ async def check_tasks_running():
         logger.exception(f"Error checking task status: {e}")
         return False
 
-async def check_for_missed_events():
+async def check_for_missed_events(bot):
     """
     Checks if any events were missed during disconnection and 
     handles them appropriately.
@@ -501,7 +589,7 @@ async def check_for_missed_events():
         await initialize_event_snapshots()
         
         # For each server, check if we need to post daily updates
-        from server_config import get_all_server_ids, load_server_config
+        from config.server_config import get_all_server_ids, load_server_config
         
         for server_id in get_all_server_ids():
             config = load_server_config(server_id)
@@ -516,16 +604,56 @@ async def check_for_missed_events():
                     try:
                         # Check if we already posted today's events
                         # This requires a new tracking mechanism to avoid duplicate posts
-                        from events import load_post_tracking
+                        from bot.events import load_post_tracking
                         tracking = load_post_tracking(server_id)
                         
                         # If we haven't posted today's update yet, do it now
                         if today.isoformat() not in tracking.get("daily_posts", []):
                             logger.info(f"Posting missed daily update for server {server_id}")
-                            await post_todays_happenings(server_id=server_id)
+                            await post_todays_happenings(bot, server_id=server_id)
                     except Exception as e:
                         logger.error(f"Error checking/posting missed daily update: {e}")
         
         logger.info("Missed event check completed")
     except Exception as e:
         logger.exception(f"Error in check_for_missed_events: {e}")
+
+# Add send_embed function to tasks.py since import isn't working
+async def send_embed(bot, title=None, description=None, color=None, channel=None, **kwargs):
+    """Send an embed message to the specified channel or the default announcement channel"""
+    try:
+        # If no specific channel was provided, try to get the default announcement channel
+        if channel is None:
+            from config.server_config import get_all_server_ids, load_server_config
+            
+            # Try to find an appropriate channel from any configured server
+            for server_id in get_all_server_ids():
+                config = load_server_config(server_id)
+                if config and config.get("announcement_channel_id"):
+                    channel_id = int(config.get("announcement_channel_id"))
+                    channel = bot.get_channel(channel_id)
+                    if channel:
+                        break
+            
+            if not channel:
+                logger.error("No channel provided and couldn't find default announcement channel")
+                return
+        
+        # Create the embed
+        import discord
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color if color is not None else 0x3498db  # Default to blue
+        )
+        
+        # Add any image if provided
+        if 'image_path' in kwargs:
+            file = discord.File(kwargs['image_path'], filename="image.png")
+            embed.set_image(url="attachment://image.png")
+            await channel.send(content=kwargs.get('content'), embed=embed, file=file)
+        else:
+            await channel.send(content=kwargs.get('content'), embed=embed)
+            
+    except Exception as e:
+        logger.exception(f"Error in send_embed: {e}")
