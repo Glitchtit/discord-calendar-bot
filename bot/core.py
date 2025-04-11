@@ -106,7 +106,6 @@ async def on_ready():
         register_discord_client(bot)
 
         # Log superadmin for each server
-        from config.server_config import get_all_server_ids
         for server_id in get_all_server_ids():
             config = load_server_config(server_id)
             owner_id = config.get("owner_id")
