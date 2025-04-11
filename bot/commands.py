@@ -81,6 +81,15 @@ def handle_status_command(interaction):
     status = import_command_module("status")
     return status.handle_status_command(interaction)
 
+# Add wrapper functions for post_tagged_events and post_tagged_week
+def post_tagged_events(interaction, day):
+    herald = import_command_module("herald")
+    return herald.post_tagged_events(interaction, day)
+
+def post_tagged_week(interaction, monday):
+    herald = import_command_module("herald")
+    return herald.post_tagged_week(interaction, monday)
+
 # Function to get send_embed without circular import
 def send_embed(*args, **kwargs):
     utilities = import_command_module("utilities")
@@ -96,5 +105,7 @@ __all__ = [
     'handle_who_command',
     'handle_setup_command',
     'handle_status_command',
-    'send_embed'
+    'send_embed',
+    'post_tagged_events',
+    'post_tagged_week'
 ]
