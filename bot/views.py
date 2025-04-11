@@ -26,8 +26,7 @@ class AddCalendarModal(Modal, title="Add Calendar"):
         options=[
             discord.SelectOption(label="User-specific", value="user"),
             discord.SelectOption(label="Server-wide", value="server")
-        ],
-        required=True
+        ]
     )
 
     def __init__(self, bot, guild_id):
