@@ -34,12 +34,10 @@ from bot.events import (
     GROUPED_CALENDARS,
     get_events,
     compute_event_fingerprint,
-    load_previous_events
-)
-from config.server_config import get_all_server_ids, load_server_config
-from data_processing.data import (
+    load_previous_events,
     save_current_events_for_key
 )
+from config.server_config import get_all_server_ids, load_server_config
 
 # Define helper functions that were missing
 def is_in_current_week(event, today):
