@@ -19,8 +19,8 @@ from discord import app_commands
 from datetime import datetime
 from discord.ui import View, Button, Select
 
-from log import logger
-from events import (
+from utils.logging import logger
+from bot.events import (
     GROUPED_CALENDARS,
     USER_TAG_MAP,
     TAG_NAMES,
@@ -31,7 +31,7 @@ from events import (
     reinitialize_events
 )
 from ai import generate_greeting, generate_image
-from commands import (
+from bot.commands import (
     post_tagged_events,
     post_tagged_week,
     send_embed,
@@ -46,7 +46,7 @@ from commands import (
 from tasks import initialize_event_snapshots, start_all_tasks, post_todays_happenings
 from utils import get_today, get_monday_of_week, resolve_input_to_tags
 from utils.validators import detect_calendar_type
-from server_config import (
+from config.server_config import (
     add_calendar, 
     remove_calendar, 
     load_server_config, 
@@ -56,7 +56,7 @@ from server_config import (
 )
 from collections import defaultdict
 from datetime import timedelta
-from views import (
+from bot.views import (
     CalendarSetupView,
     AddCalendarModal,
     CalendarRemoveView,
@@ -264,7 +264,7 @@ async def autocomplete_agenda_target(
 # ╚═════════════════════════════════════════════════════════════╝
 async def resolve_tag_mappings():
     """Resolve user mappings and populate display names."""
-    from events import GROUPED_CALENDARS
+    from bot.events import GROUPED_CALENDARS
 
     TAG_NAMES.clear()
     TAG_COLORS.clear()

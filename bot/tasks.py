@@ -19,30 +19,33 @@ import random
 import time
 from typing import Dict, Optional, Set
 
+from utils.logging import logger
+from utils.ai_helpers import generate_greeting, generate_image
 from utils import (
-    get_today,
+    format_discord_timestamp,
     get_monday_of_week,
-    is_in_current_week,
-    format_event,
-    get_local_timezone
+    get_today,
+    resolve_input_to_tags
 )
-from commands import (
-    post_tagged_week,
-    post_tagged_events,
-    send_embed,
-    post_all_daily_events_to_channel
+from bot.commands import (
+    create_calendar_event,
+    delete_calendar_event,
+    update_calendar_event
 )
-from events import (
-    GROUPED_CALENDARS,  # Now populated from server-specific configs
-    get_events,
-    get_name_for_tag,
-    get_color_for_tag,
+from bot.events import (
+    CalendarSyncComplete,
+    CalendarUpdateRequested,
+    NewCalendarEvent,
+    calendar_update_lock,
+    load_post_tracking
+)
+from config.server_config import get_all_server_ids, load_server_config
+from data_processing.data import (
+    load_event_snapshots,
+    save_event_snapshots,
     load_previous_events,
-    save_current_events_for_key,
-    compute_event_fingerprint
+    save_current_events_for_key
 )
-from log import logger
-from ai import generate_greeting, generate_image
 
 # Task health monitoring
 _task_last_success = {}
@@ -288,7 +291,7 @@ async def watch_for_event_changes(bot):
                         logger.info(f"Detected changes for user ID '{meta['user_id']}', snapshot updated.")
                         save_current_events_for_key(meta["server_id"], f"{meta['user_id']}_full", all_events)
                     except Exception as e:
-                        logger.exception(f"Error posting changes for user ID '{meta['user_id']}']: {e}")
+                        logger.exception(f"Error posting changes for user ID '{meta['user_id']}': {e}")
                 else:
                     # Only save if we have data and it differs from previous
                     if all_events and (len(all_events) != len(prev_snapshot)):

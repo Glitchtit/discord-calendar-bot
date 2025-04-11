@@ -3,6 +3,8 @@ GOOGLE_CALENDAR_PATTERNS = [
     'www.googleapis.com/calendar'
 ]
 
+from datetime import datetime, timedelta
+
 def detect_calendar_type(input_str: str) -> str | None:
     """Detects calendar type from input string.
 
@@ -22,3 +24,16 @@ def detect_calendar_type(input_str: str) -> str | None:
     if input_lower.startswith(('http://', 'https://')):
         return 'webcal'
     return None
+
+def validate_event_dates(start: datetime, end: datetime) -> tuple[bool, str]:
+    """Validate event date logic with enhanced checks."""
+    if start >= end:
+        return False, "Event must end after it starts"
+        
+    if start < datetime.now(tz=start.tzinfo):
+        return False, "Events cannot be created in the past"
+        
+    if (end - start) > timedelta(days=14):
+        return False, "Events cannot span more than 2 weeks"
+        
+    return True, ""

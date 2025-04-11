@@ -8,14 +8,14 @@ import time
 from types import FrameType
 from typing import Optional
 
-from bot import bot
-from environ import (
+from bot.core import bot
+from utils.environ import (
     DISCORD_BOT_TOKEN, 
     ANNOUNCEMENT_CHANNEL_ID, 
     GOOGLE_APPLICATION_CREDENTIALS
 )
-from log import logger, get_log_file_location
-from server_config import get_all_server_ids
+from utils.logging import logger, get_log_file_location
+from config.server_config import get_all_server_ids
 
 # Flag to track if shutdown is in progress
 shutdown_in_progress = False
@@ -133,7 +133,7 @@ def display_startup_info():
     """
     import sys
     import os
-    from server_config import get_all_server_ids
+    from config.server_config import get_all_server_ids
     
     logger.info("========== Calendar Bot Starting ==========")
     logger.info(f"Python version: {sys.version}")

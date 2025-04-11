@@ -1,0 +1,37 @@
+from datetime import date
+from discord import Interaction
+from bot.events import GROUPED_CALENDARS
+from .utilities import send_embed
+from utils.logging import logger
+
+async def post_daily_events(bot, user_id: str, day: date):
+    try:
+        sources = GROUPED_CALENDARS.get(user_id, [])
+        if not sources:
+            return False
+        
+        events = []
+        for meta in sources:
+            events.extend(await get_events(meta, day, day))
+        
+        if not events:
+            return False
+            
+        message = format_message_lines(user_id, events, day)
+        await send_embed(bot, description=message)
+        return True
+    except Exception as e:
+        logger.error(f"Daily post error: {e}")
+        return False
+
+async def handle_daily_command(interaction: Interaction):
+    await interaction.response.defer()
+    try:
+        count = 0
+        for user_id in GROUPED_CALENDARS:
+            if await post_daily_events(interaction.client, user_id, date.today()):
+                count += 1
+        await interaction.followup.send(f"Posted daily events for {count} users")
+    except Exception as e:
+        logger.error(f"Daily command error: {e}")
+        await interaction.followup.send("⚠️ Failed to post daily events")

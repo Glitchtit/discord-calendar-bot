@@ -17,9 +17,15 @@ import re
 import requests
 from typing import Dict, List, Any, Optional, Tuple
 from log import logger
-from utils import load_server_config  # Ensure this is imported from utils.py
+from utils import load_server_config  # Now properly imported from package
 from threading import Lock
 from config.calendar_config import CalendarConfig
+from data_processing.data import (
+    load_calendar_events,
+    save_calendar_events,
+    load_user_mappings,
+    save_user_mappings
+)
 
 # Directory for server configuration files
 SERVER_CONFIG_BASE = "/data"

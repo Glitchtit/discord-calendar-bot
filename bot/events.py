@@ -19,9 +19,9 @@ from ics import Calendar as ICS_Calendar
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from environ import GOOGLE_APPLICATION_CREDENTIALS
-from server_config import get_all_server_ids, load_server_config, save_server_config
-from log import logger
+from utils.environ import GOOGLE_APPLICATION_CREDENTIALS
+from config.server_config import get_all_server_ids, load_server_config, save_server_config
+from utils.logging import logger
 from asyncio import Lock
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -477,7 +477,7 @@ async def reinitialize_events():
         logger.info("Starting reinitialization of events.")
         # Existing reinitialization logic
         from tasks import initialize_event_snapshots
-        from server_config import get_all_server_ids, load_server_config
+        from config.server_config import get_all_server_ids, load_server_config
 
         # First, reload calendar configurations for all servers
         logger.info("Reloading calendar configurations for all servers")
