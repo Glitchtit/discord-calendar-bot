@@ -1,12 +1,12 @@
 """
-bot.py: Discord bot setup and initialization, including command sync and error handling.
+core.py: Discord bot setup and initialization, including command sync and error handling.
 
 This module implements the Discord bot interface including:
 - Slash commands for calendar interaction
 - Setup wizard for server-specific calendar configuration
 - Event monitoring and notification systems
 
-Note: Now uses server-specific configuration via /setup command instead of
+Note: Utilizes server-specific configuration via the /setup command instead of
 the previous environment variable approach.
 """
 
@@ -66,6 +66,7 @@ from utils import get_today  # Added missing import
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🤖 Intents & Bot Setup
 # ╚════════════════════════════════════════════════════════════════════╝
+# Configure bot intents and initialize the bot instance.
 intents = discord.Intents.default()
 intents.members = True
 bot = commands.Bot(command_prefix="/", intents=intents)
@@ -77,6 +78,8 @@ bot.is_initialized = False
 # ╔════════════════════════════════════════════════════════════════════╗
 # ⚙️ on_ready: Sync Commands & Log Bot Info
 # ╚════════════════════════════════════════════════════════════════════╝
+# Event triggered when the bot is ready. Handles initialization tasks such as
+# syncing commands, loading configurations, and starting scheduled tasks.
 @bot.event
 async def on_ready():
     logger.info(f"Logged in as {bot.user}")
@@ -144,8 +147,8 @@ async def on_ready():
 
 
 # ╔═════════════════════════════════════════════════════════════╗
-# ║ 🔌 on_disconnect                                            ║
-# ║ Called when the bot disconnects from Discord                ║
+# 🔌 on_disconnect
+# ║ Handles bot disconnection from Discord.                     ║
 # ╚═════════════════════════════════════════════════════════════╝
 @bot.event
 async def on_disconnect():
@@ -153,8 +156,8 @@ async def on_disconnect():
 
 
 # ╔═════════════════════════════════════════════════════════════╗
-# ║ 🔌 on_resumed                                               ║
-# ║ Called when the bot reconnects after a disconnect           ║
+# 🔌 on_resumed
+# ║ Handles bot reconnection to Discord.                        ║
 # ╚═════════════════════════════════════════════════════════════╝
 @bot.event
 async def on_resumed():
@@ -184,8 +187,8 @@ async def on_resumed():
 
 
 # ╔═════════════════════════════════════════════════════════════╗
-# ║ 📜 /herald                                                   ║
-# ║ Posts the weekly + daily event summaries for all tags       ║
+# 📜 /herald
+# ║ Posts the weekly and daily event summaries for all tags.    ║
 # ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(
     name="herald",
@@ -195,6 +198,11 @@ async def herald_command(interaction: discord.Interaction):
     await handle_herald_command(interaction)  # Delegate to the handler in commands.py
 
 
+# ╔═════════════════════════════════════════════════════════════╗
+# 📜 /agenda
+# ║ Displays events for a specific date, supporting natural     ║
+# ║ language input.                                             ║
+# ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(
     name="agenda",
     description="See events for a specific date (natural language supported)"
@@ -202,6 +210,11 @@ async def herald_command(interaction: discord.Interaction):
 async def agenda_command(interaction: discord.Interaction, date: str):
     await handle_agenda_command(interaction, date)  # Delegate to the handler in commands.py
 
+
+# ╔═════════════════════════════════════════════════════════════╗
+# 📜 /greet
+# ║ Posts a themed morning greeting with an image.              ║
+# ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(
     name="greet",
     description="Post the themed morning greeting with image"
@@ -209,6 +222,11 @@ async def agenda_command(interaction: discord.Interaction, date: str):
 async def greet_command(interaction: discord.Interaction):
     await handle_greet_command(interaction)  # Delegate to the handler in commands.py
 
+
+# ╔═════════════════════════════════════════════════════════════╗
+# 📜 /reload
+# ║ Reloads calendar sources and user mappings.                 ║
+# ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(
     name="reload",
     description="Reload calendar sources and user mappings"
@@ -216,6 +234,11 @@ async def greet_command(interaction: discord.Interaction):
 async def reload_command(interaction: discord.Interaction):
     await handle_reload_command(interaction)  # Delegate to the handler in commands.py
 
+
+# ╔═════════════════════════════════════════════════════════════╗
+# 📜 /who
+# ║ Lists all calendars and their assigned users.               ║
+# ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(
     name="who",
     description="List all calendars and their assigned users"
@@ -223,6 +246,12 @@ async def reload_command(interaction: discord.Interaction):
 async def who_command(interaction: discord.Interaction):
     await handle_who_command(interaction)  # Delegate to the handler in commands.py
 
+
+# ╔═════════════════════════════════════════════════════════════╗
+# 📜 /daily
+# ║ Posts today's events for all users to the announcement      ║
+# ║ channel.                                                    ║
+# ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(
     name="daily",
     description="Post today's events for all users to the announcement channel"
@@ -230,11 +259,22 @@ async def who_command(interaction: discord.Interaction):
 async def daily_command(interaction: discord.Interaction):
     await handle_daily_command(interaction)  # Delegate to the handler in commands.py
 
-# Removed setup_command implementation
 
 # ╔═════════════════════════════════════════════════════════════╗
-# ║ 🔍 Autocomplete Functions                                    ║
-# ║ Provides suggestions for command arguments                   ║
+# 📜 /setup
+# ║ Configures server-specific calendar settings.               ║
+# ╚═════════════════════════════════════════════════════════════╝
+@bot.tree.command(
+    name="setup",
+    description="Configure server-specific calendar settings"
+)
+async def setup_command(interaction: discord.Interaction):
+    await handle_setup_command(interaction)  # Delegate to the handler in commands.py
+
+
+# ╔═════════════════════════════════════════════════════════════╗
+# 🔍 Autocomplete Functions
+# ║ Provides suggestions for command arguments.                 ║
 # ╚═════════════════════════════════════════════════════════════╝
 async def autocomplete_agenda_input(
     interaction: discord.Interaction,
@@ -292,10 +332,10 @@ async def autocomplete_agenda_target(
     return [app_commands.Choice(name=name, value=value) for name, value in suggestions[:25]]
 
 
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 🔗 resolve_tag_mappings                                      ║
-# ║ Assigns display names and colors to tags based on members   ║
-# ╚═════════════════════════════════════════════════════════════╝
+# ╔═════════════════════════════════════════════════════════════════╗
+# 🔗 resolve_tag_mappings
+# ║ Resolves user mappings and populates display names for tags.    ║
+# ╚═════════════════════════════════════════════════════════════════╝
 async def resolve_tag_mappings():
     """Resolve user mappings and populate display names."""
     from bot.events import GROUPED_CALENDARS
@@ -317,8 +357,8 @@ async def resolve_tag_mappings():
 
 
 # ╔═════════════════════════════════════════════════════════════════╗
-# ║ 🧩 Setup UI Components                                          ║
-# ║ Interactive components for the setup process                    ║
+# 🧩 Setup UI Components
+# ║ Defines interactive components for the setup process.           ║
 # ╚═════════════════════════════════════════════════════════════════╝
 
 class AddCalendarModal(discord.ui.Modal):
