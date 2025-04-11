@@ -3,6 +3,7 @@ from typing import Optional
 import discord
 from discord import Interaction
 from collections import defaultdict
+import asyncio
 
 from bot.events import GROUPED_CALENDARS, TAG_NAMES, get_events
 from utils import format_message_lines, get_today, get_monday_of_week
@@ -21,7 +22,8 @@ async def post_tagged_events(interaction: Interaction, day: date):
 
         events_by_source = defaultdict(list)
         for meta in calendars:
-            events = await _retry_discord_operation(lambda: get_events(meta, day, day))
+            # Convert synchronous get_events into an awaitable using to_thread
+            events = await asyncio.to_thread(get_events, meta, day, day)
             events_by_source[meta['name']].extend(events or [])
 
         if not events_by_source:
@@ -42,9 +44,8 @@ async def post_tagged_week(interaction: Interaction, monday: date):
         events_by_day = defaultdict(list)
         
         for meta in GROUPED_CALENDARS.get(user_id, []):
-            events = await _retry_discord_operation(
-                lambda: get_events(meta, monday, monday + timedelta(days=6))
-            )
+            # Convert synchronous get_events into an awaitable using to_thread
+            events = await asyncio.to_thread(get_events, meta, monday, monday + timedelta(days=6))
             for e in events or []:
                 start_date = datetime.fromisoformat(e['start'].get('dateTime', e['start'].get('date'))).date()
                 events_by_day[start_date].append(e)
@@ -87,14 +88,16 @@ async def handle_herald_command(interaction: Interaction):
         # Get daily events
         daily_events = defaultdict(list)
         for meta in GROUPED_CALENDARS[user_id]:
-            events = await _retry_discord_operation(lambda: get_events(meta, today, today))
+            # Convert synchronous get_events into an awaitable using to_thread
+            events = await asyncio.to_thread(get_events, meta, today, today)
             for event in events or []:
                 daily_events[meta['name']].extend([event])
         
         # Get weekly events
         weekly_events = defaultdict(list)
         for meta in GROUPED_CALENDARS[user_id]:
-            events = await _retry_discord_operation(lambda: get_events(meta, monday, monday + timedelta(days=6)))
+            # Convert synchronous get_events into an awaitable using to_thread
+            events = await asyncio.to_thread(get_events, meta, monday, monday + timedelta(days=6))
             for event in events or []:
                 start_date = datetime.fromisoformat(event['start'].get('dateTime', event['start'].get('date'))).date()
                 weekly_events[start_date].append(event)
