@@ -32,7 +32,6 @@ from utils import (
 import discord  # Added for creating embed messages
 
 from bot.events import (
-    CalendarUpdateRequested,
     NewCalendarEvent, 
     calendar_update_lock,
     load_post_tracking,
