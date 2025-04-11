@@ -100,13 +100,32 @@ def add_calendar(server_id: int, calendar_data: Dict) -> Tuple[bool, str]:
 def remove_calendar(server_id: int, calendar_id: str) -> Tuple[bool, str]:
     """Remove a calendar from the server's config.json."""
     config = load_server_config(server_id)
-    updated_calendars = [cal for cal in config["calendars"] if cal["id"] != calendar_id]
-    if len(updated_calendars) == len(config["calendars"]):
+    
+    # Log what we're looking for and what we have
+    logger.debug(f"Trying to remove calendar with ID: {calendar_id}")
+    logger.debug(f"Available calendars: {[cal.get('id', 'unknown') for cal in config.get('calendars', [])]}")
+    
+    # Check if calendar exists before removal
+    calendar_exists = False
+    for cal in config.get("calendars", []):
+        if cal.get("id") == calendar_id:
+            calendar_exists = True
+            break
+    
+    if not calendar_exists:
+        logger.warning(f"Calendar with ID '{calendar_id}' not found in server {server_id} config")
         return False, "Calendar not found."
-    config["calendars"] = updated_calendars
+    
+    # Remove the calendar
+    config["calendars"] = [cal for cal in config.get("calendars", []) if cal.get("id") != calendar_id]
+    
+    # Save the config and trigger reload
     if save_server_config(server_id, config):
+        logger.info(f"Successfully removed calendar {calendar_id} from server {server_id}")
         _trigger_calendar_reload()  # Trigger reload callback
         return True, "Calendar successfully removed."
+    
+    logger.error(f"Failed to save config after removing calendar {calendar_id} from server {server_id}")
     return False, "Failed to save updated config."
 
 def load_admins(server_id: int) -> List[str]:
@@ -175,15 +194,27 @@ def get_all_server_ids() -> List[int]:
     """Get a list of all server IDs that have configuration files."""
     try:
         if not os.path.exists(SERVER_CONFIG_DIR):
+            logger.warning(f"Server config directory does not exist: {SERVER_CONFIG_DIR}")
             return []
             
         server_ids = []
         for entry in os.listdir(SERVER_CONFIG_DIR):
-            full_path = os.path.join(SERVER_CONFIG_DIR, entry)
-            if entry.isdigit() and os.path.isdir(full_path):
-                config_file = os.path.join(full_path, "config.json")
-                if os.path.exists(config_file):
-                    server_ids.append(int(entry))
+            # Check if the entry name is a digit (server IDs are numeric)
+            if entry.isdigit():
+                full_path = os.path.join(SERVER_CONFIG_DIR, entry)
+                
+                # Check if it's a directory
+                if os.path.isdir(full_path):
+                    config_file = os.path.join(full_path, "config.json")
+                    
+                    # Check if config.json exists in the directory
+                    if os.path.exists(config_file):
+                        logger.debug(f"Found server config for ID: {entry}")
+                        server_ids.append(int(entry))
+                    else:
+                        logger.debug(f"Directory {entry} exists but has no config.json")
+        
+        logger.info(f"Found {len(server_ids)} server configurations")
         return server_ids
     except Exception as e:
         logger.exception(f"Error listing server configurations: {e}")

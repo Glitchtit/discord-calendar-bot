@@ -169,9 +169,19 @@ def load_calendars_from_server_configs():
     # Track problematic calendars for logging
     missing_user_id_count = 0
     
-    for server_id in get_all_server_ids():
+    # Get all server IDs first so we can provide better diagnostics
+    server_ids = get_all_server_ids()
+    logger.info(f"Found {len(server_ids)} server IDs to load calendars from: {server_ids}")
+    
+    if not server_ids:
+        logger.warning("No server configuration directories found. Make sure your data/servers directory contains properly configured server folders.")
+    
+    for server_id in server_ids:
         config = load_server_config(server_id)
-        for calendar in config.get("calendars", []):
+        calendars = config.get("calendars", [])
+        logger.debug(f"Server {server_id} has {len(calendars)} calendars configured")
+        
+        for calendar in calendars:
             # Skip calendars without user_id instead of crashing
             if "user_id" not in calendar:
                 missing_user_id_count += 1
@@ -191,9 +201,26 @@ def load_calendars_from_server_configs():
             })
 
     calendar_count = sum(len(calendars) for calendars in GROUPED_CALENDARS.values())
-    logger.info(f"Loaded {len(GROUPED_CALENDARS)} user-specific calendars ({calendar_count} total calendars) from server configurations.")
+    user_count = len(GROUPED_CALENDARS)
+    
+    logger.info(f"Loaded {user_count} user-specific calendars ({calendar_count} total calendars) from server configurations.")
+    
     if missing_user_id_count > 0:
         logger.warning(f"Fixed {missing_user_id_count} calendars with missing user_id field.")
+    
+    # Debug output for grouped calendars
+    if calendar_count == 0:
+        logger.warning("No calendars were loaded. Possible issues:")
+        logger.warning("1. Server configuration files might not exist.")
+        logger.warning("2. Server configuration files might exist but have no calendars defined.")
+        logger.warning("3. The data directory structure might be incorrect.")
+    else:
+        for user_id, calendars in GROUPED_CALENDARS.items():
+            logger.debug(f"User {user_id} has {len(calendars)} calendars")
+            for calendar in calendars:
+                logger.debug(f"  - {calendar.get('name')} ({calendar.get('type')}:{calendar.get('id')})")
+
+    return GROUPED_CALENDARS
 
 # Register the calendar reload function now that it's defined
 register_calendar_reload_callback(load_calendars_from_server_configs)

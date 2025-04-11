@@ -143,18 +143,16 @@ class ConfirmRemovalView(View):
     @discord.ui.button(label="Confirm Removal", style=discord.ButtonStyle.danger)
     async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Remove the calendar when confirmed."""
-        # Create removal data structure
-        removal_data = {
-            'calendar_id': self.calendar_id,
-            'confirmation_token': str(interaction.id),
-            'initiator_id': interaction.user.id
-        }
-        success, message = remove_calendar(self.guild_id, removal_data)
+        # Log the removal attempt
+        logger.debug(f"Attempting to remove calendar with ID: {self.calendar_id} from guild {self.guild_id}")
+        
+        # Call remove_calendar with the proper parameters - direct calendar_id, not a dict
+        success, message = remove_calendar(self.guild_id, self.calendar_id)
 
         # Reload calendar configuration and reinitialize events
         if success:
             try:
-                logger.info("Calling reinitialize_events from views.py, line 163")
+                logger.info(f"Successfully removed calendar {self.calendar_id}, reinitializing events")
                 await reinitialize_events()
             except Exception as e:
                 logger.error(f"Error during reinitialization: {e}")
