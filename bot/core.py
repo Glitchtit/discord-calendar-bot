@@ -126,7 +126,7 @@ async def on_ready():
 
         # Start scheduled tasks
         from bot.tasks import start_all_tasks
-        await start_all_tasks(bot)
+        start_all_tasks(bot)  # Removed await since start_all_tasks is not async
 
         # Mark initialization as complete
         bot.is_initialized = True
