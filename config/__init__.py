@@ -1,6 +1,5 @@
 # Package initialization file
 
-from .calendar_config import CalendarConfig
 from .server_config import (
     add_calendar,
     remove_calendar,

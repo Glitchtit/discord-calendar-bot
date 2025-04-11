@@ -26,87 +26,51 @@ _background_tasks = {}
 ADMIN_CONFIG_DIR = os.path.join(os.path.dirname(get_config_path(0)), 'admins')
 os.makedirs(ADMIN_CONFIG_DIR, exist_ok=True)
 
-def add_calendar(server_id: int, calendar_data: Dict) -> Tuple[bool, str]:
-    """
-    Add a calendar to a server's calendars file.
-
-    Args:
-        server_id: Discord server ID
-        calendar_data: Calendar data including type, id, name, user_id
-
-    Returns:
-        tuple: (success, message)
-    """
+def load_server_config(server_id: int) -> Dict[str, Any]:
+    """Load server-specific configuration from config.json."""
+    config_path = get_config_path(server_id)
     try:
-        # Validate required fields
-        required_fields = ['type', 'id']
-        for field in required_fields:
-            if field not in calendar_data:
-                return False, f"Missing required field: {field}"
-
-        # Load existing calendars
-        calendars = load_calendars(server_id)
-
-        # Check for duplicate calendar
-        if any(existing.get("id") == calendar_data["id"] for existing in calendars):
-            return False, f"Calendar already exists: {calendar_data['id']}"
-
-        # Add default values for optional fields
-        calendar_data.setdefault("name", "Unnamed Calendar")
-
-        # Add the calendar
-        calendars.append(calendar_data)
-
-        # Ensure the directory for server-specific data exists
-        server_data_dir = os.path.join(os.path.dirname(get_config_path(server_id)), 'servers', str(server_id))
-        os.makedirs(server_data_dir, exist_ok=True)
-
-        # Update the path to save calendars
-        calendars_file = os.path.join(server_data_dir, 'calendars.json')
-
-        # Save calendars to the updated path
-        with open(calendars_file, 'w', encoding='utf-8') as f:
-            json.dump(calendars, f, ensure_ascii=False, indent=2)
-
-        if save_calendars(server_id, calendars):
-            logger.info(f"Added calendar {calendar_data.get('name')} to server {server_id}")
-            return True, f"Added calendar {calendar_data.get('name')} successfully."
-        else:
-            return False, "Failed to save calendars."
+        if os.path.exists(config_path):
+            with open(config_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except json.JSONDecodeError:
+        logger.warning(f"Invalid JSON in config for server {server_id}")
     except Exception as e:
-        logger.exception(f"Error adding calendar: {e}")
-        return False, f"Error adding calendar: {str(e)}"
+        logger.exception(f"Error loading config for server {server_id}: {e}")
+    return {"calendars": [], "admins": []}  # Default structure
+
+def save_server_config(server_id: int, config: Dict[str, Any]) -> bool:
+    """Save server-specific configuration to config.json."""
+    config_path = get_config_path(server_id)
+    try:
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        logger.exception(f"Error saving config for server {server_id}: {e}")
+        return False
+
+def add_calendar(server_id: int, calendar_data: Dict) -> Tuple[bool, str]:
+    """Add a calendar to the server's config.json."""
+    config = load_server_config(server_id)
+    if any(cal.get("id") == calendar_data["id"] for cal in config["calendars"]):
+        return False, f"Calendar already exists: {calendar_data['id']}"
+    config["calendars"].append(calendar_data)
+    if save_server_config(server_id, config):
+        return True, f"Added calendar {calendar_data.get('name', 'Unnamed')} successfully."
+    return False, "Failed to save updated config."
 
 def remove_calendar(server_id: int, calendar_id: str) -> Tuple[bool, str]:
-    """
-    Remove a calendar from a server's calendars file.
-
-    Args:
-        server_id: Discord server ID
-        calendar_id: ID of the calendar to remove
-
-    Returns:
-        tuple: (success, message)
-    """
-    try:
-        # Load existing calendars
-        calendars = load_calendars(server_id)
-
-        # Filter out the calendar to remove
-        updated_calendars = [cal for cal in calendars if cal["id"] != calendar_id]
-
-        if len(updated_calendars) == len(calendars):
-            return False, "Calendar not found."
-
-        # Save updated calendars
-        if save_calendars(server_id, updated_calendars):
-            logger.info(f"Removed calendar {calendar_id} from server {server_id}")
-            return True, "Calendar successfully removed."
-        else:
-            return False, "Failed to save updated calendars."
-    except Exception as e:
-        logger.exception(f"Error removing calendar: {e}")
-        return False, f"Error removing calendar: {str(e)}"
+    """Remove a calendar from the server's config.json."""
+    config = load_server_config(server_id)
+    updated_calendars = [cal for cal in config["calendars"] if cal["id"] != calendar_id]
+    if len(updated_calendars) == len(config["calendars"]):
+        return False, "Calendar not found."
+    config["calendars"] = updated_calendars
+    if save_server_config(server_id, config):
+        return True, "Calendar successfully removed."
+    return False, "Failed to save updated config."
 
 def load_admins(server_id: int) -> List[str]:
     """Load the list of admin user IDs for a server."""

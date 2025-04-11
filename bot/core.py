@@ -59,7 +59,6 @@ from bot.views import (
     CalendarRemoveView,
     ConfirmRemovalView
 )
-from config.calendar_config import CalendarConfig
 from utils import get_today  # Added missing import
 import os
 from utils.server_utils import get_all_server_ids
@@ -83,13 +82,6 @@ bot.is_initialized = False
 # syncing commands, loading configurations, and starting scheduled tasks.
 @bot.event
 async def on_ready():
-    # Ensure necessary directories and files exist
-    for server_id in get_all_server_ids():
-        calendar_config = CalendarConfig(server_id)
-        if not calendar_config.path.exists():
-            calendar_config.save()  # Create the file if it doesn't exist
-            logger.info(f"Created calendars.json for server {server_id} at {calendar_config.path}")
-
     # Ensure necessary directories exist
     os.makedirs(SERVER_CONFIG_DIR, exist_ok=True)
     logger.info(f"Ensured server configuration directory exists: {SERVER_CONFIG_DIR}")
