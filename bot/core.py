@@ -190,13 +190,7 @@ async def who_command(interaction: discord.Interaction):
 async def daily_command(interaction: discord.Interaction):
     await handle_daily_command(interaction)  # Delegate to the handler in commands.py
 
-@bot.tree.command(
-    name="setup",
-    description="Configure calendars for the server with guided setup"
-)
-async def setup_command(interaction: discord.Interaction):
-    await handle_setup_command(interaction)  # Delegate to the handler in commands.py
-
+# Removed setup_command implementation
 
 # ╔═════════════════════════════════════════════════════════════╗
 # ║ 🔍 Autocomplete Functions                                    ║

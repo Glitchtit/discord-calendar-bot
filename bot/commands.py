@@ -23,6 +23,7 @@ from .views import CalendarSetupView
 from .utilities import _retry_discord_operation, send_embed
 from utils import validate_env_vars
 from utils.logging import logger
+from .setup import setup
 
 # Initialize critical environment variables
 validate_env_vars(["ANNOUNCEMENT_CHANNEL_ID", "DISCORD_BOT_TOKEN"])
@@ -30,6 +31,9 @@ validate_env_vars(["ANNOUNCEMENT_CHANNEL_ID", "DISCORD_BOT_TOKEN"])
 async def setup_commands(bot: discord.Client):
     """Register all slash commands with the Discord bot"""
     
+    # Register all commands
+    await setup(bot)  # Initialize setup command
+
     @bot.tree.command(name="herald")
     async def herald_command(interaction: Interaction):
         """Post today's events for your calendars"""
