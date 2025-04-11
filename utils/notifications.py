@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Set
 
 from utils.logging import logger
+from config.server_config import load_admins
 
 # Track recently sent notifications to avoid spamming
 _recent_notifications: Dict[str, datetime] = {}
@@ -36,6 +37,12 @@ def register_admin(user_id: str):
 def register_admins(user_ids: List[str]):
     """Register multiple admin user IDs for notifications."""
     for user_id in user_ids:
+        register_admin(user_id)
+
+def register_admins_from_config(server_id: int):
+    """Register admin users from the server-specific configuration."""
+    admin_ids = load_admins(server_id)
+    for user_id in admin_ids:
         register_admin(user_id)
     
 def is_notification_allowed(notification_key: str) -> bool:

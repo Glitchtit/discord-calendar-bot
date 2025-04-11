@@ -32,6 +32,9 @@ from utils.server_utils import (
 SERVER_CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'servers')
 os.makedirs(SERVER_CONFIG_DIR, exist_ok=True)
 
+ADMIN_CONFIG_DIR = os.path.join(SERVER_CONFIG_DIR, 'admins')
+os.makedirs(ADMIN_CONFIG_DIR, exist_ok=True)
+
 # Task tracking for background operations
 _background_tasks = {}
 
@@ -223,6 +226,25 @@ async def check_background_tasks() -> Dict[str, str]:
     
     return result
 
+def load_admins(server_id: int) -> list:
+    """Load the list of admin user IDs for a server."""
+    admin_file = os.path.join(ADMIN_CONFIG_DIR, f"{server_id}_admins.json")
+    if os.path.exists(admin_file):
+        with open(admin_file, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return []
+
+def save_admins(server_id: int, admin_ids: list) -> bool:
+    """Save the list of admin user IDs for a server."""
+    admin_file = os.path.join(ADMIN_CONFIG_DIR, f"{server_id}_admins.json")
+    try:
+        with open(admin_file, 'w', encoding='utf-8') as f:
+            json.dump(admin_ids, f, ensure_ascii=False, indent=4)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save admins for server {server_id}: {e}")
+        return False
+
 def get_admin_user_ids(server_id: int) -> list:
     """
     Get list of admin user IDs for a specific server, including the server owner as superadmin.
@@ -233,10 +255,10 @@ def get_admin_user_ids(server_id: int) -> list:
     Returns:
         List of user IDs that should receive admin notifications
     """
-    config = load_server_config(server_id)
-    admin_ids = set(config.get("admin_user_ids", []))
+    admin_ids = set(load_admins(server_id))
 
     # Add the server owner as a superadmin
+    config = load_server_config(server_id)
     if "owner_id" in config:
         admin_ids.add(str(config["owner_id"]))
 
@@ -267,20 +289,14 @@ def add_admin_user(server_id: int, user_id: str) -> tuple:
     Returns:
         tuple: (success, message)
     """
-    config = load_server_config(server_id)
-    
-    # Initialize the admin_user_ids list if it doesn't exist
-    if "admin_user_ids" not in config:
-        config["admin_user_ids"] = []
-        
-    # Convert to strings for consistency
+    admin_ids = load_admins(server_id)
     user_id = str(user_id)
-        
-    # Add the user if not already in the list
-    if user_id not in config["admin_user_ids"]:
-        config["admin_user_ids"].append(user_id)
-        save_server_config(server_id, config)
-        return True, f"Added user ID {user_id} as admin"
+    if user_id not in admin_ids:
+        admin_ids.append(user_id)
+        if save_admins(server_id, admin_ids):
+            return True, f"Added user ID {user_id} as admin"
+        else:
+            return False, "Failed to save admin list"
     else:
         return False, f"User ID {user_id} is already an admin"
 
@@ -295,13 +311,13 @@ def remove_admin_user(server_id: int, user_id: str) -> tuple:
     Returns:
         tuple: (success, message)
     """
-    config = load_server_config(server_id)
+    admin_ids = load_admins(server_id)
     user_id = str(user_id)
-    
-    # Check if the admin_user_ids list exists and user is in it
-    if "admin_user_ids" in config and user_id in config["admin_user_ids"]:
-        config["admin_user_ids"].remove(user_id)
-        save_server_config(server_id, config)
-        return True, f"Removed user ID {user_id} from admins"
+    if user_id in admin_ids:
+        admin_ids.remove(user_id)
+        if save_admins(server_id, admin_ids):
+            return True, f"Removed user ID {user_id} from admins"
+        else:
+            return False, "Failed to save admin list"
     else:
         return False, f"User ID {user_id} is not an admin"
