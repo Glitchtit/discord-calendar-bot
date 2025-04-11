@@ -1,51 +1,39 @@
 """
 server_config.py: Server-specific configuration management for the calendar bot.
 
-This module replaces the previous environment variable-based configuration approach
-with a server-specific JSON file storage system. Each Discord server now has its own
-configuration file stored in the /data/servers directory.
-
-This enables:
-- Per-server calendar configurations
-- Server-specific user-tag mappings  
-- Independent setup across different Discord servers
+This module manages server-specific configurations, including calendars and admin settings.
+Configurations are stored in JSON files under the /data/servers directory.
 """
 
 import os
 import json
-from typing import Dict, List, Any, Optional, Tuple
-import logging
 import asyncio
+from typing import Dict, List, Any, Tuple
 from utils.logging import logger
-from config.calendar_config import CalendarConfig
-
-# Import utilities from server_utils rather than redefining the same functions
 from utils.server_utils import (
+    get_config_path,
+    get_calendars_path,
     load_server_config,
-    save_server_config, 
-    get_all_server_ids,
-    detect_calendar_type,
-    migrate_env_config_to_server
+    save_server_config,
+    load_calendars,
+    save_calendars
 )
-
-# Define the server config directory for reference
-SERVER_CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'servers')
-os.makedirs(SERVER_CONFIG_DIR, exist_ok=True)
-
-ADMIN_CONFIG_DIR = os.path.join(SERVER_CONFIG_DIR, 'admins')
-os.makedirs(ADMIN_CONFIG_DIR, exist_ok=True)
 
 # Task tracking for background operations
 _background_tasks = {}
 
+# Admin configuration directory
+ADMIN_CONFIG_DIR = os.path.join(os.path.dirname(get_config_path(0)), 'admins')
+os.makedirs(ADMIN_CONFIG_DIR, exist_ok=True)
+
 def add_calendar(server_id: int, calendar_data: Dict) -> Tuple[bool, str]:
     """
-    Add a calendar to a server's configuration with improved validation.
-    
+    Add a calendar to a server's calendars file.
+
     Args:
         server_id: Discord server ID
         calendar_data: Calendar data including type, id, name, user_id
-        
+
     Returns:
         tuple: (success, message)
     """
@@ -55,269 +43,119 @@ def add_calendar(server_id: int, calendar_data: Dict) -> Tuple[bool, str]:
         for field in required_fields:
             if field not in calendar_data:
                 return False, f"Missing required field: {field}"
-                
-        # Load existing configuration
-        config = load_server_config(server_id)
-        
-        # Initialize calendars list if not exists
-        if "calendars" not in config:
-            config["calendars"] = []
-            
+
+        # Load existing calendars
+        calendars = load_calendars(server_id)
+
         # Check for duplicate calendar
-        for existing in config["calendars"]:
-            if existing.get("id") == calendar_data["id"]:
-                return False, f"Calendar already exists: {calendar_data['id']}"
-                
-        # Add server_id to the calendar data for reference
-        calendar_data["server_id"] = server_id
-        
+        if any(existing.get("id") == calendar_data["id"] for existing in calendars):
+            return False, f"Calendar already exists: {calendar_data['id']}"
+
         # Add default values for optional fields
-        if "name" not in calendar_data:
-            calendar_data["name"] = "Unnamed Calendar"
-        
-        # Add to configuration
-        config["calendars"].append(calendar_data)
-        
-        # Save configuration
-        if save_server_config(server_id, config):
+        calendar_data.setdefault("name", "Unnamed Calendar")
+
+        # Add the calendar
+        calendars.append(calendar_data)
+
+        # Save calendars
+        if save_calendars(server_id, calendars):
             logger.info(f"Added calendar {calendar_data.get('name')} to server {server_id}")
-            
-            # Set up real-time subscription in background with improved error handling
-            async def setup_subscription():
-                try:
-                    from utils.calendar_sync import subscribe_calendar
-                    await subscribe_calendar(calendar_data)
-                    logger.info(f"Successfully subscribed to updates for calendar {calendar_data.get('id')}")
-                except Exception as e:
-                    logger.error(f"Failed to subscribe to calendar updates: {e}")
-                    # Consider notifying an admin here if critical
-            
-            # Create and monitor the background task
-            task_key = f"add_calendar_{server_id}_{calendar_data.get('id', 'unknown')}"
-            task = asyncio.create_task(setup_subscription())
-            _background_tasks[task_key] = task
-            
-            # Set up a callback to remove the task when done and log any errors
-            def task_done_callback(task):
-                try:
-                    # Check if the task raised any exceptions
-                    if task.exception():
-                        logger.error(f"Background task {task_key} failed: {task.exception()}")
-                except asyncio.CancelledError:
-                    logger.warning(f"Task {task_key} was cancelled")
-                except Exception as e:
-                    logger.exception(f"Error handling task completion: {e}")
-                finally:
-                    # Remove the task from tracking
-                    if task_key in _background_tasks:
-                        del _background_tasks[task_key]
-            
-            task.add_done_callback(task_done_callback)
-            
             return True, f"Added calendar {calendar_data.get('name')} successfully."
         else:
-            return False, "Failed to save configuration."
+            return False, "Failed to save calendars."
     except Exception as e:
         logger.exception(f"Error adding calendar: {e}")
         return False, f"Error adding calendar: {str(e)}"
 
 def remove_calendar(server_id: int, calendar_id: str) -> Tuple[bool, str]:
     """
-    Remove a calendar from a server's configuration.
-    
+    Remove a calendar from a server's calendars file.
+
     Args:
         server_id: Discord server ID
         calendar_id: ID of the calendar to remove
-        
+
     Returns:
         tuple: (success, message)
     """
     try:
-        # Load configuration
-        config = load_server_config(server_id)
-        
-        # Validate config structure
-        if not isinstance(config, dict):
-            return False, "Invalid server configuration structure."
+        # Load existing calendars
+        calendars = load_calendars(server_id)
 
-        # Find the calendar to remove
-        calendars = config.get("calendars", [])
-        initial_count = len(calendars)
-        
-        removed_calendar = None
-        for cal in calendars:
-            if cal["id"] == calendar_id:
-                removed_calendar = cal
-                break
-                
-        # Filter out the calendar
-        config["calendars"] = [cal for cal in calendars if cal["id"] != calendar_id]
-        
-        # Check if we actually removed anything
-        if len(config["calendars"]) < initial_count:
-            if save_server_config(server_id, config):
-                logger.info(f"Removed calendar {calendar_id} from server {server_id}")
-                
-                # Unsubscribe from real-time updates in background with improved error handling
-                if removed_calendar:
-                    # Add server_id to the calendar data for reference if not present
-                    removed_calendar["server_id"] = server_id
-                    
-                    async def cancel_subscription():
-                        try:
-                            from utils.calendar_sync import unsubscribe_calendar
-                            await unsubscribe_calendar(removed_calendar)
-                            logger.info(f"Successfully unsubscribed from calendar {calendar_id}")
-                        except Exception as e:
-                            logger.error(f"Failed to unsubscribe from calendar updates: {e}")
-                    
-                    # Create and monitor the background task
-                    task_key = f"remove_calendar_{server_id}_{calendar_id}"
-                    task = asyncio.create_task(cancel_subscription())
-                    _background_tasks[task_key] = task
-                    
-                    # Set up a callback to remove the task when done and log any errors
-                    def task_done_callback(task):
-                        try:
-                            # Check if the task raised any exceptions
-                            if task.exception():
-                                logger.error(f"Background task {task_key} failed: {task.exception()}")
-                        except asyncio.CancelledError:
-                            logger.warning(f"Task {task_key} was cancelled")
-                        except Exception as e:
-                            logger.exception(f"Error handling task completion: {e}")
-                        finally:
-                            # Remove the task from tracking
-                            if task_key in _background_tasks:
-                                del _background_tasks[task_key]
-                    
-                    task.add_done_callback(task_done_callback)
-                
-                return True, "Calendar successfully removed."
-            else:
-                return False, "Failed to save configuration after removing calendar."
+        # Filter out the calendar to remove
+        updated_calendars = [cal for cal in calendars if cal["id"] != calendar_id]
+
+        if len(updated_calendars) == len(calendars):
+            return False, "Calendar not found."
+
+        # Save updated calendars
+        if save_calendars(server_id, updated_calendars):
+            logger.info(f"Removed calendar {calendar_id} from server {server_id}")
+            return True, "Calendar successfully removed."
         else:
-            return False, "Calendar not found in configuration."
+            return False, "Failed to save updated calendars."
     except Exception as e:
         logger.exception(f"Error removing calendar: {e}")
         return False, f"Error removing calendar: {str(e)}"
 
-async def check_background_tasks() -> Dict[str, str]:
-    """
-    Check the status of any currently running background tasks.
-    
-    Returns:
-        Dictionary with task keys and their status
-    """
-    result = {}
-    for key, task in list(_background_tasks.items()):
-        if task.done():
-            if task.exception():
-                result[key] = f"Failed: {task.exception()}"
-            else:
-                result[key] = "Completed"
-            # Clean up completed tasks
-            del _background_tasks[key]
-        elif task.cancelled():
-            result[key] = "Cancelled"
-            del _background_tasks[key]
-        else:
-            result[key] = "Running"
-    
-    return result
-
-def load_admins(server_id: int) -> list:
+def load_admins(server_id: int) -> List[str]:
     """Load the list of admin user IDs for a server."""
     admin_file = os.path.join(ADMIN_CONFIG_DIR, f"{server_id}_admins.json")
-    if os.path.exists(admin_file):
-        with open(admin_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
+    try:
+        if os.path.exists(admin_file):
+            with open(admin_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception as e:
+        logger.exception(f"Error loading admins for server {server_id}: {e}")
     return []
 
-def save_admins(server_id: int, admin_ids: list) -> bool:
+def save_admins(server_id: int, admin_ids: List[str]) -> bool:
     """Save the list of admin user IDs for a server."""
     admin_file = os.path.join(ADMIN_CONFIG_DIR, f"{server_id}_admins.json")
     try:
         with open(admin_file, 'w', encoding='utf-8') as f:
-            json.dump(admin_ids, f, ensure_ascii=False, indent=4)
+            json.dump(admin_ids, f, ensure_ascii=False, indent=2)
         return True
     except Exception as e:
         logger.error(f"Failed to save admins for server {server_id}: {e}")
         return False
 
-def get_admin_user_ids(server_id: int) -> list:
-    """
-    Get list of admin user IDs for a specific server, including the server owner as superadmin.
-
-    Args:
-        server_id: The Discord server ID
-
-    Returns:
-        List of user IDs that should receive admin notifications
-    """
-    admin_ids = set(load_admins(server_id))
-
-    # Add the server owner as a superadmin
-    config = load_server_config(server_id)
-    if "owner_id" in config:
-        admin_ids.add(str(config["owner_id"]))
-
-    return list(admin_ids)
-
-def is_superadmin(server_id: int, user_id: str) -> bool:
-    """
-    Check if a user is the superadmin (server owner).
-
-    Args:
-        server_id: The Discord server ID
-        user_id: The Discord user ID to check
-
-    Returns:
-        True if the user is the server owner, False otherwise
-    """
-    config = load_server_config(server_id)
-    return str(config.get("owner_id")) == str(user_id)
-
-def add_admin_user(server_id: int, user_id: str) -> tuple:
+def add_admin_user(server_id: int, user_id: str) -> Tuple[bool, str]:
     """
     Add a user as an admin for notifications.
-    
+
     Args:
         server_id: The Discord server ID
         user_id: The Discord user ID to add as admin
-        
+
     Returns:
         tuple: (success, message)
     """
     admin_ids = load_admins(server_id)
-    user_id = str(user_id)
     if user_id not in admin_ids:
         admin_ids.append(user_id)
         if save_admins(server_id, admin_ids):
-            return True, f"Added user ID {user_id} as admin"
+            return True, f"Added user ID {user_id} as admin."
         else:
-            return False, "Failed to save admin list"
-    else:
-        return False, f"User ID {user_id} is already an admin"
+            return False, "Failed to save admin list."
+    return False, f"User ID {user_id} is already an admin."
 
-def remove_admin_user(server_id: int, user_id: str) -> tuple:
+def remove_admin_user(server_id: int, user_id: str) -> Tuple[bool, str]:
     """
     Remove a user from admin notifications.
-    
+
     Args:
         server_id: The Discord server ID
         user_id: The Discord user ID to remove
-        
+
     Returns:
         tuple: (success, message)
     """
     admin_ids = load_admins(server_id)
-    user_id = str(user_id)
     if user_id in admin_ids:
         admin_ids.remove(user_id)
         if save_admins(server_id, admin_ids):
-            return True, f"Removed user ID {user_id} from admins"
+            return True, f"Removed user ID {user_id} from admins."
         else:
-            return False, "Failed to save admin list"
-    else:
-        return False, f"User ID {user_id} is not an admin"
+            return False, "Failed to save admin list."
+    return False, f"User ID {user_id} is not an admin."
