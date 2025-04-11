@@ -174,10 +174,51 @@ def load_calendars_from_server_configs():
     logger.info(f"Found {len(server_ids)} server IDs to load calendars from: {server_ids}")
     
     if not server_ids:
+        # Check Docker path directly as a fallback if get_all_server_ids returned nothing
+        docker_dir = "/data/servers"
+        if os.path.exists(docker_dir):
+            logger.warning("No server IDs found via normal method, checking Docker path directly")
+            try:
+                docker_ids = []
+                for entry in os.listdir(docker_dir):
+                    if entry.isdigit():
+                        docker_path = os.path.join(docker_dir, entry, "config.json")
+                        if os.path.exists(docker_path):
+                            docker_ids.append(int(entry))
+                            logger.debug(f"Found config.json in Docker path for server {entry}")
+                            
+                if docker_ids:
+                    logger.info(f"Found {len(docker_ids)} server configurations in Docker path")
+                    server_ids = docker_ids
+            except Exception as e:
+                logger.error(f"Error checking Docker directory: {e}")
+    
+    if not server_ids:
         logger.warning("No server configuration directories found. Make sure your data/servers directory contains properly configured server folders.")
+        # Try direct check for specific server ID if we still have no servers
+        specific_id = 1281925168700198924  # The server ID mentioned in the report
+        specific_path = f"/data/servers/{specific_id}/config.json"
+        if os.path.exists(specific_path):
+            logger.info(f"Found specific server configuration at {specific_path}")
+            server_ids = [specific_id]
     
     for server_id in server_ids:
-        config = load_server_config(server_id)
+        # First try to load directly from Docker path as a workaround
+        docker_path = f"/data/servers/{server_id}/config.json"
+        config = None
+        
+        if os.path.exists(docker_path):
+            try:
+                with open(docker_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                logger.info(f"Successfully loaded config from Docker path: {docker_path}")
+            except Exception as e:
+                logger.warning(f"Error loading from Docker path: {e}")
+        
+        # If direct Docker path loading failed, try the normal way
+        if config is None:
+            config = load_server_config(server_id)
+            
         calendars = config.get("calendars", [])
         logger.debug(f"Server {server_id} has {len(calendars)} calendars configured")
         
@@ -214,6 +255,18 @@ def load_calendars_from_server_configs():
         logger.warning("1. Server configuration files might not exist.")
         logger.warning("2. Server configuration files might exist but have no calendars defined.")
         logger.warning("3. The data directory structure might be incorrect.")
+        
+        # Last resort check for config.json files
+        try:
+            import pathlib
+            import glob
+            
+            # Search for any config.json in the filesystem under data directories
+            config_files = glob.glob("**/data/**/config.json", recursive=True)
+            if config_files:
+                logger.warning(f"Found config.json files that weren't loaded: {config_files}")
+        except Exception as e:
+            logger.error(f"Error searching for config files: {e}")
     else:
         for user_id, calendars in GROUPED_CALENDARS.items():
             logger.debug(f"User {user_id} has {len(calendars)} calendars")
@@ -485,7 +538,7 @@ def load_post_tracking(server_id: int) -> dict:
     try:
         path = get_events_file(server_id)
         if os.path.exists(path):
-            with open(path, "r", "utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 return data.get("daily_posts", {})
     except json.JSONDecodeError:

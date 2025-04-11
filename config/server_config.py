@@ -197,6 +197,31 @@ def get_all_server_ids() -> List[int]:
             logger.warning(f"Server config directory does not exist: {SERVER_CONFIG_DIR}")
             return []
             
+        # Add more debugging information
+        logger.debug(f"Searching for server configs in directory: {SERVER_CONFIG_DIR}")
+        
+        # Also check the Docker path
+        docker_dir = "/data/servers"
+        if os.path.exists(docker_dir):
+            logger.debug(f"Docker server config directory exists: {docker_dir}")
+            
+            # List contents of Docker directory for debugging
+            try:
+                docker_contents = os.listdir(docker_dir)
+                logger.debug(f"Docker directory contents: {docker_contents}")
+                
+                # Check individual server directories
+                for entry in docker_contents:
+                    if entry.isdigit():
+                        server_dir = os.path.join(docker_dir, entry)
+                        config_file = os.path.join(server_dir, "config.json")
+                        if os.path.exists(config_file):
+                            logger.debug(f"Found server config in Docker path: {config_file}")
+            except Exception as e:
+                logger.warning(f"Error reading Docker directory contents: {e}")
+        else:
+            logger.debug("Docker server config directory does not exist")
+            
         server_ids = []
         for entry in os.listdir(SERVER_CONFIG_DIR):
             # Check if the entry name is a digit (server IDs are numeric)
@@ -213,6 +238,17 @@ def get_all_server_ids() -> List[int]:
                         server_ids.append(int(entry))
                     else:
                         logger.debug(f"Directory {entry} exists but has no config.json")
+        
+        # Now also check Docker path for server IDs
+        if os.path.exists(docker_dir):
+            for entry in os.listdir(docker_dir):
+                if entry.isdigit():
+                    docker_config_path = os.path.join(docker_dir, entry, "config.json")
+                    if os.path.exists(docker_config_path):
+                        server_id = int(entry)
+                        if server_id not in server_ids:  # Avoid duplicates
+                            logger.debug(f"Found additional server config in Docker path for ID: {entry}")
+                            server_ids.append(server_id)
         
         logger.info(f"Found {len(server_ids)} server configurations")
         return server_ids
