@@ -14,6 +14,14 @@ services:
     volumes:
       - ./data:/data
       - ./service_account.json:/app/service_account.json:ro
+      
+    # Add healthcheck to monitor bot status
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('/data/.initialized') else 1)"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
     # Log rotation settings
     logging:

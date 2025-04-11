@@ -15,8 +15,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source code
 COPY . .
 
-# Create folders for persistent data
-RUN mkdir -p /data/logs /data/art
+# Create directories for persistent data with proper permissions
+RUN mkdir -p /data/logs /data/art /data/servers \
+    && chmod -R 777 /data \
+    && touch /data/.initialized
 
 # Default entrypoint
 CMD ["python", "main.py"]

@@ -1,5 +1,5 @@
 """
-ai.py: AI utilities for generating greeting text and images via OpenAI.
+ai_helpers.py: AI utilities for generating greeting text and images via OpenAI.
 Includes improved error handling, retry logic, and type hints.
 """
 
@@ -12,6 +12,7 @@ import math
 import time
 from datetime import datetime, timedelta
 import logging
+import threading
 from openai import OpenAI, APIError, RateLimitError, APITimeoutError, APIConnectionError
 from utils.environ import OPENAI_API_KEY
 
@@ -24,6 +25,10 @@ _last_error_time = None
 _error_count = 0
 _reset_after = timedelta(minutes=5)
 _error_threshold = 3
+
+# Circuit recovery timer
+_recovery_timer = None
+_recovery_lock = threading.Lock()
 
 # Initialize OpenAI client with API key from environment
 # Use safer initialization with error handling
@@ -55,6 +60,62 @@ def check_api_availability():
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🔄 setup_recovery_timer                                            ║
+# ║ Schedules API availability check after the circuit breaker opens  ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def setup_recovery_timer():
+    """Schedule a recovery check after the circuit breaker timeout period."""
+    global _recovery_timer
+    
+    with _recovery_lock:
+        # Cancel any existing timer
+        if _recovery_timer:
+            _recovery_timer.cancel()
+        
+        # Create a new timer to check API availability
+        _recovery_timer = threading.Timer(
+            _reset_after.total_seconds(),
+            _check_api_health
+        )
+        _recovery_timer.daemon = True  # Don't block app exit
+        _recovery_timer.start()
+        
+        logger.debug(f"Recovery timer scheduled in {_reset_after.total_seconds()} seconds")
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🔎 _check_api_health                                               ║
+# ║ Tests the OpenAI API with a minimal request to see if it's back   ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def _check_api_health():
+    """Make a minimal API call to test if OpenAI API is back online."""
+    global _circuit_open, _error_count
+    
+    if not _circuit_open:
+        return  # Nothing to do if circuit is already closed
+        
+    if not client:
+        logger.warning("Cannot check API health: OpenAI client not initialized")
+        return
+    
+    try:
+        logger.info("Testing OpenAI API availability...")
+        # Use a minimal models list request to check API health
+        response = client.models.list(limit=1)
+        
+        # If we get here, API is working
+        with _recovery_lock:
+            _circuit_open = False
+            _error_count = 0
+            logger.info("OpenAI API is available again. Circuit closed.")
+            
+    except Exception as e:
+        logger.warning(f"OpenAI API still unavailable: {e}")
+        # Schedule another check
+        setup_recovery_timer()
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🧯 handle_api_error                                                ║
 # ║ Centralized error handling for OpenAI API errors                  ║
 # ╚════════════════════════════════════════════════════════════════════╝
@@ -65,9 +126,11 @@ def handle_api_error(error, context="API call"):
     _last_error_time = datetime.now()
     
     # Open the circuit if we've hit the threshold
-    if (_error_count >= _error_threshold):
+    if (_error_count >= _error_threshold) and not _circuit_open:
         _circuit_open = True
         logger.error(f"Circuit breaker opened after {_error_count} errors. Will retry after {_reset_after}")
+        # Schedule recovery check
+        setup_recovery_timer()
     
     # Handle specific error types
     if isinstance(error, RateLimitError):

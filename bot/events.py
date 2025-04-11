@@ -13,6 +13,7 @@ import hashlib
 import requests
 import time
 import random
+import pathlib
 from datetime import datetime, timedelta, date
 from typing import Dict, List, Tuple, Optional, Any
 from ics import Calendar as ICS_Calendar
@@ -29,8 +30,46 @@ from asyncio import Lock
 # ╚════════════════════════════════════════════════════════════════════╝
 SERVICE_ACCOUNT_FILE = GOOGLE_APPLICATION_CREDENTIALS
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
+
+def get_data_directory(server_id: int) -> pathlib.Path:
+    """Get the appropriate data directory for a server with fallbacks."""
+    # Primary location (Docker container)
+    primary_dir = pathlib.Path("/data") / str(server_id)
+    
+    # Try to create primary directory
+    try:
+        primary_dir.mkdir(parents=True, exist_ok=True)
+        if os.access(primary_dir, os.W_OK):
+            return primary_dir
+    except (PermissionError, OSError):
+        pass  # Will try fallbacks
+        
+    # First fallback: local directory relative to this file
+    first_fallback = pathlib.Path(__file__).parent.parent / "data" / str(server_id)
+    try:
+        first_fallback.mkdir(parents=True, exist_ok=True)
+        if os.access(first_fallback, os.W_OK):
+            logger.info(f"Using fallback data directory: {first_fallback}")
+            return first_fallback
+    except (PermissionError, OSError):
+        pass  # Will try next fallback
+        
+    # Second fallback: temp directory
+    import tempfile
+    temp_dir = pathlib.Path(tempfile.gettempdir()) / "discord-calendar-bot" / str(server_id)
+    try:
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        logger.warning(f"Using temporary directory for data: {temp_dir}")
+        return temp_dir
+    except (PermissionError, OSError) as e:
+        logger.error(f"Failed to create any data directory: {e}")
+        # Return the original even though it might not work, to maintain API
+        return primary_dir
+
 def get_events_file(server_id: int) -> str:
-    return os.path.join("/data", str(server_id), "events.json")
+    """Get the path to the events file for a server."""
+    data_dir = get_data_directory(server_id)
+    return str(data_dir / "events.json")
 
 # In-memory cache
 _calendar_metadata_cache = {}
@@ -38,9 +77,6 @@ _api_last_error_time = None
 _api_error_count = 0
 _API_BACKOFF_RESET = timedelta(minutes=30)
 _MAX_API_ERRORS = 10
-
-# Fallback directory for events if primary location is unavailable
-FALLBACK_EVENTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 logger.debug(f"Loading Google credentials from: {SERVICE_ACCOUNT_FILE}")
 try:
