@@ -11,7 +11,7 @@ from pathlib import Path
 logger = logging.getLogger("calendarbot")
 
 # Directory for server configuration files
-SERVER_CONFIG_BASE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+SERVER_CONFIG_BASE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "servers")
 _load_lock = Lock()
 _save_lock = Lock()
 
