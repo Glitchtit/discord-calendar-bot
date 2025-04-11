@@ -15,10 +15,27 @@ from utils.server_utils import (
     load_server_config,
     save_server_config,
 )
-from bot.events import load_calendars_from_server_configs as load_calendars
+# Removing the circular import
+# from bot.events import load_calendars_from_server_configs as load_calendars
 
 # Task tracking for background operations
 _background_tasks = {}
+
+# Create a placeholder for post-configuration actions
+_calendar_reload_callbacks = []
+
+def register_calendar_reload_callback(callback):
+    """Register a function to be called when calendars are modified"""
+    if callable(callback) and callback not in _calendar_reload_callbacks:
+        _calendar_reload_callbacks.append(callback)
+
+def _trigger_calendar_reload():
+    """Trigger all registered callbacks to reload calendars"""
+    for callback in _calendar_reload_callbacks:
+        try:
+            callback()
+        except Exception as e:
+            logger.exception(f"Error in calendar reload callback: {e}")
 
 def get_admins_file(server_id: int) -> str:
     """Get the path to the admins file for a server."""
@@ -56,6 +73,7 @@ def add_calendar(server_id: int, calendar_data: Dict) -> Tuple[bool, str]:
         return False, f"Calendar already exists: {calendar_data['id']}"
     config["calendars"].append(calendar_data)
     if save_server_config(server_id, config):
+        _trigger_calendar_reload()  # Trigger reload callback
         return True, f"Added calendar {calendar_data.get('name', 'Unnamed')} successfully."
     return False, "Failed to save updated config."
 
@@ -67,6 +85,7 @@ def remove_calendar(server_id: int, calendar_id: str) -> Tuple[bool, str]:
         return False, "Calendar not found."
     config["calendars"] = updated_calendars
     if save_server_config(server_id, config):
+        _trigger_calendar_reload()  # Trigger reload callback
         return True, "Calendar successfully removed."
     return False, "Failed to save updated config."
 

@@ -27,7 +27,10 @@ from asyncio import Lock
 from utils.cache import event_cache
 from config.server_config import load_server_config, get_all_server_ids
 from config.server_config import save_server_config  # Added missing import
+from config.server_config import register_calendar_reload_callback  # Add this import
 from utils.environ import GOOGLE_APPLICATION_CREDENTIALS  # Added missing import
+
+# We'll move the registration after the function is defined
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🔐 Google Calendar API Setup
@@ -100,22 +103,6 @@ except Exception as e:
     service = None  # Will trigger fallback behavior in functions
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# ║ 🧰 Service Account Info                                           ║
-# ╚════════════════════════════════════════════════════════════════════╝
-def get_service_account_email() -> str:
-    """Get the service account email for sharing Google Calendars."""
-    try:
-        if not os.path.exists(SERVICE_ACCOUNT_FILE):
-            return "Service account file not found"
-            
-        with open(SERVICE_ACCOUNT_FILE, 'r') as f:
-            service_info = json.load(f)
-            return service_info.get('client_email', 'Email not found in credentials')
-    except Exception as e:
-        logger.exception(f"Error reading service account email: {e}")
-        return "Error reading service account info"
-
-# ╔════════════════════════════════════════════════════════════════════╗
 # ║ 👥 Server Config Based Calendar Loading                           ║
 # ╚════════════════════════════════════════════════════════════════════╝
 # Populated from server config files during bot startup
@@ -169,6 +156,9 @@ def load_calendars_from_server_configs():
     logger.info(f"Loaded {len(GROUPED_CALENDARS)} user-specific calendars ({calendar_count} total calendars) from server configurations.")
     if missing_user_id_count > 0:
         logger.warning(f"Fixed {missing_user_id_count} calendars with missing user_id field.")
+
+# Register the calendar reload function now that it's defined
+register_calendar_reload_callback(load_calendars_from_server_configs)
 
 # Remaining functions from events.py stay the same, but we'll change the old 
 # parse_calendar_sources and get_user_tag_mapping functions to be deprecated
