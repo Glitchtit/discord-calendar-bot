@@ -43,7 +43,7 @@ from bot.commands import (
     handle_daily_command,
     handle_setup_command
 )
-from tasks import initialize_event_snapshots, start_all_tasks, post_todays_happenings
+from bot.tasks import initialize_event_snapshots, start_all_tasks, post_todays_happenings
 from utils import get_today, get_monday_of_week, resolve_input_to_tags
 from utils.validators import detect_calendar_type
 from config.server_config import (
@@ -109,7 +109,7 @@ async def on_ready():
         await resolve_tag_mappings()
         
         # Initialize event snapshots
-        from tasks import initialize_event_snapshots
+        from bot.tasks import initialize_event_snapshots
         await initialize_event_snapshots()
         
         # Set up real-time calendar subscriptions
@@ -117,7 +117,7 @@ async def on_ready():
         await initialize_subscriptions()
         
         # Start scheduled tasks
-        from tasks import start_all_tasks
+        from bot.tasks import start_all_tasks
         await start_all_tasks(bot)
         
         # Mark initialization as complete
@@ -154,7 +154,7 @@ async def on_resumed():
     
     try:
         # Check if any scheduled tasks need to be restarted
-        from tasks import check_tasks_running, start_all_tasks
+        from bot.tasks import check_tasks_running, start_all_tasks
         
         # Verify all tasks are running, restart if needed
         tasks_status = await check_tasks_running()
@@ -167,7 +167,7 @@ async def on_resumed():
         
         # Check for missed events during disconnection
         logger.info("Checking for any missed events during disconnection...")
-        from tasks import check_for_missed_events
+        from bot.tasks import check_for_missed_events
         await check_for_missed_events()
         
         logger.info("Connection recovery completed successfully")
