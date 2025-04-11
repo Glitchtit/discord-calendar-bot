@@ -50,8 +50,7 @@ from config.server_config import (
     remove_calendar, 
     load_server_config, 
     save_server_config,
-    SERVER_CONFIG_DIR,
-    get_all_server_ids
+    SERVER_CONFIG_DIR
 )
 from collections import defaultdict
 from datetime import timedelta
@@ -63,6 +62,7 @@ from bot.views import (
 from config.calendar_config import CalendarConfig
 from utils import get_today  # Added missing import
 import os
+from utils.server_utils import get_all_server_ids
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🤖 Intents & Bot Setup
