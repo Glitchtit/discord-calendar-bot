@@ -37,7 +37,7 @@ class AddCalendarModal(Modal, title="Add Calendar"):
         """Handle the form submission."""
         await interaction.response.defer(ephemeral=True, thinking=True)
         calendar_url = self.calendar_url.value.strip()
-        display_name = self.display_name.value.strip() or "Unnamed Calendar"
+        display_name = self.display_name.value.strip()  # Remove the default value here
         calendar_scope = self.calendar_scope.value.strip().lower()  # Get the entered scope
 
         # Validate calendar scope
@@ -76,6 +76,22 @@ class AddCalendarModal(Modal, title="Add Calendar"):
                 ephemeral=True
             )
             return
+
+        # Extract calendar name from the connection test message if no display name was provided
+        # The message format is "Successfully connected to 'Calendar Name'"
+        if not display_name and success:
+            try:
+                # Extract the name from the success message, which is between single quotes
+                import re
+                name_match = re.search(r"'(.*?)'", message)
+                if name_match:
+                    display_name = name_match.group(1)
+                else:
+                    display_name = "Unnamed Calendar"
+            except Exception:
+                display_name = "Unnamed Calendar"
+        elif not display_name:
+            display_name = "Unnamed Calendar"
 
         # Add the calendar
         calendar_data = {
