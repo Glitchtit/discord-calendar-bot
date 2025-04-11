@@ -12,7 +12,6 @@ from typing import Dict, List, Any, Tuple
 from utils.logging import logger
 from utils.server_utils import (
     get_config_path,
-    get_calendars_path,
     load_server_config,
     save_server_config,
     load_calendars,
