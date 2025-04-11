@@ -111,6 +111,27 @@ TAG_NAMES = {}
 TAG_COLORS = {}
 USER_TAG_MAP = {}
 
+def get_service_account_email() -> str:
+    """
+    Returns the email address associated with the Google service account.
+    This is used for sharing calendars with the service account.
+    
+    Returns:
+        The service account email or an empty string if unavailable.
+    """
+    try:
+        if not credentials:
+            logger.error("No Google credentials available to extract service account email")
+            return ""
+        
+        # Extract email from the service account credentials
+        email = credentials.service_account_email
+        logger.debug(f"Service account email: {email}")
+        return email
+    except Exception as e:
+        logger.exception(f"Error retrieving service account email: {e}")
+        return ""
+
 def get_name_for_tag(tag: str) -> str:
     """Get a display name for a tag with fallback to the tag itself."""
     if not tag:
