@@ -48,12 +48,23 @@ def get_data_directory(server_id: int) -> pathlib.Path:
     
     # Try to create/use Docker directory
     try:
-        docker_dir.mkdir(parents=True, exist_ok=True)
-        if os.access(docker_dir, os.W_OK):
-            logger.debug(f"Using Docker volume path for server data: {docker_dir}")
+        # Make sure the parent directories exist first
+        os.makedirs(os.path.dirname(docker_dir), exist_ok=True)
+        # Then create the server-specific directory
+        docker_dir.mkdir(exist_ok=True)
+        
+        # Explicitly check for write access
+        test_file = docker_dir / ".write_test"
+        try:
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+            logger.info(f"Using Docker volume path for server data: {docker_dir}")
             return docker_dir
-    except (PermissionError, OSError):
-        logger.debug(f"Docker path {docker_dir} not writable, trying fallbacks")
+        except (PermissionError, OSError) as e:
+            logger.warning(f"Docker path exists but isn't writable: {e}")
+    except (PermissionError, OSError) as e:
+        logger.debug(f"Docker path {docker_dir} not accessible: {e}")
         
     # Local directory relative to this file
     local_dir = pathlib.Path(__file__).parent.parent / "data" / "servers" / str(server_id)
@@ -414,12 +425,12 @@ def load_previous_events(server_id: int):
         path = get_events_file(server_id)
         if (os.path.exists(path)):
             with open(path, "r", encoding="utf-8") as f:
-                logger.debug("Loaded previous event snapshot from disk.")
+                logger.debug(f"Loaded previous event snapshot from disk at {path}")
                 return json.load(f)
     except json.JSONDecodeError:
-        logger.warning("Previous events file corrupted. Starting fresh.")
+        logger.warning(f"Previous events file at {path} corrupted. Starting fresh.")
     except Exception as e:
-        logger.exception(f"Error loading previous events: {e}")
+        logger.exception(f"Error loading previous events from {path}: {e}")
     return {}
 
 def save_current_events_for_key(server_id: int, key, events):
