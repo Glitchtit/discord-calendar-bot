@@ -223,29 +223,38 @@ async def check_background_tasks() -> Dict[str, str]:
     
     return result
 
-def get_admin_user_ids() -> list:
+def get_admin_user_ids(server_id: int) -> list:
     """
-    Get list of admin user IDs from all server configurations.
-    
+    Get list of admin user IDs for a specific server, including the server owner as superadmin.
+
+    Args:
+        server_id: The Discord server ID
+
     Returns:
         List of user IDs that should receive admin notifications
     """
-    admin_ids = set()
-    
-    # Look through all server configs
-    for server_id in get_all_server_ids():
-        config = load_server_config(server_id)
-        
-        # Check for admin_user_ids in the config
-        if "admin_user_ids" in config and isinstance(config["admin_user_ids"], list):
-            for admin_id in config["admin_user_ids"]:
-                admin_ids.add(str(admin_id))
-        
-        # Also add the server owner if specified
-        if "owner_id" in config:
-            admin_ids.add(str(config["owner_id"]))
-    
+    config = load_server_config(server_id)
+    admin_ids = set(config.get("admin_user_ids", []))
+
+    # Add the server owner as a superadmin
+    if "owner_id" in config:
+        admin_ids.add(str(config["owner_id"]))
+
     return list(admin_ids)
+
+def is_superadmin(server_id: int, user_id: str) -> bool:
+    """
+    Check if a user is the superadmin (server owner).
+
+    Args:
+        server_id: The Discord server ID
+        user_id: The Discord user ID to check
+
+    Returns:
+        True if the user is the server owner, False otherwise
+    """
+    config = load_server_config(server_id)
+    return str(config.get("owner_id")) == str(user_id)
 
 def add_admin_user(server_id: int, user_id: str) -> tuple:
     """

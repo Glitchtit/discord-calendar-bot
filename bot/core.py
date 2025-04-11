@@ -80,7 +80,7 @@ bot.is_initialized = False
 @bot.event
 async def on_ready():
     logger.info(f"Logged in as {bot.user}")
-    
+
     if bot.is_initialized:
         logger.info("Bot reconnected, skipping initialization")
         return
@@ -89,7 +89,15 @@ async def on_ready():
         # Register bot client for admin notifications
         from utils.notifications import register_discord_client
         register_discord_client(bot)
-        
+
+        # Log superadmin for each server
+        from config.server_config import get_all_server_ids
+        for server_id in get_all_server_ids():
+            config = load_server_config(server_id)
+            owner_id = config.get("owner_id")
+            if owner_id:
+                logger.info(f"Superadmin for server {server_id}: {owner_id}")
+
         # Load admin users from config and register them for notifications
         from config.server_config import get_admin_user_ids
         from utils.notifications import register_admins
@@ -99,26 +107,26 @@ async def on_ready():
             logger.info(f"Registered {len(admin_ids)} admins for error notifications")
         else:
             logger.warning("No admin users configured for notifications")
-        
+
         # Sync commands - only do this once during startup
         synced = await bot.tree.sync()
         logger.info(f"Synced {len(synced)} commands.")
 
         # Initialize calendar configurations
         await resolve_tag_mappings()
-        
+
         # Initialize event snapshots
         from bot.tasks import initialize_event_snapshots
         await initialize_event_snapshots()
-        
+
         # Set up real-time calendar subscriptions
         from utils.calendar_sync import initialize_subscriptions
         await initialize_subscriptions()
-        
+
         # Start scheduled tasks
         from bot.tasks import start_all_tasks
         await start_all_tasks(bot)
-        
+
         # Mark initialization as complete
         bot.is_initialized = True
         logger.info("Bot initialization completed successfully")
