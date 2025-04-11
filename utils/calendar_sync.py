@@ -216,6 +216,7 @@ async def process_calendar_changes(calendar_id: str) -> None:
             
         # Trigger a calendar update
         from bot.events import reinitialize_events
+        logger.info("Calling reinitialize_events from calendar_sync.py, line 219")
         await reinitialize_events()
         
         # Update last sync time

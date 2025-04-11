@@ -82,6 +82,7 @@ class AddCalendarModal(Modal, title="Add Calendar"):
                 )
                 
                 # Reinitialize events
+                logger.info("Calling reinitialize_events from views.py, line 85")
                 await reinitialize_events()
                 
                 # Final success message
@@ -160,6 +161,7 @@ class ConfirmRemovalView(View):
         # Reload calendar configuration and reinitialize events
         if success:
             try:
+                logger.info("Calling reinitialize_events from views.py, line 163")
                 await reinitialize_events()
             except Exception as e:
                 logger.error(f"Error during reinitialization: {e}")

@@ -28,6 +28,7 @@ from utils.cache import event_cache
 from config.server_config import load_server_config, get_all_server_ids
 from config.server_config import save_server_config  # Added missing import
 from utils.environ import GOOGLE_APPLICATION_CREDENTIALS  # Added missing import
+from config.calendar_config import DATA_DIR
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🔐 Google Calendar API Setup
@@ -72,8 +73,9 @@ def get_data_directory(server_id: int) -> pathlib.Path:
 
 def get_events_file(server_id: int) -> str:
     """Get the path to the events file for a server."""
-    data_dir = get_data_directory(server_id)
-    return str(data_dir / "events.json")
+    server_data_dir = os.path.join(DATA_DIR, 'servers', str(server_id))
+    os.makedirs(server_data_dir, exist_ok=True)  # Ensure the directory exists
+    return os.path.join(server_data_dir, 'events.json')
 
 # In-memory cache
 _calendar_metadata_cache = {}
@@ -409,9 +411,10 @@ def save_current_events_for_key(server_id: int, key, events):
         logger.debug(f"Saving {len(events)} events under key: {key}")
         all_data = load_previous_events(server_id)
         all_data[key] = events
-        with open(get_events_file(server_id), "w", encoding="utf-8") as f:
-            json.dump(all_data, f, ensure_ascii=False)
-        logger.info(f"Saved events for key '{key}'.")
+        events_file_path = get_events_file(server_id)
+        with open(events_file_path, "w", encoding="utf-8") as f:
+            json.dump(all_data, f, ensure_ascii=False, indent=4)
+        logger.info(f"Saved events for key '{key}' to {events_file_path}.")
     except Exception as e:
         logger.exception(f"Error saving events for key {key}: {e}")
 

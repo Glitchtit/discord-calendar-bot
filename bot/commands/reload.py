@@ -6,6 +6,7 @@ from utils.logging import logger
 async def reload_calendars_and_mappings():
     from bot.events import load_calendars_from_server_configs, reinitialize_events
     load_calendars_from_server_configs()
+    logger.info("Calling reinitialize_events from reload.py, line 9")
     await reinitialize_events()
 
 async def handle_reload_command(interaction: Interaction):
