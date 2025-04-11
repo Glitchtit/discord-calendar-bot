@@ -57,7 +57,17 @@ def add_calendar(server_id: int, calendar_data: Dict) -> Tuple[bool, str]:
         # Add the calendar
         calendars.append(calendar_data)
 
-        # Save calendars
+        # Ensure the directory for server-specific data exists
+        server_data_dir = os.path.join(os.path.dirname(get_config_path(server_id)), 'servers', str(server_id))
+        os.makedirs(server_data_dir, exist_ok=True)
+
+        # Update the path to save calendars
+        calendars_file = os.path.join(server_data_dir, 'calendars.json')
+
+        # Save calendars to the updated path
+        with open(calendars_file, 'w', encoding='utf-8') as f:
+            json.dump(calendars, f, ensure_ascii=False, indent=2)
+
         if save_calendars(server_id, calendars):
             logger.info(f"Added calendar {calendar_data.get('name')} to server {server_id}")
             return True, f"Added calendar {calendar_data.get('name')} successfully."
