@@ -54,7 +54,6 @@ async def handle_agenda_command(interaction: Interaction, date_str: str):
                             event_date = datetime.fromisoformat(start_dt.replace('Z', '+00:00')).date()
                         else:  # Date only
                             event_date = datetime.fromisoformat(start_dt).date()
-                            
                         events_by_day[event_date].append(event)
                         total_events += 1
             except Exception as e:
@@ -65,8 +64,8 @@ async def handle_agenda_command(interaction: Interaction, date_str: str):
             await interaction.followup.send(f"📅 No events found for {target_date.strftime('%A, %B %d')}", ephemeral=True)
             return
             
-        # Format the message
-        formatted_message = format_message_lines(user_id, events_by_day, target_date)
+        # Format the message with improved formatting
+        formatted_message = format_agenda_message(user_id, events_by_day, target_date, sources)
         
         # Create embed response
         embed = discord.Embed(
@@ -80,6 +79,56 @@ async def handle_agenda_command(interaction: Interaction, date_str: str):
     except Exception as e:
         logger.exception(f"Error in agenda command: {e}")
         await interaction.followup.send("⚠️ An error occurred while fetching your agenda.", ephemeral=True)
+
+def format_agenda_message(user_id, events_by_day, target_date, sources):
+    """
+    Format events into a clean, readable message for the agenda command.
+    Similar to the formatting style used by the herald command.
+    """
+    message_lines = []
+    
+    # Get the source name for better display
+    source_name = None
+    for meta in sources:
+        if meta.get('user_id') == user_id:
+            source_name = meta.get('display_name', meta.get('name', 'Calendar'))
+            break
+    
+    if not source_name:
+        source_name = "Your calendar"
+    
+    for day_date, day_events in events_by_day.items():
+        # Format date header nicely
+        date_str = day_date.strftime("%A, %B %d")
+        
+        # Add events under this day
+        if day_events:
+            message_lines.append(f"**Events for {date_str}:**")
+            
+            # Sort events by start time
+            day_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
+            
+            for event in day_events:
+                # Get event details
+                event_name = event.get("summary", "Untitled Event")
+                
+                # Format event time
+                start_dt = event["start"].get("dateTime")
+                end_dt = event["end"].get("dateTime")
+                
+                if start_dt and end_dt:  # Has specific times
+                    start = datetime.fromisoformat(start_dt.replace('Z', '+00:00'))
+                    end = datetime.fromisoformat(end_dt.replace('Z', '+00:00'))
+                    time_str = f"{start.strftime('%H:%M')}–{end.strftime('%H:%M')}"
+                else:  # All-day event
+                    time_str = "All day"
+                
+                # Add formatted event line
+                message_lines.append(f"• **{event_name}** {time_str}")
+            
+            message_lines.append("")  # Add empty line for spacing
+    
+    return "\n".join(message_lines)
 
 async def register(bot: discord.Client):
     @bot.tree.command(name="agenda")
