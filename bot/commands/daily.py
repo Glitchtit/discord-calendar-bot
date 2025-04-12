@@ -30,7 +30,7 @@ async def post_daily_events(bot, user_id: str, day: date, interaction_channel=No
         # Add a check to make sure we're not sending an empty message
         if not message_lines:
             # Use @everyone instead of <@1> for server-wide calendars
-            user_display = "@everyone" if user_id == "1" else f"<@{user_id}>"
+            user_display = "@everyone" if user_id == "1" else f"@{user_id}"
             message = f"No events to display for {user_display} on {day.strftime('%A, %B %d')}."
         else:
             # Join the list of message lines into a single string
@@ -38,7 +38,7 @@ async def post_daily_events(bot, user_id: str, day: date, interaction_channel=No
         
         # Create a fallback content string that will ensure the message isn't empty
         # Use @everyone instead of <@1> for server-wide calendars
-        content = f"Calendar update for @everyone" if user_id == "1" else f"Calendar update for <@{user_id}>"
+        content = f"Calendar update for @everyone" if user_id == "1" else f"Calendar update for @{user_id}"
             
         # Try directly accessing the channel and sending the message
         try:
