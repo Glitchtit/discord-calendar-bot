@@ -435,8 +435,11 @@ async def monitor_task_health(bot):
             # Check all registered tasks
             all_tasks = {
                 "schedule_daily_posts": schedule_daily_posts,
-                "watch_for_event_changes": watch_for_event_changes
+                "watch_for_event_changes": watch_for_event_changes,
+                "post_weekly_schedule": post_weekly_schedule
             }
+            
+            tasks_recovered = False
             
             for task_name, task_func in all_tasks.items():
                 # Check error count
@@ -451,6 +454,7 @@ async def monitor_task_health(bot):
                     # Wait a moment before restarting
                     await asyncio.sleep(2)
                     try_start_task(task_func, bot)
+                    tasks_recovered = True
                     continue
                     
                 # Check for deadlocks (task locked for too long)
@@ -459,14 +463,43 @@ async def monitor_task_health(bot):
                     if last_success and (now - last_success) > _HEALTH_CHECK_INTERVAL:
                         logger.warning(f"Task {task_name} appears deadlocked. Forcing lock release.")
                         _task_locks[task_name] = False
+                        tasks_recovered = True
                 
                 # Ensure task is running
                 if not task_func.is_running():
                     logger.warning(f"Task {task_name} is not running. Restarting...")
                     try_start_task(task_func, bot)
+                    tasks_recovered = True
+            
+            # Verify overall task health using the check_tasks_running function
+            if not await check_tasks_running():
+                logger.warning("Task health check indicates issues with background tasks")
+                # Try to heal the system
+                for task_name, task_func in all_tasks.items():
+                    if not task_func.is_running():
+                        logger.info(f"Attempting recovery of task: {task_name}")
+                        try_start_task(task_func, bot)
+                        tasks_recovered = True
+            
+            # If we recovered tasks, check for missed events
+            if tasks_recovered:
+                logger.info("Tasks were recovered, checking for missed events...")
+                try:
+                    await check_for_missed_events(bot)
+                except Exception as missed_events_error:
+                    logger.error(f"Error checking for missed events: {missed_events_error}")
                     
             # Self-update health status
             update_task_health(task_name, True)
+            
+            # Log periodic health status (every hour)
+            if now.minute < 10:  # Only log once an hour
+                running_tasks = [name for name, func in all_tasks.items() if func.is_running()]
+                logger.info(f"Task health monitor: {len(running_tasks)}/{len(all_tasks)} tasks running")
+                for name, func in all_tasks.items():
+                    status = "RUNNING" if func.is_running() else "STOPPED"
+                    errors = _task_error_counts.get(name, 0)
+                    logger.info(f"  - {name}: {status} (errors: {errors})")
             
         except Exception as e:
             logger.exception(f"Error in {task_name}: {e}")
