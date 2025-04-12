@@ -42,8 +42,8 @@ async def handle_agenda_command(interaction: Interaction, date_str: str):
         # Fetch events from all sources
         for meta in sources:
             try:
-                # Fix: get_events() is synchronous, don't use await with it
-                events = _retry_discord_operation(lambda: get_events(meta, target_date, target_date))
+                # Fix: _retry_discord_operation is async, so we need to await it
+                events = await _retry_discord_operation(lambda: get_events(meta, target_date, target_date))
                 
                 # Group events by day
                 for event in events or []:
