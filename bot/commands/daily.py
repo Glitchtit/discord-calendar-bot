@@ -17,7 +17,12 @@ async def post_daily_events(bot, user_id: str, day: date, interaction_channel=No
         events = []
         for meta in sources:
             # Fix: Run get_events in a separate thread since it's synchronous
-            events.extend(await asyncio.to_thread(get_events, meta, day, day))
+            calendar_events = await asyncio.to_thread(get_events, meta, day, day)
+            # Add calendar metadata to each event for color coding
+            for event in calendar_events:
+                event['calendar_id'] = meta.get('id', 'unknown')
+                event['calendar_name'] = meta.get('name', 'Calendar')
+            events.extend(calendar_events)
         
         if not events:
             return False
@@ -26,7 +31,7 @@ async def post_daily_events(bot, user_id: str, day: date, interaction_channel=No
         events_by_calendar = {}
         for meta in sources:
             calendar_name = meta.get('name', 'Calendar')
-            calendar_events = [e for e in events if e.get('calendar_id') == meta.get('calendar_id')]
+            calendar_events = [e for e in events if e.get('calendar_id') == meta.get('id')]
             if calendar_events:
                 events_by_calendar[calendar_name] = calendar_events
         

@@ -1,7 +1,19 @@
 from datetime import datetime, date
 from typing import Dict, List, Any, Optional
+import hashlib
 
-def format_event_markdown(event: Dict[str, Any]) -> str:
+def get_calendar_color_emoji(calendar_name: str) -> str:
+    """Generate a consistent colored square emoji for a calendar based on its name."""
+    # Available color emoji squares
+    color_emojis = ['🟦', '🟥', '🟨', '🟩', '🟪', '🟧', '🟫', '⬛', '⬜']
+    
+    # Hash the calendar name to get a consistent index
+    hash_value = int(hashlib.md5(calendar_name.encode()).hexdigest(), 16)
+    index = hash_value % len(color_emojis)
+    
+    return color_emojis[index]
+
+def format_event_markdown(event: Dict[str, Any], calendar_emoji: str = None) -> str:
     """Format a single event in Markdown."""
     # Get event details
     event_name = event.get("summary", "Untitled Event")
@@ -19,8 +31,9 @@ def format_event_markdown(event: Dict[str, Any]) -> str:
     else:  # All-day event
         time_str = "`All day`"
     
-    # Start with the event name and time
-    event_line = f"• **{event_name}** {time_str}"
+    # Start with the color emoji (if provided) and the event name and time
+    event_prefix = calendar_emoji + " " if calendar_emoji else ""
+    event_line = f"• {event_prefix}**{event_name}** {time_str}"
     
     # Add location if available
     if location:
@@ -55,16 +68,27 @@ def format_daily_message(user_id: str, events_by_calendar: Dict[str, List[Dict[s
         message.append("*No events scheduled for today.*")
         return "\n".join(message)
     
+    # Add a legend for calendar colors
+    message.append("## 📊 Calendar Legend")
+    for calendar_name in sorted(events_by_calendar.keys()):
+        emoji = get_calendar_color_emoji(calendar_name)
+        message.append(f"{emoji} {calendar_name}")
+    message.append("")  # Add a blank line after the legend
+    
     # Add events by calendar
+    message.append("## 📋 Today's Events")
     for calendar_name, events in sorted(events_by_calendar.items()):
         if events:
-            message.append(f"\n## 📁 {calendar_name}")
+            calendar_emoji = get_calendar_color_emoji(calendar_name)
             
             # Sort events by start time
             sorted_events = sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
             
             for event in sorted_events:
-                message.append(format_event_markdown(event))
+                message.append(format_event_markdown(event, calendar_emoji))
+            
+            # Add a spacer between calendars
+            message.append("")
     
     return "\n".join(message)
 
@@ -81,6 +105,24 @@ def format_weekly_message(user_id: str, events_by_day: Dict[date, List[Dict[str,
         message.append("*No events scheduled for this week.*")
         return "\n".join(message)
     
+    # Create a mapping of calendar IDs to color emojis for consistency
+    calendar_colors = {}
+    
+    # First pass to collect all calendar IDs
+    for day_events in events_by_day.values():
+        for event in day_events:
+            calendar_id = event.get("calendar_id", "unknown")
+            calendar_name = event.get("calendar_name", calendar_id)
+            if calendar_name not in calendar_colors:
+                calendar_colors[calendar_name] = get_calendar_color_emoji(calendar_name)
+    
+    # Add a legend for calendar colors if we have multiple calendars
+    if len(calendar_colors) > 1:
+        message.append("## 📊 Calendar Legend")
+        for cal_name, emoji in sorted(calendar_colors.items()):
+            message.append(f"{emoji} {cal_name}")
+        message.append("")  # Add a blank line after the legend
+    
     # Add events by day
     for day, events in sorted(events_by_day.items()):
         day_str = day.strftime('%A, %B %d')
@@ -94,7 +136,10 @@ def format_weekly_message(user_id: str, events_by_day: Dict[date, List[Dict[str,
         sorted_events = sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
         
         for event in sorted_events:
-            message.append(format_event_markdown(event))
+            calendar_id = event.get("calendar_id", "unknown")
+            calendar_name = event.get("calendar_name", calendar_id)
+            emoji = calendar_colors.get(calendar_name, "")
+            message.append(format_event_markdown(event, emoji))
     
     return "\n".join(message)
 
@@ -115,6 +160,24 @@ def format_agenda_message(user_id: str, events_by_day: Dict[date, List[Dict[str,
         message.append("*No events scheduled for this day.*")
         return "\n".join(message)
     
+    # Create a mapping of calendar IDs to color emojis for consistency
+    calendar_colors = {}
+    
+    # First pass to collect all calendar IDs
+    for day_events in events_by_day.values():
+        for event in day_events:
+            calendar_id = event.get("calendar_id", "unknown")
+            calendar_name = event.get("calendar_name", calendar_id)
+            if calendar_name not in calendar_colors:
+                calendar_colors[calendar_name] = get_calendar_color_emoji(calendar_name)
+    
+    # Add a legend for calendar colors if we have multiple calendars
+    if len(calendar_colors) > 1:
+        message.append("## 📊 Calendar Legend")
+        for cal_name, emoji in sorted(calendar_colors.items()):
+            message.append(f"{emoji} {cal_name}")
+        message.append("")  # Add a blank line after the legend
+    
     # Add a separator
     message.append("```\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n```")
     
@@ -128,6 +191,9 @@ def format_agenda_message(user_id: str, events_by_day: Dict[date, List[Dict[str,
         sorted_events = sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
         
         for event in sorted_events:
-            message.append(format_event_markdown(event))
+            calendar_id = event.get("calendar_id", "unknown")
+            calendar_name = event.get("calendar_name", calendar_id)
+            emoji = calendar_colors.get(calendar_name, "")
+            message.append(format_event_markdown(event, emoji))
     
     return "\n".join(message)
