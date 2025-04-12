@@ -971,3 +971,75 @@ def ensure_calendars_loaded() -> bool:
 
 # Initialize calendars on module load
 load_calendars_from_server_configs()
+
+async def get_events_for_tag(tag, start_date, end_date=None, calendar_filter=None):
+    """Get events for a specific tag within the given date range."""
+    if end_date is None:
+        end_date = start_date
+    
+    if not GROUPED_CALENDARS:
+        logger.warning("No calendars loaded, cannot fetch events")
+        return [], {}
+        
+    # Find calendars for the specified tag/user_id
+    calendars = []
+    if tag in GROUPED_CALENDARS:
+        # Tag directly matches a user_id
+        calendars = GROUPED_CALENDARS[tag]
+    else:
+        # Check if tag matches in USER_TAG_MAP
+        for user_id, tags in USER_TAG_MAP.items():
+            if tag in tags and user_id in GROUPED_CALENDARS:
+                calendars.extend(GROUPED_CALENDARS[user_id])
+    
+    # Also include server-wide calendars (user_id = "1")
+    if "1" in GROUPED_CALENDARS:
+        calendars.extend(GROUPED_CALENDARS["1"])
+        
+    # Apply calendar filter if provided
+    if calendar_filter:
+        calendars = [cal for cal in calendars if cal.get('id') in calendar_filter]
+        
+    if not calendars:
+        logger.warning(f"No calendars found for tag '{tag}'")
+        return [], {}
+        
+    logger.info(f"Found {len(calendars)} calendars for tag '{tag}'")
+    
+    # Fetch events from all calendars
+    all_events = []
+    event_metadata = {}
+    
+    for cal in calendars:
+        cal_id = cal.get('id')
+        cal_type = cal.get('type')
+        
+        # Skip calendars without required fields
+        if not cal_id or not cal_type:
+            logger.warning(f"Calendar missing required fields: {cal}")
+            continue
+            
+        try:
+            events = get_events(cal, start_date, end_date)
+            
+            # Add events to the combined list
+            if events:
+                all_events.extend(events)
+                
+                # Track metadata for this calendar
+                event_metadata[cal_id] = {
+                    'name': cal.get('name', 'Unknown Calendar'),
+                    'tag': tag,
+                    'server_id': cal.get('server_id'),
+                    'user_id': cal.get('user_id')  # Include user_id in metadata
+                }
+                
+        except Exception as e:
+            logger.exception(f"Error fetching events for calendar {cal.get('name', 'Unknown')}: {e}")
+    
+    # Sort events by start time for consistent output
+    if all_events:
+        all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
+        
+    logger.debug(f"Retrieved {len(all_events)} events for tag '{tag}'")
+    return all_events, event_metadata

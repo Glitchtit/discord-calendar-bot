@@ -61,6 +61,12 @@ async def post_daily_events(bot, user_id: str, day: date, interaction_channel=No
                     channel = bot.get_channel(channel_id)
                     if channel:
                         logger.info(f"Found announcement channel: {channel.name} (ID: {channel_id})")
+                        
+                        # Check if this is a server-wide calendar (user_id = "1")
+                        if user_id == "1":
+                            # Add @everyone mention for server-wide calendars
+                            content = "@everyone " + content
+                        
                         await channel.send(content=content, embed=embed)
                         logger.info(f"Sent calendar update to channel {channel.name}")
                         channel_found = True
@@ -71,6 +77,12 @@ async def post_daily_events(bot, user_id: str, day: date, interaction_channel=No
             # If no channel found from configs, try the interaction channel as fallback
             if not channel_found and interaction_channel:
                 logger.info(f"Using interaction channel as fallback: {interaction_channel.name}")
+                
+                # Check if this is a server-wide calendar (user_id = "1")
+                if user_id == "1":
+                    # Add @everyone mention for server-wide calendars
+                    content = "@everyone " + content
+                
                 await interaction_channel.send(content=content, embed=embed)
                 return True
                 

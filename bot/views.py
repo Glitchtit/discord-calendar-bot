@@ -78,6 +78,21 @@ class AddCalendarModal(Modal, title="Add Calendar"):
         elif not display_name:
             display_name = "Unnamed Calendar"
 
+        # Extract user ID from the input
+        user_input = self.user_input.value.strip()
+        
+        # Special case for "everyone" - use "1" as the user_id
+        if user_input.lower() == "everyone":
+            user_id = "1"
+        else:
+            # Existing user ID extraction logic
+            user_id_match = re.search(r'<@!?(\d+)>', user_input)
+            if user_id_match:
+                user_id = user_id_match.group(1)
+            else:
+                # If not a mention, try using it directly as an ID
+                user_id = user_input.replace('@', '')
+
         # Now show the user selection view for assigning the calendar
         user_selector = CalendarUserSelectView(
             self.bot, 
@@ -85,7 +100,8 @@ class AddCalendarModal(Modal, title="Add Calendar"):
             {
                 'type': calendar_type,
                 'id': calendar_url,
-                'name': display_name
+                'name': display_name,
+                'user_id': user_id
             },
             message
         )
@@ -282,8 +298,8 @@ class CalendarUserSelectView(View):
         
         # Check if "server" (Everyone) was selected
         if selected_value == "server":
-            # Server-wide calendar
-            self.calendar_data["user_id"] = None
+            # Server-wide calendar - set user_id to "1"
+            self.calendar_data["user_id"] = "1"
             user_display = "everyone in the server"
         else:
             # User-specific calendar
