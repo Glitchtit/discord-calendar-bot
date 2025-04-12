@@ -42,6 +42,9 @@ from config.server_config import get_all_server_ids, load_server_config
 # Import the post_daily_events function from daily.py
 from bot.commands.daily import post_daily_events
 
+# Import the necessary function from weekly.py
+from bot.commands.weekly import post_weekly_events
+
 # Define helper functions that were missing
 def is_in_current_week(event, today):
     """Check if an event is within the current week."""
@@ -283,7 +286,7 @@ async def schedule_daily_posts(bot):
 # ╔════════════════════════════════════════════════════════════════════╗
 # 📅 Daily Event Poster — Posts today's events for each tag
 # ╚════════════════════════════════════════════════════════════════════╝
-@tasks.loop(minutes=5)  # Reduced frequency for stability
+@tasks.loop(minutes=1)  # Reduced frequency for stability
 async def watch_for_event_changes(bot):
     task_name = "watch_for_event_changes"
     
@@ -309,6 +312,18 @@ async def watch_for_event_changes(bot):
                 earliest = today - timedelta(days=30)
                 latest = today + timedelta(days=90)
                 processed_tags.add(tag)
+                
+                # Extract user_id and server_id from the first calendar
+                # This assumes all calendars in a group share the same user_id and server_id
+                if not calendars:
+                    continue
+                    
+                user_id = calendars[0].get('user_id')
+                server_id = calendars[0].get('server_id')
+                
+                if not user_id or not server_id:
+                    logger.warning(f"Missing user_id or server_id for tag {tag}. Skipping.")
+                    continue
 
                 # Fetch and fingerprint all events in the date window
                 all_events = []
@@ -330,8 +345,7 @@ async def watch_for_event_changes(bot):
                 all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
 
                 # Compare with previous snapshot
-                key = f"{meta['user_id']}_full"  # Use user_id from meta
-                server_id = meta["server_id"]
+                key = f"{user_id}_full"
                 prev_snapshot = load_previous_events(server_id).get(key, [])
                 
                 # Create fingerprints, with added error handling
@@ -378,19 +392,19 @@ async def watch_for_event_changes(bot):
                             title="📣 Event Changes",
                             description="\n".join(lines),
                             color=0x3498db,  # Default color
-                            content=f"<@{meta['user_id']}>"  # Mention user in content
+                            content=f"<@{user_id}>"  # Mention user in content
                         )
-                        logger.info(f"Detected changes for user ID '{meta['user_id']}', snapshot updated.")
-                        save_current_events_for_key(meta["server_id"], f"{meta['user_id']}_full", all_events)
+                        logger.info(f"Detected changes for user ID '{user_id}', snapshot updated.")
+                        save_current_events_for_key(server_id, f"{user_id}_full", all_events)
                     except Exception as e:
-                        logger.exception(f"Error posting changes for user ID '{meta['user_id']}']: {e}")
+                        logger.exception(f"Error posting changes for user ID '{user_id}']: {e}")
                 else:
                     # Only save if we have data and it differs from previous
                     if all_events and (len(all_events) != len(prev_snapshot)):
-                        save_current_events_for_key(meta["server_id"], f"{meta['user_id']}_full", all_events)
-                        logger.debug(f"Updated snapshot for user ID '{meta['user_id']}' with {len(all_events)} events")
+                        save_current_events_for_key(server_id, f"{user_id}_full", all_events)
+                        logger.debug(f"Updated snapshot for user ID '{user_id}' with {len(all_events)} events")
                     else:
-                        logger.debug(f"No changes for user ID '{meta['user_id']}'. Snapshot unchanged.")
+                        logger.debug(f"No changes for user ID '{user_id}'. Snapshot unchanged.")
                     
             # Update task health status
             update_task_health(task_name, True)
@@ -693,3 +707,44 @@ async def send_embed(bot, title=None, description=None, color=None, channel=None
             
     except Exception as e:
         logger.exception(f"Error in send_embed: {e}")
+
+@tasks.loop(minutes=30)  # Check every 30 minutes
+async def post_weekly_schedule(bot):
+    """Post weekly schedule every Monday at 07:00"""
+    try:
+        async with TaskLock('weekly_schedule'):
+            now = datetime.now()
+            today = date.today()
+            
+            # Only run on Mondays between 7:00 and 7:30 AM
+            if today.weekday() == 0 and 7 <= now.hour < 8:
+                logger.info("🔄 Running scheduled weekly posting (Monday morning)")
+                
+                # Get the Monday of the current week (which is today since it's Monday)
+                this_monday = today
+                
+                count = 0
+                for user_id in GROUPED_CALENDARS:
+                    if await post_weekly_events(bot, user_id, this_monday, None):
+                        count += 1
+                
+                logger.info(f"📝 Auto-posted weekly events for {count} users")
+                
+                # Record successful task execution
+                _task_last_success['weekly_schedule'] = datetime.now()
+                _task_error_counts['weekly_schedule'] = 0
+                
+    except Exception as e:
+        logger.error(f"Weekly schedule auto-post error: {e}")
+        # Increment error count for health monitoring
+        _task_error_counts['weekly_schedule'] = _task_error_counts.get('weekly_schedule', 0) + 1
+
+def setup_tasks(bot):
+    """Configure and start all scheduled tasks."""
+    # ...existing code...
+    
+    # Add weekly schedule posting task
+    post_weekly_schedule.start(bot)
+    logger.info("🔄 Weekly schedule auto-post task started (runs every Monday at 07:00)")
+    
+    # ...existing code...
