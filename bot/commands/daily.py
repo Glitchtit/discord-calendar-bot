@@ -24,11 +24,14 @@ async def post_daily_events(bot, user_id: str, day: date):
         # Fix: Create a dictionary with day as the key and events as the value
         events_by_day = {day: events}
             
-        message = format_message_lines(user_id, events_by_day, day)
+        message_lines = format_message_lines(user_id, events_by_day, day)
         
         # Add a check to make sure we're not sending an empty message
-        if not message or message.isspace():
+        if not message_lines:
             message = f"No events to display for <@{user_id}> on {day.strftime('%A, %B %d')}."
+        else:
+            # Join the list of message lines into a single string
+            message = '\n'.join(message_lines)
             
         await send_embed(bot, description=message)
         return True
