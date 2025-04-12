@@ -1,6 +1,6 @@
 # 🗓️ CalendarBot — Discord Herald of Happenings
 
-**CalendarBot** is a fully-featured, medieval-themed calendar assistant for Discord. It fetches events from shared Google or ICS calendars, assigns them to tagged groups (like family members or teams), and posts engaging, image-enhanced announcements to a channel — complete with Bardic poems, Alchemist prophecies, and Royal Decrees.
+**CalendarBot** is a medieval-themed calendar assistant for Discord. It fetches events from shared Google or ICS calendars, assigns them to tagged groups (like family members or teams), and posts engaging, image-enhanced announcements to a channel — complete with Bardic poems, Alchemist prophecies, and Royal Decrees.
 
 > ⚔️ Powered by `discord.py`, OpenAI, and Google Calendar API. Runs in Docker with persistent logging, rich embeds, and real-time event monitoring.
 
@@ -11,10 +11,11 @@
 - 🗕️ **Daily & Weekly Summaries** — Automatically posts daily and weekly calendar overviews per user/group.
 - 🤹‍♂️ **Themed Morning Greetings** — Uses GPT to generate a whimsical medieval message.
 - 🎨 **AI-Generated Art** — DALL·E illustrations styled like the Bayeux Tapestry.
-- 🧠 **Natural Language Parsing** — `/agenda tomorrow` or `/agenda next friday Anniina`
+- 🧠 **Natural Language Parsing** — `/agenda tomorrow` or `/agenda next friday <user>`.
 - 🔀 **Live Event Monitoring** — Posts alerts for added/removed events.
 - 🧩 **User–Tag Mapping** — Assign Discord users to calendar tags via server configuration.
-- ⚒️ **Slash Commands with Autocomplete**
+- ⚒️ **Slash Commands with Autocomplete**.
+- 📊 **Resource Monitoring** — System resource tracking for stability.
 
 ---
 
@@ -28,7 +29,10 @@
 | `/reload`         | Reload calendars and tag mappings. |
 | `/who`            | Show current calendar tags and assigned users. |
 | `/setup`          | Configure calendars for the server (Admin only). |
+| `/admins`         | Manage server admins (Admin only). |
 | `/status`         | Check bot status and configuration. |
+| `/weekly`         | Post this week's events for all users. |
+| `/daily`          | Post today's events for all users. |
 
 ---
 
@@ -77,6 +81,41 @@
 
 ---
 
+## 🖥️ System Requirements
+
+- **Python**: 3.10 or higher
+- **RAM**: 512MB minimum (1GB+ recommended)
+- **Disk**: 500MB for bot + logs (more for image storage)
+- **Network**: Stable internet connection for API calls
+- **Docker**: Optional but recommended for deployment
+
+---
+
+## 🔑 API Credentials Setup
+
+### Discord Bot Token
+1. Visit [Discord Developer Portal](https://discord.com/developers/applications).
+2. Create a new application.
+3. Navigate to Bot section and create a bot.
+4. Copy the token to your `.env` file.
+5. Enable necessary intents (Message Content, Server Members, etc.).
+6. Use OAuth2 URL Generator to invite bot to your server.
+
+### OpenAI API Key
+1. Create an account at [OpenAI](https://platform.openai.com/).
+2. Navigate to API keys section.
+3. Generate and copy your API key to `.env`.
+
+### Google Service Account
+1. Go to [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a project or select an existing one.
+3. Enable Google Calendar API.
+4. Create a Service Account.
+5. Generate JSON key and save as `service_account.json`.
+6. Share your calendar with the service account email.
+
+---
+
 ## ⚙️ Environment Setup
 
 Copy `.env.example` → `.env` and fill in:
@@ -94,9 +133,9 @@ DEBUG=true
 
 CalendarBot uses server-specific configuration files instead of environment variables:
 
-1. Use the `/setup add` command to add calendars (requires Admin permission)
-2. Each server maintains its own set of calendars and user mappings
-3. Configurations are stored in `/data/servers/{server_id}.json`
+1. Use the `/setup add` command to add calendars (requires Admin permission).
+2. Each server maintains its own set of calendars and user mappings.
+3. Configurations are stored in `/data/servers/{server_id}.json`.
 
 Example:
 ```bash
@@ -136,10 +175,58 @@ tail -f ./data/logs/bot.log
 
 ---
 
+## 🔍 Monitoring & Performance
+
+The bot includes built-in resource monitoring using `psutil` to track:
+- Memory usage
+- CPU utilization
+- Disk space
+- API rate limiting
+
+You can use the `/status` command to view current resource usage and bot health.
+
+Log files in `/data/logs/` include performance metrics and rotate daily to prevent excessive disk usage. By default, 7 days of logs are preserved.
+
+---
+
+## ❓ Troubleshooting
+
+### Common Issues
+
+1. **Bot not responding**: Check if your bot token is valid and has the correct permissions.
+2. **Calendar events missing**: Ensure the service account has read access to your calendar.
+3. **Image generation fails**: Verify OpenAI API key and rate limits.
+4. **Log directory errors**: Ensure the `/data` directory is writable.
+
+### Debug Mode
+
+Enable debug mode in `.env` for verbose logging:
+```env
+DEBUG=true
+```
+
+### Log Analysis
+
+For detailed troubleshooting, examine the bot logs:
+```bash
+grep ERROR ./data/logs/bot.log
+```
+
+---
+
 ## 🧪 Development Tips
 
 - Python 3.10+
 - Uses `discord.py`, `openai`, `google-api-python-client`, `ics`, `colorlog`, `dateparser`, etc.
-- Add new commands in the `bot/commands/` directory
-- Customize greeting styles in `utils/ai_helpers.py`
-- Run locally by setting `GOOGLE_APPLICATION_CREDENTIALS` to the path of your service account file
+- Add new commands in the `bot/commands/` directory.
+- Customize greeting styles in `utils/ai_helpers.py`.
+- Run locally by setting `GOOGLE_APPLICATION_CREDENTIALS` to the path of your service account file.
+- Use a virtual environment for development:
+  ```bash
+  python -m venv venv
+  source venv/bin/activate  # On Windows: venv\Scripts\activate
+  pip install -r requirements.txt
+  ```
+
+---
+````

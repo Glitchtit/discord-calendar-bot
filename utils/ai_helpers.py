@@ -371,3 +371,27 @@ def generate_image(greeting: str, persona: str, server_id: int, max_retries: int
 
     return None
 
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 💬 generate_themed_greeting                                        ║
+# ║ Async wrapper for the greeting generator                           ║
+# ╚════════════════════════════════════════════════════════════════════╝
+async def generate_themed_greeting(event_titles: list[str] = None, user_names: list[str] = None) -> str:
+    """
+    Async wrapper function that generates a themed greeting.
+    
+    Args:
+        event_titles: Optional list of event titles to mention in the greeting
+        user_names: Optional list of user names to mention in the greeting
+        
+    Returns:
+        str: The generated greeting text
+    """
+    if event_titles is None:
+        event_titles = []
+    if user_names is None:
+        user_names = []
+        
+    # Call the synchronous function and return only the greeting text
+    greeting, _ = generate_greeting(event_titles, user_names)
+    return greeting
+
