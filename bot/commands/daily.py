@@ -8,11 +8,30 @@ from utils.logging import logger
 from utils import format_message_lines
 from utils.markdown_formatter import format_daily_message
 
-async def post_daily_events(bot, user_id: str, day: date, interaction_channel=None):
+async def post_daily_events(bot, user_id: str, day: date, interaction_channel=None, server_id=None):
+    """
+    Post daily events for a user to the announcement channel.
+    
+    Parameters:
+    - bot: Discord bot instance
+    - user_id: User ID to post events for
+    - day: Date to get events for
+    - interaction_channel: Optional channel from interaction to use as fallback
+    - server_id: Optional server ID to filter calendars and channels by
+    
+    Returns:
+    - True if events were posted successfully, False otherwise
+    """
     try:
         sources = GROUPED_CALENDARS.get(user_id, [])
         if not sources:
             return False
+        
+        # If server_id is provided, filter sources for that server
+        if server_id:
+            sources = [source for source in sources if source.get("server_id") == server_id]
+            if not sources:
+                return False
         
         events = []
         for meta in sources:
@@ -53,7 +72,7 @@ async def post_daily_events(bot, user_id: str, day: date, interaction_channel=No
             channel_found = False
             
             # First try to find the channel from server configs
-            server_ids = get_all_server_ids()
+            server_ids = [server_id] if server_id else get_all_server_ids()
             logger.info(f"Checking {len(server_ids)} servers for announcement channels")
             
             for server_id in server_ids:

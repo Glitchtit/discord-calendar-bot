@@ -39,6 +39,9 @@ from bot.events import (
 )
 from config.server_config import get_all_server_ids, load_server_config
 
+# Import the post_daily_events function from daily.py
+from bot.commands.daily import post_daily_events
+
 # Define helper functions that were missing
 def is_in_current_week(event, today):
     """Check if an event is within the current week."""
@@ -458,27 +461,59 @@ async def monitor_task_health(bot):
 # ╔════════════════════════════════════════════════════════════════════╗
 # 📜 Weekly Summary Poster — Runs Mondays at 06:10
 # ╚════════════════════════════════════════════════════════════════════╝
-async def post_todays_happenings(bot, include_greeting: bool = False):
+async def post_todays_happenings(bot, server_id=None, include_greeting: bool = False):
     """Post today's events to the announcement channel, not as DMs"""
     try:
         today = get_today()
+        from bot.events import GROUPED_CALENDARS
         
         # If a greeting is requested, generate and post it
         if include_greeting:
-            # Your existing greeting code
-            greeting = await generate_greeting()
-            await send_embed(
-                bot,
-                title="🌅 Good Morning!",
-                description=greeting,
-                color=0x00ff00  # Green color for morning greeting
-            )
-            
-        # Post all daily events to the public channel
-        await post_all_daily_events_to_channel(bot, today)
+            try:
+                from bot.commands.greet import post_greeting
+                
+                # If server_id is specified, get the channel
+                if server_id:
+                    from config.server_config import load_server_config
+                    config = load_server_config(server_id)
+                    if config and config.get("announcement_channel_id"):
+                        channel_id = int(config.get("announcement_channel_id"))
+                        channel = bot.get_channel(channel_id)
+                        if channel:
+                            await post_greeting(bot, channel)
+                else:
+                    # Try to post greeting to all configured announcement channels
+                    from config.server_config import get_all_server_ids, load_server_config
+                    for sid in get_all_server_ids():
+                        config = load_server_config(sid)
+                        if config and config.get("announcement_channel_id"):
+                            channel_id = int(config.get("announcement_channel_id"))
+                            channel = bot.get_channel(channel_id)
+                            if channel:
+                                await post_greeting(bot, channel)
+            except Exception as e:
+                logger.error(f"Error posting greeting: {e}")
         
+        # Post daily events for each calendar group
+        success_count = 0
+        
+        # If server_id is specified, only post for that server's calendars
+        if server_id:
+            for user_id in GROUPED_CALENDARS:
+                # Pass the specific server_id to filter only relevant calendars
+                if await post_daily_events(bot, user_id, today, server_id=server_id):
+                    success_count += 1
+        else:
+            # Post for all servers
+            for user_id in GROUPED_CALENDARS:
+                if await post_daily_events(bot, user_id, today):
+                    success_count += 1
+        
+        logger.info(f"Successfully posted daily events for {success_count} calendar groups")
+        return success_count > 0
     except Exception as e:
         logger.exception(f"Error in post_todays_happenings: {e}")
+        return False
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🧠 Background Scheduler
