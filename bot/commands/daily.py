@@ -1,6 +1,6 @@
 from datetime import date
 import discord
-import asyncio  # Add this import
+import asyncio
 from discord import Interaction
 from bot.events import GROUPED_CALENDARS, get_events
 from .utilities import send_embed
@@ -33,15 +33,37 @@ async def post_daily_events(bot, user_id: str, day: date):
             # Join the list of message lines into a single string
             message = '\n'.join(message_lines)
         
-        # Always include both a title and description to prevent empty message errors
-        title = f"📅 Calendar Events for {day.strftime('%A, %B %d')}"
-        
-        # Ensure the message is not just whitespace
-        if not message.strip():
-            message = f"No events found for <@{user_id}> on this date."
+        # Create a fallback content string that will ensure the message isn't empty
+        content = f"Calendar update for <@{user_id}>"
             
-        await send_embed(bot, title=title, description=message)
-        return True
+        # Try directly accessing the channel and sending the message
+        try:
+            # Find announcement channel from server configs
+            from config.server_config import get_all_server_ids, load_server_config
+            
+            # Create the embed
+            embed = discord.Embed(
+                title=f"📅 Calendar Events for {day.strftime('%A, %B %d')}",
+                description=message,
+                color=0x3498db  # Blue color
+            )
+            
+            for server_id in get_all_server_ids():
+                config = load_server_config(server_id)
+                if config and config.get("announcement_channel_id"):
+                    channel_id = int(config.get("announcement_channel_id"))
+                    channel = bot.get_channel(channel_id)
+                    if channel:
+                        await channel.send(content=content, embed=embed)
+                        logger.info(f"Sent calendar update to channel {channel.name}")
+                        return True
+            
+            logger.error("Could not find announcement channel to send message")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error sending message directly: {e}")
+            return False
     except Exception as e:
         logger.error(f"Daily post error: {e}")
         return False
