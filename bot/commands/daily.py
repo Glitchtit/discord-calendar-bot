@@ -7,7 +7,7 @@ from .utilities import send_embed
 from utils.logging import logger
 from utils import format_message_lines
 
-async def post_daily_events(bot, user_id: str, day: date):
+async def post_daily_events(bot, user_id: str, day: date, interaction_channel=None):
     try:
         sources = GROUPED_CALENDARS.get(user_id, [])
         if not sources:
@@ -48,18 +48,35 @@ async def post_daily_events(bot, user_id: str, day: date):
                 color=0x3498db  # Blue color
             )
             
-            for server_id in get_all_server_ids():
+            channel_found = False
+            
+            # First try to find the channel from server configs
+            server_ids = get_all_server_ids()
+            logger.info(f"Checking {len(server_ids)} servers for announcement channels")
+            
+            for server_id in server_ids:
                 config = load_server_config(server_id)
                 if config and config.get("announcement_channel_id"):
                     channel_id = int(config.get("announcement_channel_id"))
                     channel = bot.get_channel(channel_id)
                     if channel:
+                        logger.info(f"Found announcement channel: {channel.name} (ID: {channel_id})")
                         await channel.send(content=content, embed=embed)
                         logger.info(f"Sent calendar update to channel {channel.name}")
+                        channel_found = True
                         return True
+                else:
+                    logger.debug(f"Server {server_id} has no announcement_channel_id configured")
             
-            logger.error("Could not find announcement channel to send message")
-            return False
+            # If no channel found from configs, try the interaction channel as fallback
+            if not channel_found and interaction_channel:
+                logger.info(f"Using interaction channel as fallback: {interaction_channel.name}")
+                await interaction_channel.send(content=content, embed=embed)
+                return True
+                
+            if not channel_found:
+                logger.error("Could not find announcement channel to send message")
+                return False
             
         except Exception as e:
             logger.error(f"Error sending message directly: {e}")
@@ -73,7 +90,7 @@ async def handle_daily_command(interaction: Interaction):
     try:
         count = 0
         for user_id in GROUPED_CALENDARS:
-            if await post_daily_events(interaction.client, user_id, date.today()):
+            if await post_daily_events(interaction.client, user_id, date.today(), interaction.channel):
                 count += 1
         await interaction.followup.send(f"Posted daily events for {count} users")
     except Exception as e:
