@@ -4,7 +4,7 @@ from discord import Interaction
 import dateparser
 from collections import defaultdict
 
-from bot.events import GROUPED_CALENDARS, get_events
+from bot.events import GROUPED_CALENDARS, get_events, ensure_calendars_loaded
 from utils.logging import logger
 from utils import format_message_lines
 from .utilities import _retry_discord_operation
@@ -13,6 +13,9 @@ from .utilities import _retry_discord_operation
 async def handle_agenda_command(interaction: Interaction, date_str: str):
     await interaction.response.defer(ephemeral=True)
     try:
+        # Make sure calendars are loaded first
+        ensure_calendars_loaded()
+        
         # Parse the date string using dateparser for natural language support
         parsed_date = dateparser.parse(date_str)
         if not parsed_date:
@@ -26,8 +29,12 @@ async def handle_agenda_command(interaction: Interaction, date_str: str):
         sources = GROUPED_CALENDARS.get(user_id, [])
         
         if not sources:
+            logger.warning(f"No calendars found for user {user_id}. GROUPED_CALENDARS has keys: {list(GROUPED_CALENDARS.keys())}")
             await interaction.followup.send("⚠️ No calendars are configured for you. Please contact an admin for help.", ephemeral=True)
             return
+        
+        # Log for debugging
+        logger.info(f"Found {len(sources)} calendar sources for user {user_id}")
             
         events_by_day = defaultdict(list)
         total_events = 0

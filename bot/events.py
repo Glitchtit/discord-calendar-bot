@@ -65,6 +65,14 @@ def get_data_directory(server_id: int) -> pathlib.Path:
             logger.warning(f"Docker path exists but isn't writable: {e}")
     except (PermissionError, OSError) as e:
         logger.debug(f"Docker path {docker_dir} not accessible: {e}")
+    
+    # Additional check for read-only Docker path - we prioritize reading configs
+    # even if we can't write to them
+    if os.path.exists(docker_dir) and os.access(docker_dir, os.R_OK):
+        config_file = docker_dir / "config.json"
+        if os.path.exists(config_file) and os.access(config_file, os.R_OK):
+            logger.info(f"Using Docker volume path (read-only) for server data: {docker_dir}")
+            return docker_dir
         
     # Local directory relative to this file
     local_dir = pathlib.Path(__file__).parent.parent / "data" / "servers" / str(server_id)
@@ -908,6 +916,58 @@ async def reinitialize_events():
 
         logger.info("Reinitialization of events completed.")
         return True
+
+def ensure_calendars_loaded() -> bool:
+    """
+    Make sure calendar data is loaded, reload if necessary.
+    This is a helper for commands like agenda that require calendar data.
+    
+    Returns:
+        True if calendars appear to be loaded, False otherwise
+    """
+    if not GROUPED_CALENDARS:
+        logger.warning("GROUPED_CALENDARS is empty, attempting reload...")
+        load_calendars_from_server_configs()
+    
+    if GROUPED_CALENDARS:
+        logger.debug(f"Calendar data available for {len(GROUPED_CALENDARS)} users")
+        return True
+    else:
+        # Last resort direct check for a specific common path
+        docker_path = "/data/servers"
+        if os.path.exists(docker_path) and os.path.isdir(docker_path):
+            logger.info("Attempting direct Docker path scan as last resort")
+            try:
+                for entry in os.listdir(docker_path):
+                    if entry.isdigit():
+                        server_id = int(entry)
+                        config_path = os.path.join(docker_path, entry, "config.json")
+                        if os.path.exists(config_path):
+                            try:
+                                with open(config_path, 'r', encoding='utf-8') as f:
+                                    config = json.load(f)
+                                    logger.info(f"Found and loaded config at {config_path}")
+                                    
+                                    # Process any calendars found
+                                    calendars = config.get("calendars", [])
+                                    for calendar in calendars:
+                                        if "user_id" in calendar:
+                                            user_id = calendar["user_id"]
+                                            if user_id not in GROUPED_CALENDARS:
+                                                GROUPED_CALENDARS[user_id] = []
+                                            GROUPED_CALENDARS[user_id].append({
+                                                "server_id": server_id,
+                                                "type": calendar["type"],
+                                                "id": calendar["id"],
+                                                "name": calendar.get("name", "Unnamed Calendar"),
+                                                "user_id": user_id
+                                            })
+                            except Exception as e:
+                                logger.error(f"Error processing {config_path}: {e}")
+            except Exception as e:
+                logger.error(f"Error scanning Docker path: {e}")
+        
+        return bool(GROUPED_CALENDARS)
 
 # Initialize calendars on module load
 load_calendars_from_server_configs()
