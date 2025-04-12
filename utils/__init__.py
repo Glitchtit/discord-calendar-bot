@@ -7,6 +7,14 @@ from .server_utils import (
     get_all_server_ids
 )
 
+# Add the import for our new module to make it available
+from .markdown_formatter import (
+    format_daily_message,
+    format_weekly_message,
+    format_agenda_message,
+    format_event_markdown
+)
+
 # Import common utility functions from root utils.py file
 # These are used throughout the codebase
 import sys

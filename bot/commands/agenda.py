@@ -10,8 +10,8 @@ from utils import format_message_lines
 from utils.timezone_utils import get_server_timezone
 from utils.server_utils import get_server_config
 from .utilities import _retry_discord_operation
+from utils.markdown_formatter import format_agenda_message
 
-# Agenda command implementation
 async def handle_agenda_command(interaction: Interaction, date_str: str):
     await interaction.response.defer(ephemeral=True)
     try:
@@ -70,9 +70,11 @@ async def handle_agenda_command(interaction: Interaction, date_str: str):
             
         events_by_day = defaultdict(list)
         total_events = 0
+        source_name = None
         
         # Fetch events from all sources
         for meta in sources:
+            source_name = meta.get('display_name', meta.get('name', 'Calendar'))
             try:
                 # Fix: _retry_discord_operation is async, so we need to await it
                 events = await _retry_discord_operation(lambda: get_events(meta, target_date, target_date))
@@ -95,72 +97,16 @@ async def handle_agenda_command(interaction: Interaction, date_str: str):
         if total_events == 0:
             await interaction.followup.send(f"📅 No events found for {target_date.strftime('%A, %B %d')}", ephemeral=True)
             return
-            
-        # Format the message with improved formatting
-        formatted_message = format_agenda_message(user_id, events_by_day, target_date, sources)
         
-        # Create embed response
-        embed = discord.Embed(
-            title=f"📅 Agenda for {target_date.strftime('%A, %B %d')}",
-            description=formatted_message,
-            color=0x3498db
-        )
+        # Format the message with Markdown formatting
+        formatted_message = format_agenda_message(user_id, events_by_day, target_date, source_name)
         
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        # Send the formatted message
+        await interaction.followup.send(formatted_message, ephemeral=True)
         
     except Exception as e:
         logger.exception(f"Error in agenda command: {e}")
         await interaction.followup.send("⚠️ An error occurred while fetching your agenda.", ephemeral=True)
-
-def format_agenda_message(user_id, events_by_day, target_date, sources):
-    """
-    Format events into a clean, readable message for the agenda command.
-    Similar to the formatting style used by the herald command.
-    """
-    message_lines = []
-    
-    # Get the source name for better display
-    source_name = None
-    for meta in sources:
-        if meta.get('user_id') == user_id:
-            source_name = meta.get('display_name', meta.get('name', 'Calendar'))
-            break
-    
-    if not source_name:
-        source_name = "Your calendar"
-    
-    for day_date, day_events in events_by_day.items():
-        # Format date header nicely
-        date_str = day_date.strftime("%A, %B %d")
-        
-        # Add events under this day
-        if day_events:
-            message_lines.append(f"**Events for {date_str}:**")
-            
-            # Sort events by start time
-            day_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
-            
-            for event in day_events:
-                # Get event details
-                event_name = event.get("summary", "Untitled Event")
-                
-                # Format event time
-                start_dt = event["start"].get("dateTime")
-                end_dt = event["end"].get("dateTime")
-                
-                if start_dt and end_dt:  # Has specific times
-                    start = datetime.fromisoformat(start_dt.replace('Z', '+00:00'))
-                    end = datetime.fromisoformat(end_dt.replace('Z', '+00:00'))
-                    time_str = f"{start.strftime('%H:%M')}–{end.strftime('%H:%M')}"
-                else:  # All-day event
-                    time_str = "All day"
-                
-                # Add formatted event line
-                message_lines.append(f"• **{event_name}** {time_str}")
-            
-            message_lines.append("")  # Add empty line for spacing
-    
-    return "\n".join(message_lines)
 
 async def register(bot: discord.Client):
     @bot.tree.command(name="agenda")

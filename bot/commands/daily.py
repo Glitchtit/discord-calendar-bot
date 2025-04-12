@@ -6,6 +6,7 @@ from bot.events import GROUPED_CALENDARS, get_events
 from .utilities import send_embed
 from utils.logging import logger
 from utils import format_message_lines
+from utils.markdown_formatter import format_daily_message
 
 async def post_daily_events(bot, user_id: str, day: date, interaction_channel=None):
     try:
@@ -21,43 +22,28 @@ async def post_daily_events(bot, user_id: str, day: date, interaction_channel=No
         if not events:
             return False
             
-        # Fix: Create a dictionary with day as the key and events as the value
-        events_by_day = {day: events}
+        # Fix: Create a dictionary with calendar name as the key and events as the value
+        events_by_calendar = {}
+        for meta in sources:
+            calendar_name = meta.get('name', 'Calendar')
+            calendar_events = [e for e in events if e.get('calendar_id') == meta.get('calendar_id')]
+            if calendar_events:
+                events_by_calendar[calendar_name] = calendar_events
         
-        # Format the message lines
-        message_lines = format_message_lines(user_id, events_by_day, day)
+        # Format the message with Markdown
+        message = format_daily_message(user_id, events_by_calendar, day, is_public=True)
         
-        # Add a check to make sure we're not sending an empty message
-        if not message_lines:
-            # Use @everyone instead of <@1> for server-wide calendars
-            user_display = "@everyone" if user_id == "1" else f"@{user_id}"
-            message = f"No events to display for {user_display} on {day.strftime('%A, %B %d')}."
-        else:
-            # Join the list of message lines into a single string
-            message = '\n'.join(message_lines)
+        # Check if this is a server-wide calendar (user_id = "1")
+        is_server_wide = user_id == "1"
         
         # Create a fallback content string that will ensure the message isn't empty
-        # Use @everyone instead of <@1> for server-wide calendars
-        content = f"Calendar update for @everyone" if user_id == "1" else f"Calendar update for @{user_id}"
+        content = ""
+        if is_server_wide:
+            content = "@everyone"
             
-        # Try directly accessing the channel and sending the message
         try:
             # Find announcement channel from server configs
             from config.server_config import get_all_server_ids, load_server_config
-            
-            # Create the embed with proper title for server-wide calendars
-            if user_id == "1":
-                title = f"📅 Calendar Events for {day.strftime('%A, %B %d')}"
-                description = f"Events for @everyone on {day.strftime('%A, %B %d')}\n{message}"
-            else:
-                title = f"📅 Calendar Events for {day.strftime('%A, %B %d')}"
-                description = message
-            
-            embed = discord.Embed(
-                title=title,
-                description=description,
-                color=0x3498db  # Blue color
-            )
             
             channel_found = False
             
@@ -72,13 +58,7 @@ async def post_daily_events(bot, user_id: str, day: date, interaction_channel=No
                     channel = bot.get_channel(channel_id)
                     if channel:
                         logger.info(f"Found announcement channel: {channel.name} (ID: {channel_id})")
-                        
-                        # Check if this is a server-wide calendar (user_id = "1")
-                        if user_id == "1":
-                            # Add @everyone mention for server-wide calendars
-                            content = "@everyone " + content
-                        
-                        await channel.send(content=content, embed=embed)
+                        await channel.send(content=content, content_type="text/markdown", content=message)
                         logger.info(f"Sent calendar update to channel {channel.name}")
                         channel_found = True
                         return True
@@ -88,15 +68,9 @@ async def post_daily_events(bot, user_id: str, day: date, interaction_channel=No
             # If no channel found from configs, try the interaction channel as fallback
             if not channel_found and interaction_channel:
                 logger.info(f"Using interaction channel as fallback: {interaction_channel.name}")
-                
-                # Check if this is a server-wide calendar (user_id = "1")
-                if user_id == "1":
-                    # Add @everyone mention for server-wide calendars
-                    content = "@everyone " + content
-                
-                await interaction_channel.send(content=content, embed=embed)
+                await interaction_channel.send(content=content, content_type="text/markdown", content=message)
                 return True
-                
+            
             if not channel_found:
                 logger.error("Could not find announcement channel to send message")
                 return False
@@ -115,7 +89,7 @@ async def handle_daily_command(interaction: Interaction):
         for user_id in GROUPED_CALENDARS:
             if await post_daily_events(interaction.client, user_id, date.today(), interaction.channel):
                 count += 1
-        await interaction.followup.send(f"Posted daily events for {count} users")
+        await interaction.followup.send(f"📝 Posted daily events for {count} users")
     except Exception as e:
         logger.error(f"Daily command error: {e}")
         await interaction.followup.send("⚠️ Failed to post daily events")
