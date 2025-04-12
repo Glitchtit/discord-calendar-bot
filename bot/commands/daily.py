@@ -32,8 +32,15 @@ async def post_daily_events(bot, user_id: str, day: date):
         else:
             # Join the list of message lines into a single string
             message = '\n'.join(message_lines)
+        
+        # Always include both a title and description to prevent empty message errors
+        title = f"📅 Calendar Events for {day.strftime('%A, %B %d')}"
+        
+        # Ensure the message is not just whitespace
+        if not message.strip():
+            message = f"No events found for <@{user_id}> on this date."
             
-        await send_embed(bot, description=message)
+        await send_embed(bot, title=title, description=message)
         return True
     except Exception as e:
         logger.error(f"Daily post error: {e}")
