@@ -7,6 +7,8 @@ from collections import defaultdict
 from bot.events import GROUPED_CALENDARS, get_events, ensure_calendars_loaded
 from utils.logging import logger
 from utils import format_message_lines
+from utils.timezone_utils import get_server_timezone
+from utils.server_utils import get_server_config
 from .utilities import _retry_discord_operation
 
 # Agenda command implementation
@@ -16,8 +18,38 @@ async def handle_agenda_command(interaction: Interaction, date_str: str):
         # Make sure calendars are loaded first
         ensure_calendars_loaded()
         
-        # Parse the date string using dateparser for natural language support
-        parsed_date = dateparser.parse(date_str)
+        # Get the server's timezone to determine date format preference
+        server_id = str(interaction.guild_id) if interaction.guild else None
+        server_tz = None
+        date_formats = None
+        
+        if server_id:
+            server_config = get_server_config(server_id)
+            if server_config:
+                server_tz = get_server_timezone(server_id)
+                
+                # Determine date format preference based on timezone
+                # European/most of world tends to use DD.MM format
+                # US/North America tends to use MM.DD format
+                if server_tz:
+                    if any(tz_part in server_tz.lower() for tz_part in ['europe', 'berlin', 'paris', 'rome', 'madrid', 'amsterdam', 'stockholm']):
+                        date_formats = ['%d.%m.%Y', '%d.%m', '%d/%m/%Y', '%d/%m']
+                    elif any(tz_part in server_tz.lower() for tz_part in ['america', 'us', 'new_york', 'chicago', 'denver', 'los_angeles']):
+                        date_formats = ['%m.%d.%Y', '%m.%d', '%m/%d/%Y', '%m/%d']
+        
+        # Parse the date string using dateparser with appropriate settings
+        settings = {
+            'PREFER_DATES_FROM': 'future',
+            'RETURN_AS_TIMEZONE_AWARE': True
+        }
+        
+        if date_formats:
+            settings['DATE_ORDER'] = 'DMY' if date_formats[0].startswith('%d') else 'MDY'
+            
+        if server_tz:
+            settings['TIMEZONE'] = server_tz
+            
+        parsed_date = dateparser.parse(date_str, settings=settings)
         if not parsed_date:
             await interaction.followup.send("⚠️ Could not parse the date. Try formats like 'today', 'tomorrow', 'next friday', etc.", ephemeral=True)
             return

@@ -62,7 +62,7 @@ async def post_tagged_week(interaction: Interaction, monday: date):
 
 async def handle_herald_command(interaction: Interaction):
     """Main handler for the herald command that shows all events for the day and week"""
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)  # Make sure defer is also ephemeral
     try:
         today = get_today()
         monday = get_monday_of_week(today)

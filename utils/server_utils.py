@@ -211,3 +211,20 @@ def migrate_env_config_to_server(server_id: int, calendar_sources: str, user_map
         return False, "No new configuration to migrate"
     else:
         return False, "Failed to save migrated configuration"
+
+def get_server_config(server_id):
+    """
+    Get the configuration for a specific server.
+    
+    Args:
+        server_id (str): The ID of the Discord server
+        
+    Returns:
+        dict: The server configuration or None if not found
+    """
+    from config.server_config import load_server_config
+    
+    try:
+        return load_server_config(server_id)
+    except Exception:
+        return None

@@ -77,6 +77,25 @@ def get_user_timezone(user_id: str, source_meta: Optional[Dict[str, Any]] = None
     # Default timezone
     return ZoneInfo(DEFAULT_TIMEZONE)
 
+def get_server_timezone(server_id):
+    """
+    Get the timezone configured for a specific server.
+    
+    Args:
+        server_id (str): The ID of the Discord server
+        
+    Returns:
+        str: The timezone string (e.g. 'Europe/Berlin') or None if not configured
+    """
+    from utils.server_utils import get_server_config
+    
+    server_config = get_server_config(server_id)
+    if server_config and 'timezone' in server_config:
+        return server_config['timezone']
+    
+    # Default to UTC if not specified
+    return None
+
 def parse_datetime(dt_str: str, timezone: Optional[Union[str, ZoneInfo]] = None) -> datetime:
     """
     Parse a datetime string into a timezone-aware datetime object.
