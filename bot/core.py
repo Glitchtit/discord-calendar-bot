@@ -41,7 +41,8 @@ from bot.commands import (
     handle_reload_command,
     handle_who_command,
     handle_daily_command,
-    handle_setup_command
+    handle_setup_command,
+    handle_weekly_command  # Add this import
 )
 # Removed unused imports
 from utils.validators import detect_calendar_type
@@ -273,6 +274,14 @@ async def daily_command(interaction: discord.Interaction):
 )
 async def setup_command(interaction: discord.Interaction):
     await handle_setup_command(interaction)  # Delegate to the handler in commands.py
+
+
+@bot.tree.command(
+    name="weekly",
+    description="Post this week's events for all users to the announcement channel"
+)
+async def weekly_command(interaction: discord.Interaction):
+    await handle_weekly_command(interaction)  # Use the imported handler directly
 
 
 # ╔═════════════════════════════════════════════════════════════╗

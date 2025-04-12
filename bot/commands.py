@@ -81,6 +81,10 @@ def handle_status_command(interaction):
     status = import_command_module("status")
     return status.handle_status_command(interaction)
 
+def handle_weekly_command(interaction):
+    weekly = import_command_module("weekly")
+    return weekly.handle_weekly_command(interaction)
+
 # Add wrapper functions for post_tagged_events and post_tagged_week
 def post_tagged_events(interaction, day):
     herald = import_command_module("herald")
@@ -107,5 +111,6 @@ __all__ = [
     'handle_status_command',
     'send_embed',
     'post_tagged_events',
-    'post_tagged_week'
+    'post_tagged_week',
+    'handle_weekly_command'
 ]
