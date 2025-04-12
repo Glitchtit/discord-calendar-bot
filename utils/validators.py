@@ -168,12 +168,34 @@ async def test_ics_calendar(url: str) -> Tuple[bool, str]:
         url = "https://" + url[9:]
     
     try:
-        # Run the request in a thread pool to avoid blocking
-        response = await asyncio.to_thread(
-            lambda: requests.head(url, timeout=5)
-        )
+        # First try HEAD request as it's more efficient
+        try:
+            response = await asyncio.to_thread(
+                lambda: requests.head(url, timeout=5, allow_redirects=True)
+            )
+            
+            # If HEAD method is not allowed, try GET request instead
+            if response.status_code == 405:
+                logger.debug(f"HEAD request not supported for {url}, trying GET instead")
+                response = await asyncio.to_thread(
+                    lambda: requests.get(url, timeout=5, allow_redirects=True, stream=True)
+                )
+                # Close the connection to avoid consuming the entire content
+                response.close()
+        except requests.exceptions.RequestException:
+            # If HEAD fails completely, try GET as fallback
+            response = await asyncio.to_thread(
+                lambda: requests.get(url, timeout=5, allow_redirects=True, stream=True)
+            )
+            # Close the connection to avoid consuming the entire content
+            response.close()
         
-        if response.status_code == 200:
+        # Handle authentication errors
+        if response.status_code == 401:
+            return True, "Calendar requires authentication. Added with limited validation."
+            
+        # Accept 200 OK or 302 Found (redirect) as valid responses
+        if response.status_code in (200, 302):
             # Try to extract a meaningful name from the URL
             if "?" in url:
                 url_parts = url.split("?")[0].split("/")
@@ -190,4 +212,5 @@ async def test_ics_calendar(url: str) -> Tuple[bool, str]:
     except requests.exceptions.Timeout:
         return False, "Connection timed out. The server may be slow or unreachable."
     except Exception as e:
+        logger.exception(f"Error testing ICS calendar: {e}")
         return False, f"Error connecting to ICS calendar: {str(e)}"
