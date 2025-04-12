@@ -21,7 +21,10 @@ async def post_daily_events(bot, user_id: str, day: date):
         if not events:
             return False
             
-        message = format_message_lines(user_id, events, day)
+        # Fix: Create a dictionary with day as the key and events as the value
+        events_by_day = {day: events}
+            
+        message = format_message_lines(user_id, events_by_day, day)
         await send_embed(bot, description=message)
         return True
     except Exception as e:
