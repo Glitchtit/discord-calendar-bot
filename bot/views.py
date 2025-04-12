@@ -78,21 +78,6 @@ class AddCalendarModal(Modal, title="Add Calendar"):
         elif not display_name:
             display_name = "Unnamed Calendar"
 
-        # Extract user ID from the input
-        user_input = self.user_input.value.strip()
-        
-        # Special case for "everyone" - use "1" as the user_id
-        if user_input.lower() == "everyone":
-            user_id = "1"
-        else:
-            # Existing user ID extraction logic
-            user_id_match = re.search(r'<@!?(\d+)>', user_input)
-            if user_id_match:
-                user_id = user_id_match.group(1)
-            else:
-                # If not a mention, try using it directly as an ID
-                user_id = user_input.replace('@', '')
-
         # Now show the user selection view for assigning the calendar
         user_selector = CalendarUserSelectView(
             self.bot, 
@@ -101,7 +86,7 @@ class AddCalendarModal(Modal, title="Add Calendar"):
                 'type': calendar_type,
                 'id': calendar_url,
                 'name': display_name,
-                'user_id': user_id
+                'user_id': None  # This will be set by the user selector view
             },
             message
         )
