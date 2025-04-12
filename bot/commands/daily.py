@@ -23,28 +23,39 @@ async def post_daily_events(bot, user_id: str, day: date, interaction_channel=No
             
         # Fix: Create a dictionary with day as the key and events as the value
         events_by_day = {day: events}
-            
+        
+        # Format the message lines
         message_lines = format_message_lines(user_id, events_by_day, day)
         
         # Add a check to make sure we're not sending an empty message
         if not message_lines:
-            message = f"No events to display for <@{user_id}> on {day.strftime('%A, %B %d')}."
+            # Use @everyone instead of <@1> for server-wide calendars
+            user_display = "@everyone" if user_id == "1" else f"<@{user_id}>"
+            message = f"No events to display for {user_display} on {day.strftime('%A, %B %d')}."
         else:
             # Join the list of message lines into a single string
             message = '\n'.join(message_lines)
         
         # Create a fallback content string that will ensure the message isn't empty
-        content = f"Calendar update for <@{user_id}>"
+        # Use @everyone instead of <@1> for server-wide calendars
+        content = f"Calendar update for @everyone" if user_id == "1" else f"Calendar update for <@{user_id}>"
             
         # Try directly accessing the channel and sending the message
         try:
             # Find announcement channel from server configs
             from config.server_config import get_all_server_ids, load_server_config
             
-            # Create the embed
+            # Create the embed with proper title for server-wide calendars
+            if user_id == "1":
+                title = f"📅 Calendar Events for {day.strftime('%A, %B %d')}"
+                description = f"Events for @everyone on {day.strftime('%A, %B %d')}\n{message}"
+            else:
+                title = f"📅 Calendar Events for {day.strftime('%A, %B %d')}"
+                description = message
+            
             embed = discord.Embed(
-                title=f"📅 Calendar Events for {day.strftime('%A, %B %d')}",
-                description=message,
+                title=title,
+                description=description,
                 color=0x3498db  # Blue color
             )
             
