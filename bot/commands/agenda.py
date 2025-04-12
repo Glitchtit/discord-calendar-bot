@@ -77,10 +77,14 @@ async def handle_agenda_command(interaction: Interaction, date_str: str):
             source_name = meta.get('display_name', meta.get('name', 'Calendar'))
             try:
                 # Fix: _retry_discord_operation is async, so we need to await it
-                events = await _retry_discord_operation(lambda: get_events(meta, target_date, target_date))
+                calendar_events = await _retry_discord_operation(lambda: get_events(meta, target_date, target_date))
                 
-                # Group events by day
-                for event in events or []:
+                # Add calendar metadata to each event for color coding
+                for event in calendar_events or []:
+                    event['calendar_id'] = meta.get('id', 'unknown')
+                    event['calendar_name'] = meta.get('name', 'Calendar')
+                    
+                    # Group events by day
                     start_dt = event["start"].get("dateTime", event["start"].get("date", ""))
                     if start_dt:
                         # Convert to date obj if needed
@@ -98,7 +102,7 @@ async def handle_agenda_command(interaction: Interaction, date_str: str):
             await interaction.followup.send(f"📅 No events found for {target_date.strftime('%A, %B %d')}", ephemeral=True)
             return
         
-        # Format the message with Markdown formatting
+        # Format the message with Markdown formatting including color coding
         formatted_message = format_agenda_message(user_id, events_by_day, target_date, source_name)
         
         # Send the formatted message

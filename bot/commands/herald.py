@@ -78,8 +78,11 @@ async def handle_herald_command(interaction: Interaction):
         daily_events = defaultdict(list)
         for meta in GROUPED_CALENDARS[user_id]:
             # Convert synchronous get_events into an awaitable using to_thread
-            events = await asyncio.to_thread(get_events, meta, today, today)
-            for event in events or []:
+            calendar_events = await asyncio.to_thread(get_events, meta, today, today)
+            # Add calendar metadata to each event for color coding
+            for event in calendar_events or []:
+                event['calendar_id'] = meta.get('id', 'unknown')
+                event['calendar_name'] = meta.get('name', 'Calendar')
                 daily_events[meta['name']].extend([event])
         
         # Format and send the daily events message
@@ -90,8 +93,11 @@ async def handle_herald_command(interaction: Interaction):
         weekly_events = defaultdict(list)
         for meta in GROUPED_CALENDARS[user_id]:
             # Convert synchronous get_events into an awaitable using to_thread
-            events = await asyncio.to_thread(get_events, meta, monday, monday + timedelta(days=6))
-            for event in events or []:
+            calendar_events = await asyncio.to_thread(get_events, meta, monday, monday + timedelta(days=6))
+            # Add calendar metadata to each event for color coding
+            for event in calendar_events or []:
+                event['calendar_id'] = meta.get('id', 'unknown')
+                event['calendar_name'] = meta.get('name', 'Calendar')
                 start_date = datetime.fromisoformat(event['start'].get('dateTime', event['start'].get('date'))).date()
                 weekly_events[start_date].append(event)
         
