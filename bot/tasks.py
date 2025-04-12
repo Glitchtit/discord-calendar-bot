@@ -212,15 +212,44 @@ def start_all_tasks(bot):
 # ║ 🔄 try_start_task                                                  ║
 # ║ Attempts to start a specific task, handling any exceptions         ║
 # ╚════════════════════════════════════════════════════════════════════╝
-def try_start_task(task_func, *args, **kwargs):
+def get_task_name(task_func):
+    """Safely get the name of a task function or Loop object."""
+    if hasattr(task_func, "__name__"):
+        return task_func.__name__
+    elif hasattr(task_func, "get_name"):
+        return task_func.get_name()
+    elif hasattr(task_func, "_name"):
+        return task_func._name
+    else:
+        # Try to get the string representation and extract useful information
+        task_str = str(task_func)
+        if "bound method" in task_str:
+            # Extract method name from representation like "<bound method post_weekly_schedule of <...>>"
+            parts = task_str.split(" ")
+            if len(parts) > 2:
+                return parts[2]
+        # Last resort: return the task's class name
+        return task_func.__class__.__name__
+
+async def try_start_task(task_func, bot):
+    """Try to start a task, handling various task types appropriately."""
     try:
-        if not task_func.is_running():
-            task_func.start(*args, **kwargs)
-            logger.info(f"Started task: {task_func.__name__}")
+        # Get task name safely
+        task_name = get_task_name(task_func)
+        
+        # Check if it's a discord.ext.tasks.Loop object
+        if hasattr(task_func, "start"):
+            if not task_func.is_running():
+                task_func.start(bot)
+                logger.info(f"Started task: {task_name}")
+        # Regular coroutine function
         else:
-            logger.info(f"Task already running: {task_func.__name__}")
+            asyncio.create_task(task_func(bot))
+            logger.info(f"Started task: {task_name}")
     except Exception as e:
-        logger.exception(f"Failed to start task {task_func.__name__}: {e}")
+        # Get task name safely, even in exception handler
+        task_name = get_task_name(task_func)
+        logger.exception(f"Failed to start task {task_name}: {e}")
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # 🧠 AI Greeting
@@ -774,10 +803,34 @@ async def post_weekly_schedule(bot):
 
 def setup_tasks(bot):
     """Configure and start all scheduled tasks."""
-    # ...existing code...
-    
-    # Add weekly schedule posting task
-    post_weekly_schedule.start(bot)
-    logger.info("🔄 Weekly schedule auto-post task started (runs every Monday at 07:00)")
-    
-    # ...existing code...
+    try:
+        # Initialize task health tracking
+        global _task_last_success, _task_locks, _task_error_counts
+        _task_last_success = {}
+        _task_locks = {}
+        _task_error_counts = {}
+        
+        # Start primary tasks
+        schedule_daily_posts.start(bot)
+        logger.info("🔄 Daily posts scheduler task started")
+        
+        watch_for_event_changes.start(bot)
+        logger.info("🔄 Event changes monitor task started")
+        
+        # Start health monitoring
+        monitor_task_health.start(bot)
+        logger.info("🔄 Task health monitor started (runs every 10 minutes)")
+        
+        # Add weekly schedule posting task
+        post_weekly_schedule.start(bot)
+        logger.info("🔄 Weekly schedule auto-post task started (runs every Monday at 07:00)")
+        
+        logger.info("✅ All scheduled tasks started successfully")
+    except Exception as e:
+        logger.exception(f"❌ Error starting tasks: {e}")
+        
+        # Try to start tasks individually
+        try_start_task(schedule_daily_posts, bot)
+        try_start_task(watch_for_event_changes, bot)
+        try_start_task(monitor_task_health, bot)
+        try_start_task(post_weekly_schedule, bot)
