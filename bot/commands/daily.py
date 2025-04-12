@@ -1,5 +1,6 @@
 from datetime import date
 import discord
+import asyncio  # Add this import
 from discord import Interaction
 from bot.events import GROUPED_CALENDARS, get_events
 from .utilities import send_embed
@@ -14,7 +15,8 @@ async def post_daily_events(bot, user_id: str, day: date):
         
         events = []
         for meta in sources:
-            events.extend(await get_events(meta, day, day))
+            # Fix: Run get_events in a separate thread since it's synchronous
+            events.extend(await asyncio.to_thread(get_events, meta, day, day))
         
         if not events:
             return False
