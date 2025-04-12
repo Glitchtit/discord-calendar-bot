@@ -83,9 +83,23 @@ def detect_calendar_type(url_or_id: str) -> str:
     ):
         return "google"
     
-    # ICS calendar detection patterns - check for .ics anywhere in URL, not just at the end
-    if url_or_id.startswith("http") and (".ics" in url_or_id or "ical" in url_or_id):
-        return "ics"
+    # ICS calendar detection patterns
+    if url_or_id.startswith(("http", "webcal")):
+        # Check for common ICS indicators in URL
+        ics_indicators = [
+            ".ics",
+            "ical",
+            "calendar",
+            "schedule",
+            "/cal/",
+            "calendar-share",
+            "/export/",
+            "/api/"  # Many calendar APIs provide ICS format
+        ]
+        
+        for indicator in ics_indicators:
+            if indicator in url_or_id:
+                return "ics"
     
     return "unknown"
 
