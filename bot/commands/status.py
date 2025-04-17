@@ -12,7 +12,7 @@ from typing import Dict, List, Any, Optional
 
 from utils.logging import logger
 from utils.cache import event_cache, metadata_cache
-from bot.events import GROUPED_CALENDARS, _api_error_count, _api_last_error_time
+from bot.events import GROUPED_CALENDARS
 from utils.rate_limiter import CALENDAR_API_LIMITER, EVENT_LIST_LIMITER
 
 async def handle_status_command(interaction: Interaction):
@@ -164,20 +164,7 @@ def get_api_status() -> str:
     """Get API usage and rate limit status."""
     lines = []
     
-    # Add Google API error status
-    if _api_error_count > 0:
-        # Calculate time since last error
-        time_since = "N/A"
-        if _api_last_error_time:
-            delta = datetime.now() - _api_last_error_time
-            minutes = int(delta.total_seconds() / 60)
-            time_since = f"{minutes} minutes ago"
-            
-        lines.append(f"**Google API Errors:** {_api_error_count} (Last error: {time_since})")
-    else:
-        lines.append("**Google API Status:** Healthy ✅")
-    
-    # Add token bucket statuses
+    # Keep the token bucket statuses
     cal_tokens = CALENDAR_API_LIMITER.get_token_count()
     event_tokens = EVENT_LIST_LIMITER.get_token_count()
     
