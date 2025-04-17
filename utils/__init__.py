@@ -49,6 +49,46 @@ except Exception as e:
     def format_message_lines(*args, **kwargs): return []
     def emoji_for_event(*args, **kwargs): return "•"
 
+def split_message_by_lines(message: str, limit: int) -> list[str]:
+    """Splits a message by lines, ensuring no chunk exceeds the limit."""
+    lines = message.split('\n')
+    chunks = []
+    current_chunk = ""
+    for line in lines:
+        # Check if adding the next line (plus newline char) exceeds the limit
+        if len(current_chunk) + len(line) + 1 > limit:
+            # If the current chunk is not empty, add it to the list
+            if current_chunk:
+                chunks.append(current_chunk)
+            # If a single line exceeds the limit, split the line itself (rare case)
+            if len(line) > limit:
+                # Simple split, might break markdown
+                for i in range(0, len(line), limit):
+                    chunks.append(line[i:i+limit])
+                current_chunk = "" # Reset chunk after handling oversized line
+            else:
+                current_chunk = line # Start new chunk with the current line
+        else:
+            # Add line to current chunk
+            if current_chunk:
+                current_chunk += "\n" + line
+            else:
+                current_chunk = line
+
+    # Add the last remaining chunk if it's not empty
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    # If the original message was empty or only whitespace
+    if not chunks and not message.strip():
+        return []
+    # If message splitting resulted in no chunks but message wasn't empty (e.g. single long line)
+    elif not chunks and message:
+         # Fallback: split purely by character limit if line splitting failed
+         return [message[i:i + limit] for i in range(0, len(message), limit)]
+
+    return chunks
+
 __all__ = [
     'detect_calendar_type',
     'validate_event_dates',
@@ -63,5 +103,6 @@ __all__ = [
     'resolve_input_to_tags',
     'is_in_current_week',
     'format_message_lines',
-    'emoji_for_event'
+    'emoji_for_event',
+    'split_message_by_lines'
 ]

@@ -10,6 +10,7 @@ from utils import format_message_lines, get_monday_of_week
 from utils.markdown_formatter import format_weekly_message
 # Import the getter function
 from config.server_config import get_announcement_channel_id
+from utils import split_message_by_lines # Import the helper
 
 async def post_weekly_events(bot, user_id: str, monday: date, interaction_channel=None):
     try:
@@ -84,7 +85,13 @@ async def post_weekly_events(bot, user_id: str, monday: date, interaction_channe
 
             if channel:
                 logger.info(f"Found announcement channel: {channel.name} (ID: {channel_id}) for server {server_id}")
-                await channel.send(content=message if not content else f"{content}\n{message}")
+                # Split message if too long
+                message_chunks = split_message_by_lines(message, 2000) # Use the helper
+                full_content = message if not content else f"{content}\n{message_chunks[0]}"
+                await channel.send(content=full_content)
+                # Send remaining chunks if any
+                for chunk in message_chunks[1:]:
+                    await channel.send(content=chunk)
                 logger.info(f"Sent weekly calendar update to channel {channel.name}")
                 return True
             else:
@@ -93,7 +100,13 @@ async def post_weekly_events(bot, user_id: str, monday: date, interaction_channe
             # If no channel found from config, try the interaction channel as fallback
             if not channel_found and interaction_channel:
                 logger.info(f"Using interaction channel {interaction_channel.name} as fallback for server {server_id}")
-                await interaction_channel.send(content=message if not content else f"{content}\n{message}")
+                # Split message if too long
+                message_chunks = split_message_by_lines(message, 2000) # Use the helper
+                full_content = message if not content else f"{content}\n{message_chunks[0]}"
+                await interaction_channel.send(content=full_content)
+                # Send remaining chunks if any
+                for chunk in message_chunks[1:]:
+                    await interaction_channel.send(content=chunk)
                 return True
             
             if not channel_found:
