@@ -23,7 +23,8 @@ def get_color_for_tag(tag: str) -> int:
 def get_events_file(server_id: int) -> str:
     """Return the path to the event snapshot file for a server."""
     # Use a consistent path for event snapshots (events.json) per server
-    base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "data", "servers", str(server_id))
+    # Use absolute path /data as the base, assuming it's the mounted volume root
+    base_dir = os.path.join("/data", "servers", str(server_id))
     os.makedirs(base_dir, exist_ok=True)
     return os.path.join(base_dir, "events.json")
 
