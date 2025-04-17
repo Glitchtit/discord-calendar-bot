@@ -103,12 +103,20 @@ async def on_ready():
         logger.info(f"Loaded {len(GROUPED_CALENDARS)} user/tag groups initially.")
         # -----------------------------------------
 
-        # Log superadmin for each server
+        # Ensure owner is registered as admin for each server
+        from config.server_config import add_admin_user # Import here to avoid potential circular dependency issues at top level
         for server_id in get_all_server_ids():
             config = load_server_config(server_id)
             owner_id = config.get("owner_id")
             if owner_id:
-                logger.info(f"Superadmin for server {server_id}: {owner_id}")
+                logger.debug(f"Ensuring owner {owner_id} is registered as admin for server {server_id}")
+                success, message = add_admin_user(server_id, str(owner_id))
+                if success:
+                    logger.info(f"Owner {owner_id} confirmed/added as admin for server {server_id}.")
+                elif "already an admin" not in message: # Log errors only if it wasn't just 'already exists'
+                    logger.error(f"Failed to ensure owner {owner_id} as admin for server {server_id}: {message}")
+            else:
+                logger.warning(f"Server {server_id} does not have an owner_id defined in its config.")
 
         # Load admin users from config and register them for notifications
         from config.server_config import get_admin_user_ids

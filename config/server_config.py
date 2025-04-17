@@ -158,11 +158,29 @@ def load_admins(server_id: int) -> List[str]:
     return []
 
 def save_admins(server_id: int, admin_ids: List[str]) -> bool:
-    """Save the list of admin user IDs for a server."""
+    """Save the list of admin user IDs for a server, ensuring the owner is included."""
     admin_file = get_admins_file(server_id)
     try:
+        # Ensure owner_id is always included
+        config = load_server_config(server_id)
+        owner_id = config.get("owner_id")
+        
+        # Use a set for efficient handling and duplicate prevention
+        admin_set = set(admin_ids)
+        if owner_id:
+            admin_set.add(str(owner_id)) # Ensure owner_id is a string
+        else:
+            logger.warning(f"Server {server_id} does not have an owner_id set in its main config.")
+            
+        # Convert back to list for saving
+        final_admin_list = list(admin_set)
+        
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(admin_file), exist_ok=True)
+        
         with open(admin_file, 'w', encoding='utf-8') as f:
-            json.dump(admin_ids, f, ensure_ascii=False, indent=2)
+            json.dump(final_admin_list, f, ensure_ascii=False, indent=2)
+        logger.debug(f"Saved admins for server {server_id}: {final_admin_list}")
         return True
     except Exception as e:
         logger.error(f"Failed to save admins for server {server_id}: {e}")
