@@ -1,7 +1,8 @@
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 import discord
 import asyncio
 from discord import Interaction
+from collections import defaultdict
 from bot.events import GROUPED_CALENDARS, get_events
 from .utilities import send_embed
 from utils.logging import logger
@@ -17,7 +18,7 @@ async def post_weekly_events(bot, user_id: str, monday: date, interaction_channe
         # Calculate Sunday (end of week) from the Monday
         sunday = monday + timedelta(days=6)
         
-        events = []
+        all_events = []
         for meta in sources:
             # Get events for the entire week (Monday to Sunday)
             calendar_events = await asyncio.to_thread(get_events, meta, monday, sunday)
@@ -25,21 +26,36 @@ async def post_weekly_events(bot, user_id: str, monday: date, interaction_channe
             for event in calendar_events:
                 event['calendar_id'] = meta.get('id', 'unknown')
                 event['calendar_name'] = meta.get('name', 'Calendar')
-            events.extend(calendar_events)
+            all_events.extend(calendar_events)
         
-        if not events:
+        if not all_events:
             return False
             
-        # Create a dictionary with calendar name as the key and events as the value
-        events_by_calendar = {}
-        for meta in sources:
-            calendar_name = meta.get('name', 'Calendar')
-            calendar_events = [e for e in events if e.get('calendar_id') == meta.get('id')]
-            if calendar_events:
-                events_by_calendar[calendar_name] = calendar_events
-        
-        # Format the message with Markdown
-        message = format_weekly_message(user_id, events_by_calendar, monday)
+        # Group events by date
+        events_by_day = defaultdict(list)
+        for event in all_events:
+            start_container = event.get("start", {})
+            start_dt_str = start_container.get("dateTime", start_container.get("date"))
+            if start_dt_str:
+                try:
+                    if 'T' in start_dt_str: # Datetime string
+                        event_date = datetime.fromisoformat(start_dt_str.replace('Z', '+00:00')).date()
+                    else: # Date string
+                        event_date = date.fromisoformat(start_dt_str)
+                    events_by_day[event_date].append(event)
+                except ValueError:
+                    logger.warning(f"Could not parse date for event: {event.get('summary')}")
+
+
+        # Filter out events outside the target week (just in case get_events returned too much)
+        events_by_day = {day: evs for day, evs in events_by_day.items() if monday <= day <= sunday}
+
+        if not events_by_day:
+             logger.info(f"No events found for user {user_id} for the week of {monday}")
+             return False # Return False if no events are found for the week
+
+        # Format the message with Markdown, passing the correctly grouped events_by_day
+        message = format_weekly_message(user_id, events_by_day, monday)
         
         # Check if this is a server-wide calendar (user_id = "1")
         is_server_wide = user_id == "1"
