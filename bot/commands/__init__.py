@@ -1,5 +1,5 @@
-from .utilities import check_channel_permissions, send_embed as util_send_embed
-from ..commands import post_tagged_events, post_tagged_week # Import post_tagged functions from wrapper module
+from .utilities import check_channel_permissions  # Utility import
+from ..command_router import send_embed, post_tagged_events, post_tagged_week  # Import central router functions
 
 # Import handlers directly from their modules
 from .agenda import handle_agenda_command
@@ -30,5 +30,5 @@ __all__ = [
     'post_tagged_events',
     'post_tagged_week',
     'check_channel_permissions',
-    'util_send_embed', # Export utility send_embed
+    'send_embed',  # Export central router send_embed
 ]
