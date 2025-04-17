@@ -47,153 +47,116 @@ def format_event_markdown(event: Dict[str, Any], calendar_emoji: str = None) -> 
     
     return event_line
 
+# --- REFACTORED FORMATTERS FOR OPTIMIZED UX ---
 def format_daily_message(user_id: str, events_by_calendar: Dict[str, List[Dict[str, Any]]], 
                          day: date, is_public: bool = False) -> str:
-    """Format daily events into a Markdown message."""
     today_str = day.strftime('%A, %B %d')
-    
-    # Create header with different styling based on whether it's public or personal
+    total_events = sum(len(events) for events in events_by_calendar.values())
     if is_public:
-        if user_id == "1":  # Server-wide calendar
+        if user_id == "1":
             header = f"# 📅 Events for Everyone • {today_str}\n"
         else:
             header = f"# 📅 Events for <@{user_id}> • {today_str}\n"
     else:
         header = f"# 📅 Your Events • {today_str}\n"
-    
     message = [header]
-    
-    # If no events, add a message
+    message.append(f"**Total events:** `{total_events}`\n")
     if not events_by_calendar:
-        message.append("*No events scheduled for today.*")
+        message.append("> ⚠️ *No events scheduled for today.*")
         return "\n".join(message)
-    
-    # Add a legend for calendar colors
+    # Calendar legend
     message.append("## 📊 Calendar Legend")
     for calendar_name in sorted(events_by_calendar.keys()):
         emoji = get_calendar_color_emoji(calendar_name)
         message.append(f"{emoji} {calendar_name}")
-    message.append("")  # Add a blank line after the legend
-    
-    # Add events by calendar
-    message.append("## 📋 Today's Events")
+    message.append("\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    # Events by calendar
+    message.append("## 🗒️ Today's Events")
     for calendar_name, events in sorted(events_by_calendar.items()):
         if events:
             calendar_emoji = get_calendar_color_emoji(calendar_name)
-            
-            # Sort events by start time
+            message.append(f"**{calendar_emoji} {calendar_name}**")
             sorted_events = sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
-            
             for event in sorted_events:
                 message.append(format_event_markdown(event, calendar_emoji))
-            
-            # Add a spacer between calendars
             message.append("")
-    
+    message.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     return "\n".join(message)
 
 def format_weekly_message(user_id: str, events_by_day: Dict[date, List[Dict[str, Any]]], 
                          start_day: date) -> str:
-    """Format weekly events into a Markdown message."""
     week_of_str = start_day.strftime('%B %d')
-    
+    total_events = sum(len(events) for events in events_by_day.values())
     header = f"# 📆 Weekly Schedule • Week of {week_of_str}\n"
     message = [header]
-    
-    # If no events, add a message
+    message.append(f"**Total events:** `{total_events}`\n")
     if not events_by_day:
-        message.append("*No events scheduled for this week.*")
+        message.append("> ⚠️ *No events scheduled for this week.*")
         return "\n".join(message)
-    
-    # Create a mapping of calendar IDs to color emojis for consistency
     calendar_colors = {}
-    
-    # First pass to collect all calendar IDs
     for day_events in events_by_day.values():
         for event in day_events:
             calendar_id = event.get("calendar_id", "unknown")
             calendar_name = event.get("calendar_name", calendar_id)
             if calendar_name not in calendar_colors:
                 calendar_colors[calendar_name] = get_calendar_color_emoji(calendar_name)
-    
-    # Add a legend for calendar colors if we have multiple calendars
     if len(calendar_colors) > 1:
         message.append("## 📊 Calendar Legend")
         for cal_name, emoji in sorted(calendar_colors.items()):
             message.append(f"{emoji} {cal_name}")
-        message.append("")  # Add a blank line after the legend
-    
-    # Add events by day
+        message.append("")
+    message.append("━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
     for day, events in sorted(events_by_day.items()):
         day_str = day.strftime('%A, %B %d')
-        message.append(f"\n## {day_str}")
-        
+        message.append(f"### {day_str}")
         if not events:
-            message.append("*No events scheduled*")
+            message.append("> *No events scheduled*\n")
             continue
-        
-        # Sort events by start time
         sorted_events = sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
-        
         for event in sorted_events:
             calendar_id = event.get("calendar_id", "unknown")
             calendar_name = event.get("calendar_name", calendar_id)
             emoji = calendar_colors.get(calendar_name, "")
             message.append(format_event_markdown(event, emoji))
-    
+        message.append("")
+    message.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     return "\n".join(message)
 
 def format_agenda_message(user_id: str, events_by_day: Dict[date, List[Dict[str, Any]]], 
                          target_date: date, source_name: Optional[str] = None) -> str:
-    """Format agenda events into a Markdown message."""
     date_str = target_date.strftime('%A, %B %d')
-    
+    total_events = sum(len(events) for events in events_by_day.values())
     if source_name:
         header = f"# 📅 {source_name} • {date_str}\n"
     else:
         header = f"# 📅 Your Agenda • {date_str}\n"
-    
     message = [header]
-    
-    # If no events, add a message
+    message.append(f"**Total events:** `{total_events}`\n")
     if not events_by_day:
-        message.append("*No events scheduled for this day.*")
+        message.append("> ⚠️ *No events scheduled for this day.*")
         return "\n".join(message)
-    
-    # Create a mapping of calendar IDs to color emojis for consistency
     calendar_colors = {}
-    
-    # First pass to collect all calendar IDs
     for day_events in events_by_day.values():
         for event in day_events:
             calendar_id = event.get("calendar_id", "unknown")
             calendar_name = event.get("calendar_name", calendar_id)
             if calendar_name not in calendar_colors:
                 calendar_colors[calendar_name] = get_calendar_color_emoji(calendar_name)
-    
-    # Add a legend for calendar colors if we have multiple calendars
     if len(calendar_colors) > 1:
         message.append("## 📊 Calendar Legend")
         for cal_name, emoji in sorted(calendar_colors.items()):
             message.append(f"{emoji} {cal_name}")
-        message.append("")  # Add a blank line after the legend
-    
-    # Add a separator
-    message.append("```\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n```")
-    
-    # Add events by day (usually just one day for agenda)
+        message.append("")
+    message.append("━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
     for day, events in sorted(events_by_day.items()):
         if not events:
-            message.append("*No events scheduled*")
+            message.append("> *No events scheduled*\n")
             continue
-        
-        # Sort events by start time
         sorted_events = sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
-        
         for event in sorted_events:
             calendar_id = event.get("calendar_id", "unknown")
             calendar_name = event.get("calendar_name", calendar_id)
             emoji = calendar_colors.get(calendar_name, "")
             message.append(format_event_markdown(event, emoji))
-    
+    message.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     return "\n".join(message)
