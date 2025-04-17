@@ -47,8 +47,15 @@
 ├── Dockerfile             # Container build definition
 ├── requirements.txt       # Python dependencies
 ├── 📁 bot/                # Discord bot module
+│   ├── 📁 events/        # Calendar integration (Google & ICS)
+│   │   ├── google_api.py        # Google Calendar API setup & service initialization
+│   │   ├── calendar_loading.py  # Load and group calendars from server configs
+│   │   ├── event_fetching.py    # Fetch events from Google & ICS sources
+│   │   ├── metadata.py          # Fetch and cache calendar metadata
+│   │   ├── snapshot.py          # Persist and track event snapshots
+│   │   ├── fingerprint.py       # Compute fingerprints for deduplication
+│   │   └── reload.py            # Event reload & concurrency control
 │   ├── core.py           # Discord bot & event handlers
-│   ├── events.py         # Calendar integration (Google & ICS)
 │   ├── tasks.py          # Scheduled daily/weekly event posters
 │   ├── commands.py       # Command registration system
 │   ├── views.py          # Discord UI components
@@ -229,4 +236,3 @@ grep ERROR ./data/logs/bot.log
   ```
 
 ---
-````

@@ -22,7 +22,6 @@ from discord.ui import View, Button, Select
 from utils.logging import logger
 from bot.events import (
     GROUPED_CALENDARS,
-    USER_TAG_MAP,
     TAG_NAMES,
     TAG_COLORS,
     get_events,
@@ -55,11 +54,7 @@ from config.server_config import (
 )
 from collections import defaultdict
 from datetime import timedelta
-from bot.views import (
-    AddCalendarModal,
-    CalendarRemoveView,
-    ConfirmRemovalView
-)
+# UI components are managed in bot.views, imported in commands; remove from core
 from utils import get_today  # Added missing import
 import os
 from utils.server_utils import get_all_server_ids
@@ -366,40 +361,3 @@ async def resolve_tag_mappings():
             logger.warning(f"Error resolving members for guild {guild.name}: {e}")
 
     logger.info(f"Resolved {resolved_count} user mappings to display names.")
-
-
-# ╔═════════════════════════════════════════════════════════════════╗
-# 🧩 Setup UI Components
-# ║ Defines interactive components for the setup process.           ║
-# ╚═════════════════════════════════════════════════════════════════╝
-
-class AddCalendarModal(discord.ui.Modal):
-    def __init__(self, bot, guild_id):
-        super().__init__(title="Add Calendar")
-        self.bot = bot
-        self.guild_id = guild_id
-        self.calendar_input = discord.ui.TextInput(
-            label="Calendar ID",
-            placeholder="Enter the calendar ID",
-            style=discord.TextInputStyle.short,
-            required=True
-        )
-        self.add_item(self.calendar_input)
-
-    async def callback(self, interaction: discord.Interaction):
-        calendar_input = self.calendar_input.value
-        detected_type = detect_calendar_type(calendar_input)
-        if detected_type is None:
-            await interaction.response.send_message("Invalid calendar ID. Please try again.", ephemeral=True)
-            return
-        
-        calendar_data = {
-            'type': detected_type,
-            'id': calendar_input,
-            'user_id': interaction.user.id
-        }
-        success, message = add_calendar(self.guild_id, calendar_data)
-        if success:
-            await interaction.response.send_message("Calendar added successfully!", ephemeral=True)
-        else:
-            await interaction.response.send_message(message, ephemeral=True)
