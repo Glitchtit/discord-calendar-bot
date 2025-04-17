@@ -20,6 +20,13 @@ def get_color_for_tag(tag: str) -> int:
         return 0x95a5a6
     return TAG_COLORS.get(tag, 0x95a5a6)
 
+def get_events_file(server_id: int) -> str:
+    """Return the path to the event snapshot file for a server."""
+    # Use a consistent path for event snapshots (events.json) per server
+    base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "data", "servers", str(server_id))
+    os.makedirs(base_dir, exist_ok=True)
+    return os.path.join(base_dir, "events.json")
+
 def load_calendars_from_server_configs():
     global GROUPED_CALENDARS
     GROUPED_CALENDARS.clear()
@@ -57,7 +64,8 @@ def load_calendars_from_server_configs():
             raw_user_id = calendar.get("user_id")
             if raw_user_id is None:
                 missing_user_id_count += 1
-                raw_user_id = server_id
+                logger.warning(f"Calendar '{calendar.get('name', 'Unnamed Calendar')}' in server {server_id} is missing user_id. Defaulting to '1' (everyone).")
+                raw_user_id = "1"
                 calendar["user_id"] = str(raw_user_id)
                 save_server_config(server_id, config)
             user_id = str(raw_user_id)
@@ -71,5 +79,11 @@ def load_calendars_from_server_configs():
                 "name": calendar.get("name", "Unnamed Calendar"),
                 "user_id": user_id
             })
+    # --- NEW: Add shared (everyone) calendars to all users except '1' ---
+    shared = GROUPED_CALENDARS.get("1", [])
+    if shared:
+        for user_id in list(GROUPED_CALENDARS.keys()):
+            if user_id != "1":
+                GROUPED_CALENDARS[user_id].extend(shared)
     register_calendar_reload_callback(load_calendars_from_server_configs)
     return GROUPED_CALENDARS
