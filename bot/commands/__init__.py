@@ -1,4 +1,5 @@
-from .utilities import check_channel_permissions, send_embed as util_send_embed, post_tagged_events, post_tagged_week # Import post_tagged functions
+from .utilities import check_channel_permissions, send_embed as util_send_embed
+from ..commands import post_tagged_events, post_tagged_week # Import post_tagged functions from wrapper module
 
 # Import handlers directly from their modules
 from .agenda import handle_agenda_command
