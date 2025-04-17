@@ -1,6 +1,6 @@
 import discord
-from discord.ui import View, Modal, Button, Select, TextInput
-from config.server_config import add_calendar, remove_calendar, load_server_config  # Import all server config functions from server_config
+from discord.ui import View, Modal, Button, Select, TextInput, ChannelSelect # Added ChannelSelect
+from config.server_config import add_calendar, remove_calendar, load_server_config, set_announcement_channel, get_announcement_channel_id # Added set/get announcement channel
 from utils.logging import logger
 from bot.events import reinitialize_events
 from utils.validators import detect_calendar_type
@@ -169,12 +169,50 @@ class ConfirmRemovalView(View):
         await interaction.response.send_message("Calendar removal cancelled.", ephemeral=True)
         self.stop()
 
+# View for selecting the announcement channel
+class AnnouncementChannelView(View):
+    """View for selecting the announcement channel."""
+    def __init__(self, bot, guild_id):
+        super().__init__(timeout=180)
+        self.bot = bot
+        self.guild_id = guild_id
+
+        # Create the channel select dropdown
+        self.channel_select = ChannelSelect(
+            placeholder="Select the announcement channel...",
+            min_values=1,
+            max_values=1,
+            channel_types=[discord.ChannelType.text] # Only allow text channels
+        )
+        self.channel_select.callback = self.select_callback
+        self.add_item(self.channel_select)
+
+    async def select_callback(self, interaction: discord.Interaction):
+        """Handle channel selection."""
+        selected_channel = interaction.data["values"][0] # Channel ID as string
+        channel_id = int(selected_channel)
+
+        # Save the channel ID to server config
+        success, message = set_announcement_channel(self.guild_id, channel_id)
+
+        if success:
+            channel = self.bot.get_channel(channel_id)
+            channel_mention = channel.mention if channel else f"ID: {channel_id}"
+            await interaction.response.send_message(f"✅ Announcement channel set to {channel_mention}.", ephemeral=True)
+            logger.info(f"Announcement channel for guild {self.guild_id} set to {channel_id}")
+        else:
+            await interaction.response.send_message(f"❌ {message}", ephemeral=True)
+            logger.error(f"Failed to set announcement channel for guild {self.guild_id}: {message}")
+        self.stop() # Stop the view after selection
+
 class CalendarSetupView(View):
     """Main view for the calendar setup wizard."""
     def __init__(self, bot, guild_id):
         super().__init__(timeout=300)
         self.bot = bot
         self.guild_id = guild_id
+        # Add button to set announcement channel dynamically
+        self.update_announcement_button()
 
     async def on_timeout(self):
         logger.info(f"CalendarSetupView for guild {self.guild_id} timed out.")
@@ -182,6 +220,54 @@ class CalendarSetupView(View):
         #await self.bot.get_guild(self.guild_id).system_channel.send(
         #    "The calendar setup session has timed out. Please restart the setup process."
         #)
+
+    def update_announcement_button(self):
+        """Adds or updates the announcement channel button based on current config."""
+        # Remove existing button if it exists
+        for item in self.children[:]: # Iterate over a copy
+            if isinstance(item, Button) and item.custom_id == "set_announcement_channel_button":
+                self.remove_item(item)
+
+        # Get current channel ID
+        current_channel_id = get_announcement_channel_id(self.guild_id)
+        channel = self.bot.get_channel(current_channel_id) if current_channel_id else None
+        
+        button_label = "Set Announcement Channel"
+        button_style = discord.ButtonStyle.secondary
+        if channel:
+            button_label = f"Announcements: #{channel.name}"
+            button_style = discord.ButtonStyle.success
+        elif current_channel_id: # ID exists but channel not found (maybe deleted?)
+             button_label = f"Announcements: ID {current_channel_id} (Not Found)"
+             button_style = discord.ButtonStyle.danger
+
+
+        announcement_button = Button(
+            label=button_label,
+            style=button_style,
+            emoji="📢",
+            custom_id="set_announcement_channel_button" # Add custom_id for identification
+        )
+        announcement_button.callback = self.set_announcement_channel_button
+        # Insert the button before the 'List Calendars' button if possible, otherwise append
+        list_button_index = -1
+        for i, item in enumerate(self.children):
+             if isinstance(item, Button) and item.label == "List Calendars":
+                 list_button_index = i
+                 break
+        if list_button_index != -1:
+             self.add_item(announcement_button)
+             # Move button before list button - requires rebuilding items list
+             items = self.children[:] # Copy items
+             self.clear_items()
+             for i, item in enumerate(items):
+                 if i == list_button_index:
+                     self.add_item(announcement_button) # Add announcement button first
+                 if item.custom_id != "set_announcement_channel_button": # Avoid adding it twice
+                    self.add_item(item) # Add original item
+        else:
+             self.add_item(announcement_button) # Append if list button not found
+
 
     @discord.ui.button(label="Add Calendar", style=discord.ButtonStyle.primary, emoji="➕")
     async def add_calendar_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -223,6 +309,22 @@ class CalendarSetupView(View):
         for cal in calendars:
             lines.append(f"- {cal.get('name', 'Unnamed Calendar')} (ID: {cal.get('id', 'unknown')})")
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+    # Callback for the new announcement channel button
+    async def set_announcement_channel_button(self, interaction: discord.Interaction):
+        """Callback for the 'Set Announcement Channel' button."""
+        logger.info(f"User {interaction.user.id} clicked 'Set Announcement Channel' in guild {self.guild_id}.")
+        # Show the channel selection view
+        view = AnnouncementChannelView(self.bot, self.guild_id)
+        await interaction.response.send_message("Please select the channel where announcements should be posted:", view=view, ephemeral=True)
+        
+        # Wait for the view to finish (optional, depends on desired UX)
+        await view.wait()
+        
+        # Update the button label/style in the original setup view
+        self.update_announcement_button()
+        # We need to edit the original message to reflect the button change
+        await interaction.edit_original_response(view=self)
 
 class CalendarUserSelectView(View):
     """View for selecting users to assign a calendar to."""

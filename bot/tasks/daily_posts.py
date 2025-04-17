@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from utils.logging import logger
 from utils import get_today
 from bot.events import GROUPED_CALENDARS
-from config.server_config import get_all_server_ids, load_server_config
+from config.server_config import get_all_server_ids, load_server_config, get_announcement_channel_id
 from .health import TaskLock, update_task_health
 from .utilities import send_embed
 
@@ -86,20 +86,18 @@ async def post_todays_happenings(bot, server_id=None, include_greeting: bool = F
                 
                 # If server_id is specified, get the channel
                 if server_id:
-                    from config.server_config import load_server_config
-                    config = load_server_config(server_id)
-                    if config and config.get("announcement_channel_id"):
-                        channel_id = int(config.get("announcement_channel_id"))
+                    # Use the getter function
+                    channel_id = get_announcement_channel_id(server_id)
+                    if channel_id:
                         channel = bot.get_channel(channel_id)
                         if channel:
                             await post_greeting(bot, channel)
                 else:
                     # Try to post greeting to all configured announcement channels
-                    from config.server_config import get_all_server_ids, load_server_config
+                    # Use the getter function
                     for sid in get_all_server_ids():
-                        config = load_server_config(sid)
-                        if config and config.get("announcement_channel_id"):
-                            channel_id = int(config.get("announcement_channel_id"))
+                        channel_id = get_announcement_channel_id(sid)
+                        if channel_id:
                             channel = bot.get_channel(channel_id)
                             if channel:
                                 await post_greeting(bot, channel)
@@ -137,13 +135,13 @@ async def post_all_daily_events_to_channel(bot, date=None):
     try:
         # For each server, post events
         for server_id in get_all_server_ids():
-            config = load_server_config(server_id)
+            # Use the getter function
+            channel_id = get_announcement_channel_id(server_id)
             
             # Skip servers without announcement channel
-            if not config.get("announcement_channel_id"):
+            if not channel_id:
                 continue
                 
-            channel_id = int(config.get("announcement_channel_id"))
             channel = bot.get_channel(channel_id)
             if not channel:
                 logger.warning(f"Channel ID {channel_id} not found for server {server_id}")

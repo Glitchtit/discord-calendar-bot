@@ -8,6 +8,8 @@ from .utilities import send_embed
 from utils.logging import logger
 from utils import format_message_lines, get_monday_of_week
 from utils.markdown_formatter import format_weekly_message
+# Import the getter function
+from config.server_config import get_announcement_channel_id
 
 async def post_weekly_events(bot, user_id: str, monday: date, interaction_channel=None):
     try:
@@ -15,6 +17,12 @@ async def post_weekly_events(bot, user_id: str, monday: date, interaction_channe
         if not sources:
             return False
         
+        # Determine the server_id associated with this user_id/calendar group
+        # Assuming all calendars for a user_id belong to the same server for now
+        server_id = None
+        if sources:
+            server_id = sources[0].get("server_id")
+
         # Calculate Sunday (end of week) from the Monday
         sunday = monday + timedelta(days=6)
         
@@ -66,44 +74,37 @@ async def post_weekly_events(bot, user_id: str, monday: date, interaction_channe
             content = "@everyone"
             
         try:
-            # Find announcement channel from server configs
-            from config.server_config import get_all_server_ids, load_server_config
+            # Get the announcement channel ID using the server_id
+            channel_id = None
+            if server_id:
+                channel_id = get_announcement_channel_id(server_id)
             
-            channel_found = False
+            channel = bot.get_channel(channel_id) if channel_id else None
+            channel_found = bool(channel)
+
+            if channel:
+                logger.info(f"Found announcement channel: {channel.name} (ID: {channel_id}) for server {server_id}")
+                await channel.send(content=message if not content else f"{content}\n{message}")
+                logger.info(f"Sent weekly calendar update to channel {channel.name}")
+                return True
+            else:
+                logger.debug(f"No announcement channel configured or found for server {server_id}")
             
-            # First try to find the channel from server configs
-            server_ids = get_all_server_ids()
-            logger.info(f"Checking {len(server_ids)} servers for announcement channels")
-            
-            for server_id in server_ids:
-                config = load_server_config(server_id)
-                if config and config.get("announcement_channel_id"):
-                    channel_id = int(config.get("announcement_channel_id"))
-                    channel = bot.get_channel(channel_id)
-                    if channel:
-                        logger.info(f"Found announcement channel: {channel.name} (ID: {channel_id})")
-                        await channel.send(content=message if not content else f"{content}\n{message}")
-                        logger.info(f"Sent weekly calendar update to channel {channel.name}")
-                        channel_found = True
-                        return True
-                else:
-                    logger.debug(f"Server {server_id} has no announcement_channel_id configured")
-            
-            # If no channel found from configs, try the interaction channel as fallback
+            # If no channel found from config, try the interaction channel as fallback
             if not channel_found and interaction_channel:
-                logger.info(f"Using interaction channel as fallback: {interaction_channel.name}")
+                logger.info(f"Using interaction channel {interaction_channel.name} as fallback for server {server_id}")
                 await interaction_channel.send(content=message if not content else f"{content}\n{message}")
                 return True
             
             if not channel_found:
-                logger.error("Could not find announcement channel to send message")
+                logger.error(f"Could not find announcement channel for server {server_id} and no fallback interaction channel provided.")
                 return False
             
         except Exception as e:
-            logger.error(f"Error sending message directly: {e}")
+            logger.error(f"Error sending weekly message for server {server_id}: {e}")
             return False
     except Exception as e:
-        logger.error(f"Weekly post error: {e}")
+        logger.error(f"Weekly post error for user {user_id}: {e}")
         return False
 
 async def handle_weekly_command(interaction: Interaction):

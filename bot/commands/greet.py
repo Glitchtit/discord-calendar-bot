@@ -2,6 +2,7 @@ import discord
 from discord import Interaction
 from utils.logging import logger
 from utils.ai_helpers import generate_themed_greeting
+from config.server_config import get_announcement_channel_id
 
 async def post_greeting(bot, channel):
     """Post a greeting to the specified channel"""
@@ -17,14 +18,9 @@ async def post_greeting(bot, channel):
 async def handle_greet_command(interaction: Interaction):
     await interaction.response.defer()
     try:
-        # Get the announcement channel
-        from config.server_config import load_server_config
-        config = load_server_config(str(interaction.guild_id))
-        
-        channel = None
-        if config and config.get("announcement_channel_id"):
-            channel_id = int(config.get("announcement_channel_id"))
-            channel = interaction.client.get_channel(channel_id)
+        # Get the announcement channel using the getter
+        channel_id = get_announcement_channel_id(interaction.guild_id)
+        channel = interaction.client.get_channel(channel_id) if channel_id else None
         
         # Fall back to the current channel if necessary
         if not channel:

@@ -76,11 +76,6 @@ Discord bot token — required for authentication with the Discord API.
 If unset, the bot will fail at startup.
 """
 
-ANNOUNCEMENT_CHANNEL_ID: int = get_int_env("ANNOUNCEMENT_CHANNEL_ID", 0)
-"""
-Numeric channel ID where announcements and embeds will be posted.
-"""
-
 OPENAI_API_KEY: Optional[str] = get_str_env("OPENAI_API_KEY", None)
 """
 OpenAI API key for generating greeting text and images. 

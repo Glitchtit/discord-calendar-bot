@@ -11,7 +11,6 @@ from typing import Optional
 from bot.core import bot
 from utils.environ import (
     DISCORD_BOT_TOKEN, 
-    ANNOUNCEMENT_CHANNEL_ID, 
     GOOGLE_APPLICATION_CREDENTIALS
 )
 from utils.logging import logger, get_log_file_location

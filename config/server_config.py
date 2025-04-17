@@ -8,7 +8,7 @@ Configurations are stored in JSON files under the /data/servers directory.
 import os
 import json
 import asyncio
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional
 from utils.logging import logger
 from utils.server_utils import (
     get_config_path,
@@ -127,6 +127,22 @@ def remove_calendar(server_id: int, calendar_id: str) -> Tuple[bool, str]:
     
     logger.error(f"Failed to save config after removing calendar {calendar_id} from server {server_id}")
     return False, "Failed to save updated config."
+
+def set_announcement_channel(server_id: int, channel_id: int) -> Tuple[bool, str]:
+    """Set the announcement channel ID for the server."""
+    config = load_server_config(server_id)
+    config["announcement_channel_id"] = channel_id
+    if save_server_config(server_id, config):
+        logger.info(f"Set announcement channel for server {server_id} to {channel_id}")
+        return True, "Announcement channel updated successfully."
+    else:
+        logger.error(f"Failed to save announcement channel for server {server_id}")
+        return False, "Failed to save configuration."
+
+def get_announcement_channel_id(server_id: int) -> Optional[int]:
+    """Get the announcement channel ID for the server."""
+    config = load_server_config(server_id)
+    return config.get("announcement_channel_id")
 
 def load_admins(server_id: int) -> List[str]:
     """Load the list of admin user IDs for a server."""
