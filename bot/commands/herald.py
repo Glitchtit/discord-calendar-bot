@@ -11,6 +11,26 @@ from .utilities import _retry_discord_operation, check_channel_permissions, send
 from utils.logging import logger
 from utils.markdown_formatter import format_daily_message, format_weekly_message
 
+# Helper function to send long messages in chunks
+async def send_long_message(interaction, message, ephemeral=True):
+    """Send a message in chunks if it exceeds Discord's 2000 character limit."""
+    max_length = 2000
+    if len(message) <= max_length:
+        await interaction.followup.send(message, ephemeral=ephemeral)
+        return
+    # Split by lines, try to keep formatting
+    lines = message.split('\n')
+    chunk = ''
+    for line in lines:
+        if len(chunk) + len(line) + 1 > max_length:
+            await interaction.followup.send(chunk, ephemeral=ephemeral)
+            chunk = ''
+        if chunk:
+            chunk += '\n'
+        chunk += line
+    if chunk:
+        await interaction.followup.send(chunk, ephemeral=ephemeral)
+
 # Herald command implementations
 async def post_tagged_events(interaction: Interaction, day: date):
     try:
@@ -87,7 +107,7 @@ async def handle_herald_command(interaction: Interaction):
         
         # Format and send the daily events message
         daily_message = format_daily_message(user_id, daily_events, today)
-        await interaction.followup.send(daily_message, ephemeral=True)
+        await send_long_message(interaction, daily_message, ephemeral=True)
         
         # Get weekly events
         weekly_events = defaultdict(list)
@@ -107,7 +127,7 @@ async def handle_herald_command(interaction: Interaction):
         
         # Format and send the weekly events message
         weekly_message = format_weekly_message(user_id, weekly_events, monday)
-        await interaction.followup.send(weekly_message, ephemeral=True)
+        await send_long_message(interaction, weekly_message, ephemeral=True)
             
     except Exception as e:
         logger.exception(f"Herald command error: {e}")
