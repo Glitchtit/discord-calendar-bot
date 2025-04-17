@@ -1,5 +1,6 @@
 from .utilities import check_channel_permissions  # Utility import
-from ..command_router import send_embed, post_tagged_events, post_tagged_week  # Import central router functions
+# Removed import of post_tagged_events and post_tagged_week to avoid circular import
+from ..command_router import send_embed  # Import only send_embed from central router
 
 # Import handlers directly from their modules
 from .agenda import handle_agenda_command
@@ -27,8 +28,7 @@ __all__ = [
     'handle_status_command',
     'handle_weekly_command',
     'handle_who_command',
-    'post_tagged_events',
-    'post_tagged_week',
+    # Removed 'post_tagged_events' and 'post_tagged_week' from __all__
     'check_channel_permissions',
     'send_embed',  # Export central router send_embed
 ]
