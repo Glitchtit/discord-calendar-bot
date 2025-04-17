@@ -17,7 +17,24 @@ from utils.logging import logger
 
 # Define a function to import modules dynamically to avoid circular references
 def import_command_module(module_name):
-    return importlib.import_module(f"bot.commands.{module_name}")
+    # Construct the full module path
+    full_module_path = f"bot.commands.{module_name}"
+    
+    # Check if the module is already imported
+    if full_module_path in sys.modules:
+        # Reload the module if it's already imported (useful for development/reloading)
+        # return importlib.reload(sys.modules[full_module_path])
+        # For production, just return the existing module
+        return sys.modules[full_module_path]
+        
+    # Dynamically import the module
+    try:
+        module = importlib.import_module(full_module_path)
+        logger.debug(f"Dynamically imported module: {full_module_path}")
+        return module
+    except ImportError as e:
+        logger.error(f"Failed to import command module '{module_name}': {e}")
+        raise # Re-raise the exception to indicate failure
 
 async def setup_commands(bot: discord.Client):
     """Register all slash commands with the Discord bot"""
@@ -33,6 +50,8 @@ async def setup_commands(bot: discord.Client):
         daily = import_command_module("daily")
         setup = import_command_module("setup")
         status = import_command_module("status")
+        weekly = import_command_module("weekly") # Added weekly import
+        clear = import_command_module("clear") # Added clear import
         
         # Register all commands from their respective modules
         await herald.register(bot)
@@ -43,6 +62,8 @@ async def setup_commands(bot: discord.Client):
         await daily.register(bot)
         await setup.register(bot)
         await status.register(bot)
+        await weekly.register(bot) # Added weekly registration
+        await clear.register(bot) # Added clear registration
         
         logger.info(f"Registered all command modules successfully")
     except Exception as e:
@@ -85,6 +106,10 @@ def handle_weekly_command(interaction):
     weekly = import_command_module("weekly")
     return weekly.handle_weekly_command(interaction)
 
+def handle_clear_command(interaction):
+    clear = import_command_module("clear")
+    return clear.handle_clear_command(interaction)
+
 # Add wrapper functions for post_tagged_events and post_tagged_week
 def post_tagged_events(interaction, day):
     herald = import_command_module("herald")
@@ -112,5 +137,6 @@ __all__ = [
     'send_embed',
     'post_tagged_events',
     'post_tagged_week',
-    'handle_weekly_command'
+    'handle_weekly_command',
+    'handle_clear_command'
 ]

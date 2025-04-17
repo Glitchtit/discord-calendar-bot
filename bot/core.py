@@ -41,8 +41,12 @@ from bot.commands import (
     handle_who_command,
     handle_daily_command,
     handle_setup_command,
-    handle_weekly_command  # Add this import
+    handle_status_command, # Added status handler
+    handle_weekly_command, # Added weekly handler
+    handle_clear_command # Added clear handler
 )
+from bot.tasks import start_scheduled_tasks
+from config.server_config import load_all_server_configs, get_announcement_channel_id # Added get_announcement_channel_id
 # Removed unused imports
 from utils.validators import detect_calendar_type
 from config.server_config import (
@@ -283,6 +287,31 @@ async def setup_command(interaction: discord.Interaction):
 )
 async def weekly_command(interaction: discord.Interaction):
     await handle_weekly_command(interaction)  # Use the imported handler directly
+
+
+# ╔═════════════════════════════════════════════════════════════╗
+# 📜 /clear
+# ║ [Admin] Clears all messages in the announcement channel.    ║
+# ╚═════════════════════════════════════════════════════════════╝
+@bot.tree.command(
+    name="clear",
+    description="[Admin] Clears all messages in the announcement channel."
+)
+@app_commands.checks.has_permissions(administrator=True) # Redundant check, but good practice
+async def clear_command(interaction: discord.Interaction):
+    await handle_clear_command(interaction) # Delegate to the handler in commands.py
+
+
+# ╔═════════════════════════════════════════════════════════════╗
+# 📜 /status
+# ║ View calendar health status and system metrics.             ║
+# ╚═════════════════════════════════════════════════════════════╝
+@bot.tree.command(
+    name="status",
+    description="View calendar health status and system metrics"
+)
+async def status_command(interaction: discord.Interaction):
+    await handle_status_command(interaction) # Delegate to the handler in commands.py
 
 
 # ╔═════════════════════════════════════════════════════════════╗
