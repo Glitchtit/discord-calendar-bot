@@ -176,6 +176,7 @@ class AnnouncementChannelView(View):
         super().__init__(timeout=180)
         self.bot = bot
         self.guild_id = guild_id
+        logger.debug(f"Initializing AnnouncementChannelView for guild {self.guild_id}") # Added debug log
 
         # Create the channel select dropdown
         self.channel_select = ChannelSelect(
@@ -191,6 +192,7 @@ class AnnouncementChannelView(View):
         """Handle channel selection."""
         selected_channel = interaction.data["values"][0] # Channel ID as string
         channel_id = int(selected_channel)
+        logger.debug(f"Channel selected in AnnouncementChannelView for guild {self.guild_id}: {channel_id}") # Added debug log
 
         # Save the channel ID to server config
         success, message = set_announcement_channel(self.guild_id, channel_id)
@@ -231,7 +233,8 @@ class CalendarSetupView(View):
         # Get current channel ID
         current_channel_id = get_announcement_channel_id(self.guild_id)
         channel = self.bot.get_channel(current_channel_id) if current_channel_id else None
-        
+        logger.debug(f"Updating announcement button for guild {self.guild_id}. Current channel ID: {current_channel_id}") # Added debug log
+
         button_label = "Set Announcement Channel"
         button_style = discord.ButtonStyle.secondary
         if channel:
@@ -240,6 +243,7 @@ class CalendarSetupView(View):
         elif current_channel_id: # ID exists but channel not found (maybe deleted?)
              button_label = f"Announcements: ID {current_channel_id} (Not Found)"
              button_style = discord.ButtonStyle.danger
+        logger.debug(f"Announcement button label set to: '{button_label}', style: {button_style}") # Added debug log
 
 
         announcement_button = Button(
@@ -320,11 +324,18 @@ class CalendarSetupView(View):
         
         # Wait for the view to finish (optional, depends on desired UX)
         await view.wait()
+        logger.debug(f"AnnouncementChannelView finished for guild {self.guild_id}. Updating setup view button.") # Added debug log
         
         # Update the button label/style in the original setup view
         self.update_announcement_button()
         # We need to edit the original message to reflect the button change
-        await interaction.edit_original_response(view=self)
+        try:
+            await interaction.edit_original_response(view=self)
+            logger.debug(f"Successfully updated original setup message for guild {self.guild_id} after setting announcement channel.") # Added debug log
+        except discord.NotFound:
+             logger.warning(f"Original interaction message not found for guild {self.guild_id} when updating announcement button. It might have expired or been deleted.")
+        except Exception as e:
+             logger.error(f"Error editing original setup message for guild {self.guild_id}: {e}")
 
 class CalendarUserSelectView(View):
     """View for selecting users to assign a calendar to."""

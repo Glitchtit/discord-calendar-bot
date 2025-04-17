@@ -142,7 +142,9 @@ def set_announcement_channel(server_id: int, channel_id: int) -> Tuple[bool, str
 def get_announcement_channel_id(server_id: int) -> Optional[int]:
     """Get the announcement channel ID for the server."""
     config = load_server_config(server_id)
-    return config.get("announcement_channel_id")
+    channel_id = config.get("announcement_channel_id")
+    logger.debug(f"Retrieved announcement_channel_id for server {server_id}: {channel_id}") # Added debug log
+    return channel_id
 
 def load_admins(server_id: int) -> List[str]:
     """Load the list of admin user IDs for a server."""
