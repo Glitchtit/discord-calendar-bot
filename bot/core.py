@@ -26,7 +26,7 @@ from bot.events import (
     TAG_COLORS,
     get_events,
     get_service_account_email,
-    load_calendars_from_server_configs,
+    load_calendars_from_server_configs, # <--- Import added
     reinitialize_events
 )
 from ai import generate_greeting, generate_image
@@ -93,6 +93,12 @@ async def on_ready():
         from utils.notifications import register_discord_client
         register_discord_client(bot)
 
+        # --- Load calendar configurations FIRST ---
+        logger.info("Loading calendar configurations...")
+        load_calendars_from_server_configs() # <--- Added call
+        logger.info(f"Loaded {len(GROUPED_CALENDARS)} user/tag groups initially.")
+        # -----------------------------------------
+
         # Log superadmin for each server
         for server_id in get_all_server_ids():
             config = load_server_config(server_id)
@@ -115,10 +121,10 @@ async def on_ready():
         synced = await bot.tree.sync()
         logger.info(f"Synced {len(synced)} commands.")
 
-        # Initialize calendar configurations
+        # Initialize calendar configurations (now uses pre-loaded data)
         await resolve_tag_mappings()
 
-        # Initialize event snapshots
+        # Initialize event snapshots (now uses pre-loaded data)
         from bot.tasks import initialize_event_snapshots
         await initialize_event_snapshots()
 
@@ -309,7 +315,8 @@ async def autocomplete_agenda_input(
         ][:25]
     
     # Return top suggestions if no input
-    return [app_commands.Choice(name=suggestion, value=suggestion) for suggestion in suggestions[:25]]
+    # FIX: Iterate over single items in suggestions, use item for name/value
+    return [app_commands.Choice(name=s, value=s) for s in suggestions[:25]]
 
 async def autocomplete_agenda_target(
     interaction: discord.Interaction,
