@@ -48,16 +48,12 @@ def load_calendars_from_server_configs():
             except Exception as e:
                 logger.error(f"Error checking Docker directory: {e}")
     for server_id in server_ids:
-        docker_path = f"/data/servers/{server_id}/config.json"
-        config = None
-        if os.path.exists(docker_path):
-            try:
-                with open(docker_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-            except Exception as e:
-                logger.warning(f"Error loading from Docker path: {e}")
-        if config is None:
-            config = load_server_config(server_id)
+        # SIMPLIFIED: Directly load using the function that handles path checking
+        config = load_server_config(server_id)
+        if not config: # Skip if config loading failed or returned empty
+            logger.warning(f"Could not load or found empty config for server {server_id}. Skipping.")
+            continue
+
         calendars = config.get("calendars", [])
         for calendar in calendars:
             # Ensure user_id is stored as string
