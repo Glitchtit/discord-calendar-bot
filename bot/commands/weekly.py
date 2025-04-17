@@ -39,7 +39,7 @@ async def post_weekly_events(bot, user_id: str, monday: date, interaction_channe
                 events_by_calendar[calendar_name] = calendar_events
         
         # Format the message with Markdown
-        message = format_weekly_message(user_id, events_by_calendar, monday, is_public=True)
+        message = format_weekly_message(user_id, events_by_calendar, monday)
         
         # Check if this is a server-wide calendar (user_id = "1")
         is_server_wide = user_id == "1"
