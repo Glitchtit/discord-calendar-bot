@@ -6,6 +6,7 @@ import discord
 from discord import Interaction, app_commands
 from discord.ext import commands
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 from utils.logging import logger
 from config.server_config import get_announcement_channel_id
@@ -52,15 +53,32 @@ async def handle_clear_command(interaction: Interaction):
         async for msg in channel.history(limit=None):
             messages.append(msg)
 
-        # Delete in 100‐message batches with a small pause to respect rate limits
+        # Threshold for bulk delete (msg younger than 14 days)
+        threshold = datetime.now(timezone.utc) - timedelta(days=14)
         total_deleted = 0
+
+        # Process in 100‑message chunks
         for chunk in (messages[i:i+100] for i in range(0, len(messages), 100)):
-            try:
-                await channel.delete_messages(chunk)
-                total_deleted += len(chunk)
-            except discord.HTTPException as e:
-                logger.error(f"HTTP error deleting messages chunk: {e}")
-            await asyncio.sleep(1)  # pause between batches
+            # split into fresh vs old
+            fresh = [m for m in chunk if m.created_at > threshold]
+            old   = [m for m in chunk if m.created_at <= threshold]
+
+            if fresh:
+                try:
+                    await channel.delete_messages(fresh)
+                    total_deleted += len(fresh)
+                except discord.HTTPException as e:
+                    logger.error(f"HTTP error bulk deleting fresh msgs: {e}")
+
+            for m in old:
+                try:
+                    await m.delete()
+                    total_deleted += 1
+                except discord.HTTPException as e:
+                    logger.error(f"HTTP error deleting old msg {m.id}: {e}")
+                await asyncio.sleep(1)  # small pause per delete
+
+            await asyncio.sleep(1)  # pause between chunks
 
         await interaction.followup.send(
             f"✅ Successfully deleted {total_deleted} messages from {channel.mention}.",
