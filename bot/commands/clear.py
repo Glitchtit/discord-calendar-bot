@@ -5,6 +5,7 @@ clear.py: Admin command to clear messages in the announcement channel.
 import discord
 from discord import Interaction, app_commands
 from discord.ext import commands
+import asyncio
 
 from utils.logging import logger
 from config.server_config import get_announcement_channel_id
@@ -45,11 +46,27 @@ async def handle_clear_command(interaction: Interaction):
 
     try:
         logger.info(f"Admin {interaction.user} ({interaction.user.id}) initiated channel clear for #{channel.name} ({channel.id}) in server {server_id}")
-        # Purge messages. Limit can be adjusted if needed, but purging all is the goal.
-        # Note: purge might be slow in very active channels.
-        deleted = await channel.purge(limit=None) # Purge all messages possible
-        await interaction.followup.send(f"✅ Successfully deleted {len(deleted)} messages from {channel.mention}.", ephemeral=True)
-        logger.info(f"Successfully deleted {len(deleted)} messages from channel {channel.id}")
+
+        # Fetch all messages
+        messages = []
+        async for msg in channel.history(limit=None):
+            messages.append(msg)
+
+        # Delete in 100‐message batches with a small pause to respect rate limits
+        total_deleted = 0
+        for chunk in (messages[i:i+100] for i in range(0, len(messages), 100)):
+            try:
+                await channel.delete_messages(chunk)
+                total_deleted += len(chunk)
+            except discord.HTTPException as e:
+                logger.error(f"HTTP error deleting messages chunk: {e}")
+            await asyncio.sleep(1)  # pause between batches
+
+        await interaction.followup.send(
+            f"✅ Successfully deleted {total_deleted} messages from {channel.mention}.",
+            ephemeral=True
+        )
+        logger.info(f"Successfully deleted {total_deleted} messages from channel {channel.id}")
 
     except discord.Forbidden:
         logger.warning(f"Missing 'Manage Messages' permission in channel {channel.id} for server {server_id}")
