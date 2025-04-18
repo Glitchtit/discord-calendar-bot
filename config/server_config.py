@@ -309,3 +309,25 @@ def is_superadmin(server_id: int, user_id: str) -> bool:
     """
     config = load_server_config(server_id)
     return config.get("owner_id") == user_id
+
+def load_all_server_configs() -> Dict[int, Dict[str, Any]]:
+    """
+    Load configurations for all servers.
+    
+    Returns:
+        Dict mapping server IDs to their respective configurations
+    """
+    server_configs = {}
+    server_ids = get_all_server_ids()
+    
+    logger.info(f"Loading configurations for {len(server_ids)} servers")
+    for server_id in server_ids:
+        try:
+            config = load_server_config(server_id)
+            if config:
+                server_configs[server_id] = config
+        except Exception as e:
+            logger.error(f"Error loading configuration for server {server_id}: {e}")
+    
+    logger.info(f"Successfully loaded configurations for {len(server_configs)} servers")
+    return server_configs
