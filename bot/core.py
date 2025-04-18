@@ -45,7 +45,7 @@ from bot.commands import (
     handle_weekly_command, # Added weekly handler
     handle_clear_command # Added clear handler
 )
-from bot.tasks import start_scheduled_tasks
+from bot.tasks import start_all_tasks  # Changed from start_scheduled_tasks
 from config.server_config import load_all_server_configs, get_announcement_channel_id # Added get_announcement_channel_id
 # Removed unused imports
 from utils.validators import detect_calendar_type
