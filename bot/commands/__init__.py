@@ -1,8 +1,10 @@
-from .utilities import check_channel_permissions  # Utility import
-# Removed import of post_tagged_events and post_tagged_week to avoid circular import
-from ..command_router import send_embed  # Import only send_embed from central router
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                    CALENDAR BOT COMMANDS PACKAGE INIT                    ║
+# ║    Exports command handlers and shared utilities for the bot             ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
 
-# Import handlers directly from their modules
+from .utilities import check_channel_permissions
+from ..command_router import send_embed
 from .agenda import handle_agenda_command
 from .clear import handle_clear_command
 from .daily import handle_daily_command
@@ -13,10 +15,7 @@ from .setup import handle_setup_command
 from .status import handle_status_command
 from .weekly import handle_weekly_command
 from .who import handle_who_command
-# Assuming core_send_embed was intended to be the utility one or is defined elsewhere; removing ambiguous import for now.
-# If core_send_embed is needed and defined elsewhere, it should be imported explicitly.
 
-# Re-export them
 __all__ = [
     'handle_agenda_command',
     'handle_clear_command',
@@ -31,5 +30,5 @@ __all__ = [
     'post_tagged_events',
     'post_tagged_week',
     'check_channel_permissions',
-    'send_embed',  # Export central router send_embed
+    'send_embed',
 ]
