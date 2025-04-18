@@ -6,7 +6,7 @@ from bot.events import GROUPED_CALENDARS, get_events
 from .utilities import send_embed
 from utils.logging import logger
 from utils import format_message_lines
-from utils.markdown_formatter import format_daily_message
+from utils.message_formatter import format_daily_message
 
 async def post_daily_events(bot, user_id: str, day: date, interaction_channel=None, server_id=None):
     """

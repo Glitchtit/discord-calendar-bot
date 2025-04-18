@@ -10,7 +10,7 @@ from utils import format_message_lines
 from utils.timezone_utils import get_server_timezone
 from utils.server_utils import get_server_config
 from .utilities import _retry_discord_operation
-from utils.markdown_formatter import format_agenda_message
+from utils.message_formatter import format_agenda_message
 
 async def handle_agenda_command(interaction: Interaction, date_str: str):
     await interaction.response.defer(ephemeral=True)

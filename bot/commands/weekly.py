@@ -7,7 +7,7 @@ from bot.events import GROUPED_CALENDARS, get_events
 from .utilities import send_embed
 from utils.logging import logger
 from utils import format_message_lines, get_monday_of_week
-from utils.markdown_formatter import format_weekly_message
+from utils.message_formatter import format_weekly_message
 # Import the getter function
 from config.server_config import get_announcement_channel_id
 from utils import split_message_by_lines # Import the helper

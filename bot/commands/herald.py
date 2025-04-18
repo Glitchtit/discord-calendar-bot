@@ -9,7 +9,7 @@ from bot.events import GROUPED_CALENDARS, TAG_NAMES, get_events
 from utils import format_message_lines, get_today, get_monday_of_week, format_event
 from .utilities import _retry_discord_operation, check_channel_permissions, send_embed
 from utils.logging import logger
-from utils.markdown_formatter import format_daily_message, format_weekly_message
+from utils.message_formatter import format_daily_message, format_weekly_message
 
 # Helper function to send long messages in chunks
 async def send_long_message(interaction, message, ephemeral=True):

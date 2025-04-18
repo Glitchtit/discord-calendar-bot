@@ -8,7 +8,7 @@ from .server_utils import (
 )
 
 # Add the import for our new module to make it available
-from .markdown_formatter import (
+from .message_formatter import (
     format_daily_message,
     format_weekly_message,
     format_agenda_message,
