@@ -188,7 +188,7 @@ async def on_resumed():
         tasks_status = await check_tasks_running()
         if not tasks_status:
             logger.warning("Some scheduled tasks were not running. Restarting tasks...")
-            await start_all_tasks()
+            start_all_tasks(bot)
         
         # Refresh tag mappings to ensure they're up to date
         await resolve_tag_mappings()
