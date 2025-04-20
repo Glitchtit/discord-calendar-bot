@@ -18,6 +18,14 @@ from utils.rate_limiter import CALENDAR_API_LIMITER, EVENT_LIST_LIMITER
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ STATUS COMMAND HANDLER                                                    ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- handle_status_command ---
+# The core logic for the /status slash command (Admin only).
+# Checks for administrator permissions.
+# Gathers system, calendar, API, and cache information using helper functions.
+# Formats the information into a Discord embed and sends it as an ephemeral response.
+# Args:
+#     interaction: The discord.Interaction object from the command invocation.
 async def handle_status_command(interaction: Interaction):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message(
@@ -69,6 +77,10 @@ async def handle_status_command(interaction: Interaction):
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ STATUS DATA HELPERS                                                       ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- get_system_info ---
+# Retrieves system-level information like OS, Python version, uptime, CPU, and memory usage.
+# Returns: A dictionary containing system information key-value pairs.
 def get_system_info() -> Dict[str, str]:
     boot_time = datetime.fromtimestamp(psutil.boot_time())
     uptime = datetime.now() - boot_time
@@ -92,6 +104,10 @@ def get_system_info() -> Dict[str, str]:
         "Bot Memory": f"{process_memory:.1f}MB"
     }
 
+# --- get_calendar_status ---
+# Retrieves statistics about the configured calendars (total, types, users, errors).
+# Reads data from the global `GROUPED_CALENDARS` dictionary.
+# Returns: A formatted string summarizing calendar status.
 def get_calendar_status() -> str:
     if not GROUPED_CALENDARS:
         return "No calendars configured."
@@ -124,6 +140,10 @@ def get_calendar_status() -> str:
         lines.append("**Calendar Status:** All calendars OK ✅")
     return "\n".join(lines)
 
+# --- get_api_status ---
+# Retrieves the current status of the rate limiters for calendar and event list API calls.
+# Reads data from the global `CALENDAR_API_LIMITER` and `EVENT_LIST_LIMITER` instances.
+# Returns: A formatted string showing current token counts vs maximums.
 def get_api_status() -> str:
     lines = []
     cal_tokens = CALENDAR_API_LIMITER.get_token_count()
@@ -132,6 +152,10 @@ def get_api_status() -> str:
     lines.append(f"**Event List Tokens:** {event_tokens:.1f}/{EVENT_LIST_LIMITER.max_tokens}")
     return "\n".join(lines)
 
+# --- get_cache_info ---
+# Retrieves statistics about the event and metadata caches (size, hit rate, hits, misses).
+# Calls the `get_stats()` method on the global `event_cache` and `metadata_cache` instances.
+# Returns: A formatted string summarizing cache status.
 def get_cache_info() -> str:
     event_stats = event_cache.get_stats()
     metadata_stats = metadata_cache.get_stats()
@@ -145,7 +169,18 @@ def get_cache_info() -> str:
     ]
     return "\n".join(lines)
 
+# --- register ---
+# Registers the /status slash command with the bot's command tree.
+# Args:
+#     bot: The discord.Client or discord.ext.commands.Bot instance.
 async def register(bot):
+    # --- status_command ---
+    # The actual slash command function invoked by Discord for /status.
+    # Calls `handle_status_command` to generate and send the status dashboard.
+    # Includes an optional (currently unused) `show_details` argument.
+    # Args:
+    #     interaction: The discord.Interaction object.
+    #     show_details: Boolean flag (currently unused) intended for detailed info.
     @bot.tree.command(name="status")
     @discord.app_commands.describe(
         show_details="Show detailed system information"

@@ -18,6 +18,14 @@ from utils.message_formatter import format_daily_message, format_weekly_message
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ LONG MESSAGE SENDING UTILITY                                              ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- send_long_message ---
+# Splits a long message string into chunks that fit within Discord's character limit (2000).
+# Sends each chunk as a separate follow-up message.
+# Args:
+#     interaction: The discord.Interaction to send follow-up messages to.
+#     message: The potentially long message string to send.
+#     ephemeral: Whether the messages should be ephemeral (default True).
 async def send_long_message(interaction, message, ephemeral=True):
     max_length = 2000
     if len(message) <= max_length:
@@ -36,8 +44,16 @@ async def send_long_message(interaction, message, ephemeral=True):
         await interaction.followup.send(chunk, ephemeral=ephemeral)
 
 # ╔════════════════════════════════════════════════════════════════════════════╗
-# ║ POST TAGGED EVENTS                                                        ║
+# ║ POST TAGGED EVENTS (Daily - Deprecated/Internal?)                         ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- post_tagged_events ---
+# Fetches and posts events for a specific user and day.
+# Seems similar to parts of handle_herald_command, potentially for specific day lookups.
+# Args:
+#     interaction: The discord.Interaction object.
+#     day: The date object for which to fetch events.
+# Returns: True if events were posted or no events found message sent, False on error.
 async def post_tagged_events(interaction: Interaction, day: date):
     try:
         user_id = str(interaction.user.id)
@@ -61,8 +77,15 @@ async def post_tagged_events(interaction: Interaction, day: date):
         return False
 
 # ╔════════════════════════════════════════════════════════════════════════════╗
-# ║ POST TAGGED WEEK                                                          ║
+# ║ POST TAGGED WEEK (Weekly - Deprecated/Internal?)                          ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- post_tagged_week ---
+# Fetches and posts events for a specific user for the week starting on `monday`.
+# Similar to parts of handle_herald_command, potentially for specific week lookups.
+# Args:
+#     interaction: The discord.Interaction object.
+#     monday: The date object representing the Monday of the week to fetch.
 async def post_tagged_week(interaction: Interaction, monday: date):
     try:
         user_id = str(interaction.user.id)
@@ -84,6 +107,14 @@ async def post_tagged_week(interaction: Interaction, monday: date):
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ HERALD COMMAND HANDLER                                                    ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- handle_herald_command ---
+# The core logic for the /herald slash command.
+# Fetches today's events and the rest of the week's events for the invoking user.
+# Formats both daily and weekly summaries using `format_daily_message` and `format_weekly_message`.
+# Sends the summaries as potentially multiple ephemeral messages using `send_long_message`.
+# Args:
+#     interaction: The discord.Interaction object from the command invocation.
 async def handle_herald_command(interaction: Interaction):
     await interaction.response.defer(ephemeral=True)
     try:
@@ -121,7 +152,17 @@ async def handle_herald_command(interaction: Interaction):
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ COMMAND REGISTRATION                                                      ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- register ---
+# Registers the /herald slash command with the bot's command tree.
+# Args:
+#     bot: The discord.Client instance to register the command with.
 async def register(bot: discord.Client):
+    # --- herald_command ---
+    # The actual slash command function invoked by Discord.
+    # Calls `handle_herald_command` to process the request.
+    # Args:
+    #     interaction: The discord.Interaction object.
     @bot.tree.command(name="herald")
     async def herald_command(interaction: discord.Interaction):
         await handle_herald_command(interaction)

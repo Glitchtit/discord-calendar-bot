@@ -1,3 +1,9 @@
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                  BOT EVENTS CALENDAR LOADING MODULE                    ║
+# ║    Handles loading calendar configurations from server files and         ║
+# ║    grouping them by user/tag.                                            ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
 """
 calendar_loading.py: Calendar loading and grouping logic.
 """
@@ -6,20 +12,50 @@ import json
 from utils.logging import logger
 from config.server_config import load_server_config, get_all_server_ids, save_server_config, register_calendar_reload_callback
 
-GROUPED_CALENDARS = {}
-TAG_NAMES = {}
-TAG_COLORS = {}
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ GLOBAL VARIABLES                                                          ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
 
+GROUPED_CALENDARS = {} # Stores loaded calendars, keyed by user_id/tag
+TAG_NAMES = {}         # Maps user_id/tag to a display name
+TAG_COLORS = {}        # Maps user_id/tag to a display color (hex integer)
+
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ TAG UTILITIES                                                             ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- get_name_for_tag ---
+# Retrieves the display name for a given user ID or tag.
+# Falls back to the tag itself if no specific name is found.
+# Args:
+#     tag: The user ID or tag string.
+# Returns: The display name string.
 def get_name_for_tag(tag: str) -> str:
     if not tag:
         return "Unknown"
     return TAG_NAMES.get(tag, tag)
 
+# --- get_color_for_tag ---
+# Retrieves the display color (as a hex integer) for a given user ID or tag.
+# Falls back to a default grey color (0x95a5a6) if no specific color is found.
+# Args:
+#     tag: The user ID or tag string.
+# Returns: The color as a hex integer.
 def get_color_for_tag(tag: str) -> int:
     if not tag:
         return 0x95a5a6
     return TAG_COLORS.get(tag, 0x95a5a6)
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ FILE PATH UTILITY                                                         ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- get_events_file ---
+# Constructs the absolute path for the event snapshot JSON file for a specific server.
+# Ensures the necessary directory structure exists within the /data volume.
+# Args:
+#     server_id: The ID of the Discord server.
+# Returns: The absolute path string to the events.json file.
 def get_events_file(server_id: int) -> str:
     """Return the path to the event snapshot file for a server."""
     # Use a consistent path for event snapshots (events.json) per server
@@ -28,6 +64,19 @@ def get_events_file(server_id: int) -> str:
     os.makedirs(base_dir, exist_ok=True)
     return os.path.join(base_dir, "events.json")
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ CALENDAR LOADING LOGIC                                                    ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- load_calendars_from_server_configs ---
+# Clears and repopulates the global `GROUPED_CALENDARS` dictionary.
+# Iterates through all known server IDs, loads their `config.json`.
+# Parses the 'calendars' list from each config.
+# Groups calendars by their 'user_id' (tag), ensuring user_id is a string.
+# Defaults missing user_ids to "1" (server-wide/everyone) and saves the config change.
+# Appends shared calendars (user_id "1") to all other users' calendar lists.
+# Registers itself as a callback for automatic reloading when configs change.
+# Returns: The populated `GROUPED_CALENDARS` dictionary.
 def load_calendars_from_server_configs():
     global GROUPED_CALENDARS
     GROUPED_CALENDARS.clear()

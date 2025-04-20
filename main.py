@@ -26,6 +26,11 @@ shutdown_in_progress = False
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ ENVIRONMENT VALIDATION                                                    ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- validate_environment ---
+# Checks if required environment variables (like DISCORD_BOT_TOKEN) are set.
+# Logs warnings if no servers are configured yet.
+# Returns: True if validation passes or only server config is missing, False otherwise.
 def validate_environment() -> bool:
     missing_vars = []
     if not DISCORD_BOT_TOKEN:
@@ -43,6 +48,10 @@ def validate_environment() -> bool:
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ CLEANUP OPERATIONS                                                        ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- cleanup ---
+# Registered with atexit to run on script termination.
+# Performs cleanup tasks, currently logs the start and end of cleanup.
 def cleanup():
     if not shutdown_in_progress:
         logger.info("Running cleanup operations...")
@@ -51,6 +60,13 @@ def cleanup():
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ SIGNAL HANDLING                                                           ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- signal_handler ---
+# Handles termination signals (SIGINT, SIGTERM) for graceful shutdown.
+# Sets the global shutdown_in_progress flag and attempts to close the bot connection.
+# Args:
+#     sig: The signal number received.
+#     frame: The current stack frame (optional).
 def signal_handler(sig: int, frame: Optional[FrameType] = None) -> None:
     global shutdown_in_progress
     if shutdown_in_progress:
@@ -70,6 +86,10 @@ def signal_handler(sig: int, frame: Optional[FrameType] = None) -> None:
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ WATCHDOG MONITORING                                                       ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- setup_watchdog ---
+# Initializes and starts a background thread to monitor the bot's health.
+# The watchdog checks if the bot is responsive (based on heartbeats) periodically.
 def setup_watchdog():
     def watchdog_thread():
         time.sleep(300)
@@ -87,6 +107,10 @@ def setup_watchdog():
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ STARTUP INFORMATION                                                       ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- display_startup_info ---
+# Logs essential information when the bot starts up, including Python version,
+# log file location, working directory, and configured server IDs.
 def display_startup_info():
     import sys
     import os
@@ -107,6 +131,12 @@ def display_startup_info():
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ MAIN ENTRYPOINT                                                           ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- main ---
+# The main execution function of the bot.
+# Sets up signal handling, registers cleanup, displays startup info,
+# validates the environment, starts the watchdog, and runs the Discord bot.
+# Handles critical errors during startup.
 def main():
     try:
         signal.signal(signal.SIGINT, signal_handler)

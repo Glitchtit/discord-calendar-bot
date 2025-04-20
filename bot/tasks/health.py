@@ -1,3 +1,9 @@
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                      BOT TASKS HEALTH MODULE                       ║
+# ║    Provides utilities for monitoring the health of background tasks,     ║
+# ║    including locking, error tracking, and automatic restarting.          ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
 """
 Task health monitoring and management.
 
@@ -21,6 +27,19 @@ from bot.tasks import (
     _HEALTH_CHECK_INTERVAL
 )
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ TASK LOCKING MECHANISM                                                    ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- TaskLock (class) ---
+# An asynchronous context manager to ensure only one instance of a task runs at a time.
+# Uses the shared `_task_locks` dictionary.
+# Logs if a task iteration is skipped due to an existing lock.
+# Releases the lock upon exiting the context.
+# Catches and logs exceptions within the task, incrementing the error count, but suppresses the exception
+# to allow the task loop to continue.
+# Args:
+#     task_name: The unique name of the task to lock.
 class TaskLock:
     """Context manager for safely acquiring and releasing task locks"""
     def __init__(self, task_name: str):
@@ -46,6 +65,18 @@ class TaskLock:
             logger.exception(f"Error in task {self.task_name}: {exc_val}")
             return True  # Suppress the exception
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ TASK HEALTH UPDATING AND UTILITIES                                        ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- update_task_health ---
+# Updates the health metrics for a given task.
+# If `success` is True, resets the error count and updates the last success timestamp.
+# If `success` is False, increments the error count.
+# Logs a warning if the consecutive error count reaches a certain threshold (3).
+# Args:
+#     task_name: The name of the task.
+#     success: Boolean indicating if the last run was successful.
 def update_task_health(task_name: str, success: bool = True) -> None:
     """Updates task health metrics and restarts failed tasks if needed"""
     if success:
@@ -59,6 +90,13 @@ def update_task_health(task_name: str, success: bool = True) -> None:
         if error_count >= 3:
             logger.warning(f"Task {task_name} has failed {error_count} consecutive times")
 
+# --- get_task_name ---
+# Safely retrieves a string name for a task function or object.
+# Handles different ways task names might be stored (e.g., `__name__`, `get_name`, `_name`).
+# Provides a fallback based on string representation or class name.
+# Args:
+#     task_func: The task function or object.
+# Returns: A string representing the task name.
 def get_task_name(task_func):
     """Safely get the name of a task function or Loop object."""
     if hasattr(task_func, "__name__"):
@@ -78,6 +116,14 @@ def get_task_name(task_func):
         # Last resort: return the task's class name
         return task_func.__class__.__name__
 
+# --- try_start_task ---
+# Attempts to start or restart a background task.
+# Handles both `discord.ext.tasks.Loop` objects (using `.start()`) and regular async functions (using `asyncio.create_task`).
+# Checks if Loop tasks are already running before attempting to start.
+# Logs success or failure of the start attempt.
+# Args:
+#     task_func: The task function or Loop object to start.
+#     bot: The discord.py Bot instance (passed to the task function).
 async def try_start_task(task_func, bot):
     """Try to start a task, handling various task types appropriately."""
     try:
@@ -98,6 +144,11 @@ async def try_start_task(task_func, bot):
         task_name = get_task_name(task_func)
         logger.exception(f"Failed to start task {task_name}: {e}")
 
+# --- check_tasks_running ---
+# Verifies if the main background tasks (daily, weekly, snapshot) appear to be running.
+# Checks if the task objects exist and are not marked as done or cancelled.
+# Note: This relies on specific attribute names (`daily_task`, etc.) being set elsewhere, which might be fragile.
+# Returns: True if all checked tasks seem to be running, False otherwise.
 async def check_tasks_running():
     """
     Verifies that all scheduled tasks are still running.
@@ -130,6 +181,23 @@ async def check_tasks_running():
         logger.exception(f"Error checking task status: {e}")
         return False
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ TASK HEALTH MONITORING LOOP                                               ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- monitor_task_health (task loop) ---
+# The main health monitoring task, runs periodically (every 10 minutes).
+# Iterates through all registered background tasks.
+# Checks for:
+#   - Excessive consecutive errors (`_MAX_CONSECUTIVE_ERRORS`): If threshold is met, cancels and restarts the task.
+#   - Deadlocks: If a task lock has been held for longer than `_HEALTH_CHECK_INTERVAL` since its last success, forces the lock release.
+#   - Non-running tasks: If a task is not running, attempts to restart it.
+# If any tasks were recovered, calls `check_for_missed_events`.
+# Updates its own health status.
+# Periodically logs the status (running/stopped, error count) of all monitored tasks.
+# Uses TaskLock for its own concurrency control.
+# Args:
+#     bot: The discord.py Bot instance.
 @tasks.loop(minutes=10)
 async def monitor_task_health(bot):
     """Monitors and restarts tasks that have failed or become inactive"""

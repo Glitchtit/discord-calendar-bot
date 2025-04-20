@@ -1,15 +1,29 @@
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                          SERVER UTILITIES                                  ║
+# ║           Functions for managing server-specific configuration             ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# Standard library imports
 import os
 import json
 import logging
 import re
-import requests
 from threading import Lock
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 
+# Third-party imports
+import requests
+
+# Local application imports
 # Configure logger
 logger = logging.getLogger("calendarbot")
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ GLOBAL VARIABLES AND INITIALIZATION                                        ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# Thread locks for file operations
 _load_lock = Lock()
 _save_lock = Lock()
 
@@ -27,11 +41,17 @@ except Exception as e:
     os.makedirs(fallback_dir, exist_ok=True)
     logger.info(f"Using fallback server config directory: {fallback_dir}")
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ FILE PATH FUNCTIONS                                                        ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- get_config_path ---
+# Get the path to a server's configuration file.
+# First tries the Docker volume path, then falls back to local path.
+# Args:
+#     server_id: The Discord server ID
+# Returns: The path to the server's config file
 def get_config_path(server_id: int) -> str:
-    """
-    Get the path to a server's configuration file.
-    First tries the Docker volume path, then falls back to local path.
-    """
     # First try Docker volume path
     docker_path = os.path.join(DOCKER_DATA_DIR, "servers", str(server_id), "config.json")
     docker_dir = os.path.dirname(docker_path)
@@ -48,8 +68,16 @@ def get_config_path(server_id: int) -> str:
     # Fall back to local path
     return os.path.join(LOCAL_DATA_DIR, "servers", str(server_id), "config.json")
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ SERVER CONFIGURATION FUNCTIONS                                             ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- load_server_config ---
+# Load server-specific configuration from JSON file.
+# Args:
+#     server_id: The Discord server ID
+# Returns: Dictionary with the server configuration
 def load_server_config(server_id: int) -> Dict[str, Any]:
-    """Load server-specific configuration from JSON file."""
     config_path = get_config_path(server_id)
     try:
         with _load_lock:
@@ -67,8 +95,13 @@ def load_server_config(server_id: int) -> Dict[str, Any]:
     # Return default config if loading fails
     return {"calendars": [], "user_mappings": {}}
 
+# --- save_server_config ---
+# Save configuration for a specific server.
+# Args:
+#     server_id: The Discord server ID
+#     config: Dictionary with server configuration to save
+# Returns: Boolean indicating success or failure
 def save_server_config(server_id: int, config: Dict[str, Any]) -> bool:
-    """Save configuration for a specific server."""
     config_path = get_config_path(server_id)
     
     try:
@@ -82,10 +115,11 @@ def save_server_config(server_id: int, config: Dict[str, Any]) -> bool:
         logger.exception(f"Error saving server config: {e}")
         return False
 
+# --- get_all_server_ids ---
+# Get a list of all server IDs that have configuration files.
+# Checks both Docker and local paths for server configurations.
+# Returns: List of server IDs as integers
 def get_all_server_ids() -> List[int]:
-    """Get a list of all server IDs that have configuration files.
-    Checks both Docker and local paths for server configurations.
-    """
     server_ids = set()  # Use a set to avoid duplicates
     
     # Check Docker path first
@@ -116,12 +150,16 @@ def get_all_server_ids() -> List[int]:
     
     return list(server_ids)
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ CALENDAR UTILITY FUNCTIONS                                                 ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- detect_calendar_type ---
+# Detect if a calendar URL/ID is Google or ICS format.
+# Args:
+#     url_or_id: Calendar URL or ID string to analyze
+# Returns: 'google', 'ics', or None if format is unrecognized
 def detect_calendar_type(url_or_id: str) -> Optional[str]:
-    """Detect if a calendar URL/ID is Google or ICS format.
-    
-    Returns:
-        'google', 'ics', or None if format is unrecognized
-    """
     # Check for ICS URL format
     if url_or_id.startswith(('http://', 'https://')):
         # Check for .ics in the URL, even with non-standard ports
@@ -154,21 +192,18 @@ def detect_calendar_type(url_or_id: str) -> Optional[str]:
     
     return None  # Unknown format
 
+# --- migrate_env_config_to_server ---
+# Migrate environment variable configuration to server-specific configuration.
+# 
+# This helper function is used for one-time migration from the deprecated
+# environment variable approach to the new server-specific configuration.
+# 
+# Args:
+#     server_id: Discord server ID to create configuration for
+#     calendar_sources: Value from CALENDAR_SOURCES environment variable
+#     user_mapping: Value from USER_TAG_MAPPING environment variable
+# Returns: (success, message): Tuple with migration status and message
 def migrate_env_config_to_server(server_id: int, calendar_sources: str, user_mapping: str) -> Tuple[bool, str]:
-    """
-    Migrate environment variable configuration to server-specific configuration.
-    
-    This helper function is used for one-time migration from the deprecated
-    environment variable approach to the new server-specific configuration.
-    
-    Args:
-        server_id: Discord server ID to create configuration for
-        calendar_sources: Value from CALENDAR_SOURCES environment variable
-        user_mapping: Value from USER_TAG_MAPPING environment variable
-        
-    Returns:
-        (success, message): Tuple with migration status and message
-    """
     if not calendar_sources and not user_mapping:
         return False, "No legacy configuration found to migrate"
     
@@ -212,16 +247,12 @@ def migrate_env_config_to_server(server_id: int, calendar_sources: str, user_map
     else:
         return False, "Failed to save migrated configuration"
 
+# --- get_server_config ---
+# Get the configuration for a specific server.
+# Args:
+#     server_id: The ID of the Discord server
+# Returns: The server configuration dictionary or None if not found
 def get_server_config(server_id):
-    """
-    Get the configuration for a specific server.
-    
-    Args:
-        server_id (str): The ID of the Discord server
-        
-    Returns:
-        dict: The server configuration or None if not found
-    """
     from config.server_config import load_server_config
     
     try:

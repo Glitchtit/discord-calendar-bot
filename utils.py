@@ -21,6 +21,12 @@ _datetime_str_pattern = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}')
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ TIMEZONE UTILITIES                                                        ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- get_local_timezone ---
+# Retrieves the system's local timezone using dateutil.tz.tzlocal().
+# Caches the result to avoid repeated lookups.
+# Falls back to UTC if the local timezone cannot be determined.
+# Returns: The local timezone object (or tz.UTC on failure).
 def get_local_timezone():
     global _timezone_cache
     if (_timezone_cache is not None):
@@ -36,6 +42,11 @@ def get_local_timezone():
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ DATE UTILITIES                                                            ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- get_today ---
+# Gets the current date based on the local timezone.
+# Uses UTC as a fallback if the local timezone fails.
+# Returns: A date object representing today.
 def get_today() -> date:
     try:
         return datetime.now(tz=get_local_timezone()).date()
@@ -43,6 +54,13 @@ def get_today() -> date:
         logger.exception(f"Error getting today's date: {e}. Using UTC.")
         return datetime.now(tz=tz.UTC).date()
 
+# --- get_monday_of_week ---
+# Calculates the date of the Monday for the week containing the given `day`.
+# If `day` is None, it defaults to the current day.
+# Handles both date and datetime objects as input.
+# Args:
+#     day: The date or datetime object to find the Monday for (defaults to today).
+# Returns: A date object representing the Monday of the week.
 def get_monday_of_week(day: date = None) -> date:
     if day is None:
         day = get_today()
@@ -58,6 +76,13 @@ def get_monday_of_week(day: date = None) -> date:
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ EVENT FORMATTING                                                          ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- emoji_for_event ---
+# Selects an appropriate emoji based on keywords in the event title.
+# Used to add visual cues to event listings.
+# Args:
+#     title: The event title string.
+# Returns: An emoji string (defaults to "•").
 def emoji_for_event(title: str) -> str:
     if not title or not isinstance(title, str):
         return "•"
@@ -82,6 +107,14 @@ def emoji_for_event(title: str) -> str:
         logger.exception(f"Error determining emoji for title '{title}': {e}")
         return "•"
 
+# --- parse_date_string ---
+# Parses various ISO 8601 date/datetime string formats into datetime objects.
+# Handles date-only strings, UTC ('Z') notation, and timezone offsets.
+# Assumes UTC if no timezone is present and converts to the default_timezone.
+# Args:
+#     date_str: The date/datetime string to parse.
+#     default_timezone: The timezone to assume/convert to if none is specified (defaults to local).
+# Returns: A datetime object or None if parsing fails.
 def parse_date_string(date_str: str, default_timezone=None):
     if not date_str:
         logger.warning("Empty date string provided")
@@ -102,6 +135,13 @@ def parse_date_string(date_str: str, default_timezone=None):
         logger.warning(f"Failed to parse date string '{date_str}': {e}")
         return None
 
+# --- format_event ---
+# Formats a single event dictionary into a readable string for Discord messages.
+# Includes emoji, title (truncated), time range, and location (optional).
+# Handles all-day events and events with specific start/end times.
+# Args:
+#     event: The event dictionary (usually from Google Calendar API).
+# Returns: A formatted string representation of the event.
 def format_event(event: dict) -> str:
     try:
         if not event or not isinstance(event, dict):
@@ -148,6 +188,13 @@ def format_event(event: dict) -> str:
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ TAG & INPUT RESOLUTION                                                    ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- is_in_current_week ---
+# Checks if an event's start date falls within the week of the reference date.
+# Args:
+#     event: The event dictionary.
+#     reference: The reference date to define the week (defaults to today).
+# Returns: True if the event is in the current week, False otherwise.
 def is_in_current_week(event: dict, reference: date = None) -> bool:
     try:
         if not event or not isinstance(event, dict):
@@ -169,6 +216,14 @@ def is_in_current_week(event: dict, reference: date = None) -> bool:
         logger.exception(f"Error checking if event is in current week: {e}")
         return False
 
+# --- resolve_input_to_tags ---
+# Attempts to match user input text to known calendar tag IDs or names.
+# Used for commands where users specify which calendar(s) to act upon.
+# Args:
+#     input_text: The text provided by the user.
+#     tag_names: A dictionary mapping tag IDs to their display names.
+#     grouped_calendars: A dictionary mapping tag IDs to their calendar configurations.
+# Returns: A list of matching tag IDs. Returns all tag IDs if input is empty.
 def resolve_input_to_tags(input_text: str, tag_names: dict, grouped_calendars: dict) -> list:
     if not input_text or not input_text.strip():
         return list(grouped_calendars.keys())
@@ -188,12 +243,26 @@ def resolve_input_to_tags(input_text: str, tag_names: dict, grouped_calendars: d
             matches.append(tag_id)
     return matches
 
+# --- validate_env_vars ---
+# Checks if all specified environment variables are set.
+# Raises an EnvironmentError if any required variable is missing.
+# Args:
+#     required_vars: A list of environment variable names to check.
 def validate_env_vars(required_vars):
     for var in required_vars:
         if not os.getenv(var):
             logger.error(f"Environment variable {var} is not set. Please configure it.")
             raise EnvironmentError(f"Missing required environment variable: {var}")
 
+# --- format_message_lines ---
+# Formats a collection of events grouped by day (or calendar for daily view)
+# into a list of strings suitable for sending as a Discord message.
+# Handles headers for daily, weekly, or single-day views.
+# Args:
+#     user_id: The Discord user ID to mention in the header.
+#     events_by_day: A dictionary mapping dates (or calendar names) to lists of events.
+#     start_date: The reference date (e.g., today for daily, Monday for weekly).
+# Returns: A list of strings, each representing a line in the final message.
 def format_message_lines(user_id, events_by_day, start_date):
     is_daily = isinstance(next(iter(events_by_day.keys()), None), str)
     is_single_day = len(events_by_day) == 1 and isinstance(next(iter(events_by_day.keys()), None), date)
@@ -225,6 +294,14 @@ def format_message_lines(user_id, events_by_day, start_date):
     return message_lines
 
 _load_lock = Lock()
+
+# --- load_server_config ---
+# Loads the JSON configuration file for a specific server ID.
+# Uses a lock to prevent race conditions during file access.
+# Returns an empty config structure if the file doesn't exist or is invalid.
+# Args:
+#     server_id: The Discord server (guild) ID.
+# Returns: A dictionary containing the server's configuration.
 def load_server_config(server_id: int) -> Dict[str, Any]:
     config_path = f"./data/servers/{server_id}.json"
     try:
@@ -238,6 +315,13 @@ def load_server_config(server_id: int) -> Dict[str, Any]:
         logger.exception(f"Error loading server config for server {server_id}: {e}")
     return {"calendars": [], "user_mappings": {}}
 
+# --- add_calendar ---
+# Adds a new calendar configuration to a server's config file.
+# Prevents adding duplicates based on calendar ID.
+# Args:
+#     server_id: The Discord server (guild) ID.
+#     calendar_data: A dictionary containing the new calendar's details.
+# Returns: True if the calendar was added successfully, False otherwise.
 def add_calendar(server_id: int, calendar_data: dict) -> bool:
     try:
         config = load_server_config(server_id)
@@ -254,6 +338,12 @@ def add_calendar(server_id: int, calendar_data: dict) -> bool:
         logger.exception(f"Error adding calendar {calendar_data.get('id')} for server {server_id}: {e}")
         return False
 
+# --- remove_calendar ---
+# Removes a calendar configuration from a server's config file based on its ID.
+# Args:
+#     server_id: The Discord server (guild) ID.
+#     calendar_id: The ID of the calendar to remove.
+# Returns: True if the calendar was found and removed, False otherwise.
 def remove_calendar(server_id: int, calendar_id: str) -> bool:
     try:
         config = load_server_config(server_id)

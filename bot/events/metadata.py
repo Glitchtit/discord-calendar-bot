@@ -1,11 +1,34 @@
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                    BOT EVENTS METADATA MODULE                        ║
+# ║    Handles fetching and caching metadata (name, timezone, etc.) for      ║
+# ║    Google and ICS calendars.                                             ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
 """
 metadata.py: Calendar metadata fetching and caching.
 """
 from utils.logging import logger
 from .google_api import service
 
-_calendar_metadata_cache = {}
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ METADATA CACHE                                                            ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
 
+_calendar_metadata_cache = {} # Simple in-memory cache for calendar metadata
+
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ GOOGLE CALENDAR METADATA                                                  ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- fetch_google_calendar_metadata ---
+# Fetches metadata for a Google Calendar using the CalendarList API.
+# Attempts to subscribe the service account to the calendar first (ignores errors if already subscribed).
+# Retrieves summary (name), timezone, and color.
+# Uses an in-memory cache (`_calendar_metadata_cache`) to avoid repeated API calls.
+# Handles API errors and retries.
+# Args:
+#     calendar_id: The ID of the Google Calendar.
+# Returns: A dictionary containing metadata (type, id, name, timezone, color), potentially with an 'error' flag.
 def fetch_google_calendar_metadata(calendar_id: str):
     cache_key = f"google_{calendar_id}"
     if cache_key in _calendar_metadata_cache:
@@ -50,6 +73,18 @@ def fetch_google_calendar_metadata(calendar_id: str):
         _calendar_metadata_cache[cache_key] = result
         return result
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ ICS CALENDAR METADATA                                                     ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- fetch_ics_calendar_metadata ---
+# Fetches basic metadata for an ICS calendar URL.
+# Primarily performs a HEAD request to check accessibility.
+# Tries to derive a name from the last part of the URL path, with URL decoding.
+# Uses an in-memory cache (`_calendar_metadata_cache`).
+# Args:
+#     url: The URL of the ICS calendar.
+# Returns: A dictionary containing metadata (type, id, name), potentially with an 'error' flag.
 def fetch_ics_calendar_metadata(url: str):
     cache_key = f"ics_{url}"
     if cache_key in _calendar_metadata_cache:

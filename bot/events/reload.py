@@ -1,3 +1,9 @@
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                     BOT EVENTS RELOAD MODULE                         ║
+# ║    Handles API call retries, event reinitialization, and ensuring        ║
+# ║    calendar configurations are loaded.                                   ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
 """
 reload.py: Event reload and concurrency control.
 """
@@ -9,13 +15,34 @@ import random
 from googleapiclient.errors import HttpError
 import requests
 
-reinitialize_lock = Lock()
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ GLOBAL VARIABLES & LOCKS                                                  ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
 
-_API_BACKOFF_RESET = timedelta(minutes=30)
-_MAX_API_ERRORS = 10
-_api_last_error_time = None
-_api_error_count = 0
+reinitialize_lock = Lock() # Lock to prevent concurrent reinitialization
 
+# --- API Error Backoff State ---
+_API_BACKOFF_RESET = timedelta(minutes=30) # Time after which error count resets
+_MAX_API_ERRORS = 10                       # Max errors before longer backoff
+_api_last_error_time = None                # Timestamp of the last API error
+_api_error_count = 0                       # Counter for recent API errors
+
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ API CALL RETRY MECHANISM                                                  ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- retry_api_call ---
+# A wrapper function to execute an API call with rate limiting, exponential backoff, and retries.
+# Handles Google API HttpErrors (especially 429 rate limits and 5xx server errors)
+# and general network errors (requests.exceptions.RequestException).
+# Implements a circuit breaker pattern: stops retrying if too many errors occur recently.
+# Uses different rate limiters based on the function being called (list vs. other).
+# Args:
+#     func: The function (API call) to execute.
+#     *args: Positional arguments for the function.
+#     max_retries: Maximum number of retry attempts (default 3).
+#     **kwargs: Keyword arguments for the function.
+# Returns: The result of the API call if successful, None otherwise.
 def retry_api_call(func, *args, max_retries=3, **kwargs):
     global _api_last_error_time, _api_error_count
     from utils.rate_limiter import CALENDAR_API_LIMITER, EVENT_LIST_LIMITER
@@ -71,6 +98,15 @@ def retry_api_call(func, *args, max_retries=3, **kwargs):
         logger.error(f"All {max_retries} retries failed for API call: {last_exception}")
     return None
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ EVENT REINITIALIZATION                                                    ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- reinitialize_events ---
+# Asynchronously reloads all calendar configurations and re-initializes event snapshots.
+# Uses a lock (`reinitialize_lock`) to prevent concurrent execution.
+# This is typically called after server configurations change.
+# Returns: True if reinitialization completed, False if skipped due to lock.
 async def reinitialize_events():
     async with reinitialize_lock:
         if reinitialize_lock.locked():
@@ -88,6 +124,16 @@ async def reinitialize_events():
         logger.info("Reinitialization of events completed.")
         return True
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ CALENDAR LOADING CHECK                                                    ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- ensure_calendars_loaded ---
+# Checks if the `GROUPED_CALENDARS` dictionary is populated.
+# If empty, attempts to load them using `load_calendars_from_server_configs`.
+# As a last resort (if still empty and running in Docker), attempts to scan
+# the `/data/servers` directory directly for config files.
+# Returns: True if calendars are loaded (or were successfully loaded), False otherwise.
 def ensure_calendars_loaded() -> bool:
     from .calendar_loading import GROUPED_CALENDARS, load_calendars_from_server_configs
     import os

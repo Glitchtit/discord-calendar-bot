@@ -16,6 +16,14 @@ from bot.events import reinitialize_events, get_service_account_email
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ SETUP COMMAND HANDLER                                                     ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- handle_setup_command ---
+# The core logic for the /setup slash command (Admin only).
+# Checks for administrator permissions.
+# Creates and sends the main `CalendarSetupView` which contains buttons for adding/removing calendars
+# and setting the announcement channel. Includes an informational embed.
+# Args:
+#     interaction: The discord.Interaction object from the command invocation.
 async def handle_setup_command(interaction: Interaction):
     try:
         if not interaction.user.guild_permissions.administrator:
@@ -41,8 +49,19 @@ async def handle_setup_command(interaction: Interaction):
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ COMMAND REGISTRATION                                                      ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- register ---
+# Registers the /setup and /admins slash commands with the bot's command tree.
+# Args:
+#     bot: The discord.Client or discord.ext.commands.Bot instance.
 async def register(bot):
     try:
+        # --- setup_command ---
+        # The actual slash command function invoked by Discord for /setup.
+        # Requires administrator permissions and checks if the user is a configured bot admin.
+        # Calls `handle_setup_command` to display the setup view.
+        # Args:
+        #     interaction: The discord.Interaction object.
         @bot.tree.command(name="setup", description="Configure calendar integration settings")
         @app_commands.checks.has_permissions(administrator=True)
         async def setup_command(interaction: Interaction):
@@ -54,6 +73,15 @@ async def register(bot):
                 await interaction.response.send_message("⚠️ You do not have permission to use this command.", ephemeral=True)
                 return
             await handle_setup_command(interaction)
+
+        # --- admins_command ---
+        # The actual slash command function invoked by Discord for /admins.
+        # Requires administrator permissions.
+        # Allows adding or removing bot administrators for the server.
+        # Args:
+        #     interaction: The discord.Interaction object.
+        #     action: The action to perform ("add" or "remove").
+        #     user: The discord.Member to add or remove as an admin.
         @bot.tree.command(name="admins", description="Manage server admins (Admin only)")
         @app_commands.checks.has_permissions(administrator=True)
         async def admins_command(interaction: Interaction, action: str, user: discord.Member):

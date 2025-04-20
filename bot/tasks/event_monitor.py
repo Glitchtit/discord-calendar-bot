@@ -1,3 +1,9 @@
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                   BOT TASKS EVENT MONITOR MODULE                     ║
+# ║    Monitors calendars for changes (added/removed events) and notifies    ║
+# ║    users. Also handles initial event snapshotting and missed events.     ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
 """
 Event change monitoring and notifications.
 
@@ -22,6 +28,21 @@ from .health import TaskLock, update_task_health
 from .utilities import send_embed
 from .weekly_posts import is_in_current_week
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ EVENT CHANGE MONITORING TASK                                              ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- watch_for_event_changes (task loop) ---
+# Runs periodically (every minute) to check for changes in calendar events.
+# Fetches events within a defined window (-30 to +90 days from today).
+# Compares current events (fingerprinted) against the last saved snapshot for each user/tag.
+# Identifies added and removed events.
+# Notifies the relevant user via DM about changes *within the current week*.
+# Saves the updated event snapshot to disk if changes are detected or if the snapshot differs.
+# Processes calendars in batches with delays to avoid rate limiting.
+# Uses TaskLock for concurrency control and updates task health.
+# Args:
+#     bot: The discord.py Bot instance.
 @tasks.loop(minutes=1)  # Reduced frequency for stability
 async def watch_for_event_changes(bot):
     task_name = "watch_for_event_changes"
@@ -151,8 +172,18 @@ async def watch_for_event_changes(bot):
             # Add a small delay before the next iteration if we hit an error
             await asyncio.sleep(5)
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ EVENT SNAPSHOT INITIALIZATION                                             ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- initialize_event_snapshots ---
+# Performs an initial, silent fetch and save of all events for all configured calendars.
+# This creates the baseline snapshot used by `watch_for_event_changes`.
+# Typically run at bot startup or after configuration reloads.
+# Fetches events within the standard window (-30 to +90 days).
+# Processes calendars sequentially with delays to avoid rate limiting.
+# Saves the snapshot for each user/tag.
 async def initialize_event_snapshots():
-    """Initialize snapshots of all calendar events at startup."""
     try:
         logger.info("Performing initial silent snapshot of all calendars...")
         today = get_today()
@@ -205,6 +236,20 @@ async def initialize_event_snapshots():
     except Exception as e:
         logger.exception(f"Error in initialize_event_snapshots: {e}")
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ MISSED EVENT CHECK (POST-DISCONNECTION)                                   ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- check_for_missed_events ---
+# Checks for events or posts that might have been missed during a bot disconnection.
+# Currently focuses on re-running the daily post task if it was missed.
+# 1. Re-initializes event snapshots to ensure current data.
+# 2. Checks each server's configuration.
+# 3. If daily announcements are enabled and it's currently within the typical posting window (e.g., morning),
+#    it checks a tracking file to see if today's post was already made.
+# 4. If not posted, it triggers `post_todays_happenings` for that server.
+# Args:
+#     bot: The discord.py Bot instance.
 async def check_for_missed_events(bot):
     """
     Checks if any events were missed during disconnection and 

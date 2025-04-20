@@ -1,50 +1,61 @@
-"""
-ai_helpers.py: AI utilities for generating greeting text and images via OpenAI.
-Includes improved error handling, retry logic, and type hints.
-"""
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                             AI HELPERS                                   ║
+# ║ Utilities for generating text and images using the OpenAI API. Includes  ║
+# ║ circuit breaker pattern, error handling, and retry logic.                ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
 
-import random
-import requests
+# Standard library imports
+from datetime import datetime, timedelta
 import json
+import logging
+import math
 import os
 import pathlib
-import math
-import time
-from datetime import datetime, timedelta
-import logging
+import random
 import threading
+import time
+
+# Third-party imports
 from openai import OpenAI, APIError, RateLimitError, APITimeoutError, APIConnectionError
+import requests
+
+# Local application imports
 from utils.environ import OPENAI_API_KEY
 
-# Configure logger
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ CONFIGURATION AND GLOBALS                                                  ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# Logger for this module
 logger = logging.getLogger("calendarbot")
 
-# Global circuit breaker state
+# Circuit breaker state variables
 _circuit_open = False
 _last_error_time = None
 _error_count = 0
-_reset_after = timedelta(minutes=5)
-_error_threshold = 3
+_reset_after = timedelta(minutes=5) # Time before attempting to reset the circuit
+_error_threshold = 3 # Number of errors before opening the circuit
 
-# Circuit recovery timer
+# Circuit recovery timer and lock
 _recovery_timer = None
 _recovery_lock = threading.Lock()
 
-# Initialize OpenAI client with API key from environment
-# Use safer initialization with error handling
+# Initialize OpenAI client
 try:
-    client = OpenAI(api_key=OPENAI_API_KEY, timeout=30.0)  # Add explicit timeout
+    client = OpenAI(api_key=OPENAI_API_KEY, timeout=30.0)
     if not OPENAI_API_KEY:
         logger.warning("OPENAI_API_KEY not set. AI-based features will be unavailable.")
 except Exception as e:
     logger.exception(f"Error initializing OpenAI client: {e}")
     client = None
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ CIRCUIT BREAKER LOGIC                                                      ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
 
-# ╔════════════════════════════════════════════════════════════════════╗
-# ║ 🔌 check_api_availability                                          ║
-# ║ Implements circuit breaker pattern to prevent API hammering       ║
-# ╚════════════════════════════════════════════════════════════════════╝
+# --- check_api_availability ---
+# Checks if the OpenAI API is available based on the circuit breaker state.
+# Returns: True if the API is considered available, False otherwise.
 def check_api_availability():
     global _circuit_open, _last_error_time, _error_count
     
@@ -58,13 +69,10 @@ def check_api_availability():
         return False
     return True
 
-
-# ╔════════════════════════════════════════════════════════════════════╗
-# ║ 🔄 setup_recovery_timer                                            ║
-# ║ Schedules API availability check after the circuit breaker opens  ║
-# ╚════════════════════════════════════════════════════════════════════╝
+# --- setup_recovery_timer ---
+# Schedules a timer to check the API health after the circuit breaker opens.
+# Ensures only one recovery timer is active at a time.
 def setup_recovery_timer():
-    """Schedule a recovery check after the circuit breaker timeout period."""
     global _recovery_timer
     
     with _recovery_lock:
@@ -82,13 +90,11 @@ def setup_recovery_timer():
         
         logger.debug(f"Recovery timer scheduled in {_reset_after.total_seconds()} seconds")
 
-
-# ╔════════════════════════════════════════════════════════════════════╗
-# ║ 🔎 _check_api_health                                               ║
-# ║ Tests the OpenAI API with a minimal request to see if it's back   ║
-# ╚════════════════════════════════════════════════════════════════════╝
+# --- _check_api_health ---
+# Performs a minimal API call to test if the OpenAI API is responsive again.
+# Resets the circuit breaker if the API call is successful.
+# Schedules another check if the API is still unavailable.
 def _check_api_health():
-    """Make a minimal API call to test if OpenAI API is back online."""
     global _circuit_open, _error_count
     
     if not _circuit_open:
@@ -114,11 +120,13 @@ def _check_api_health():
         # Schedule another check
         setup_recovery_timer()
 
-
-# ╔════════════════════════════════════════════════════════════════════╗
-# ║ 🧯 handle_api_error                                                ║
-# ║ Centralized error handling for OpenAI API errors                  ║
-# ╚════════════════════════════════════════════════════════════════════╝
+# --- handle_api_error ---
+# Centralized handler for OpenAI API errors. Increments error count and opens
+# the circuit breaker if the threshold is reached.
+# Args:
+#     error: The exception object caught.
+#     context: A string describing the operation during which the error occurred.
+# Returns: A string code indicating the type of error ('rate_limit', 'timeout', etc.).
 def handle_api_error(error, context="API call"):
     global _circuit_open, _last_error_time, _error_count
     
@@ -149,12 +157,21 @@ def handle_api_error(error, context="API call"):
         logger.exception(f"Unexpected error during {context}: {error}")
         return "unknown"
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ GREETING GENERATION                                                        ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
 
-# ╔════════════════════════════════════════════════════════════════════╗
-# 🧠 Generate AI Greeting Text
-# ╚════════════════════════════════════════════════════════════════════╝
+# --- generate_greeting ---
+# Generates a themed greeting message using the OpenAI API based on event titles.
+# Implements retry logic with exponential backoff for API calls.
+# Uses a fallback greeting if the API is unavailable or fails.
+# Args:
+#     event_titles: A list of strings representing event titles for the day.
+#     user_names: A list of strings representing user names to mention.
+#     max_retries: The maximum number of times to retry the API call.
+# Returns: A tuple containing the generated greeting (str | None) and the persona name (str).
 def generate_greeting(event_titles: list[str], user_names: list[str] = [], max_retries: int = 3) -> tuple[str | None, str]:
-    # Check if API is available (circuit breaker pattern)
+    # --- Check API Availability ---
     if not check_api_availability() or not client:
         logger.warning("OpenAI API unavailable or client not initialized. Using fallback greeting.")
         return generate_fallback_greeting(event_titles), "Fallback Herald"
@@ -164,11 +181,11 @@ def generate_greeting(event_titles: list[str], user_names: list[str] = [], max_r
         event_summary = ", ".join(event_titles) if event_titles else "no notable engagements"
         logger.debug(f"Generating greeting for events: {event_summary}")
 
-        # Randomly choose one of the medieval personas
+        # --- Select Persona ---
         style = random.choice(["butler", "bard", "alchemist", "decree"])
         logger.debug(f"Selected persona style: {style}")
 
-        # Persona name mapping
+        # --- Persona Name Mapping ---
         persona_names = {
             "butler": "Sir Reginald the Butler",
             "bard": "Lyricus the Bard",
@@ -177,18 +194,19 @@ def generate_greeting(event_titles: list[str], user_names: list[str] = [], max_r
         }
         persona = persona_names[style]
 
-        # Common instruction for medieval tone
+        # --- Base Prompt Instruction ---
         base_instruction = (
             "All responses must be written in archaic, Shakespearean English befitting the medieval age. "
             "Use 'thou', 'dost', 'hath', and other appropriate forms. Do not use any modern phrasing."
         )
 
+        # --- Include User Names ---
         names_clause = ""
         if user_names:
             present_names = ", ".join(user_names)
             names_clause = f"\nThese nobles are present today: {present_names}."
 
-        # Persona-specific prompts and styles
+        # --- Persona-Specific Prompts ---
         prompts = {
             "butler": (
                 f"Good morrow, my liege. 'Tis {today}, and the courtly matters doth include: {event_summary}.{names_clause}\n"
@@ -215,10 +233,9 @@ def generate_greeting(event_titles: list[str], user_names: list[str] = [], max_r
         prompt, persona_instruction = prompts[style]
         system_msg = persona_instruction + " " + base_instruction
 
-        # Implement retry with exponential backoff
+        # --- API Call with Retry Logic ---
         for attempt in range(max_retries):
             try:
-                # OpenAI API call for generating the greeting
                 logger.debug(f"Calling OpenAI API for greeting (attempt {attempt+1}/{max_retries})...")
                 
                 response = client.chat.completions.create(
@@ -252,14 +269,16 @@ def generate_greeting(event_titles: list[str], user_names: list[str] = [], max_r
         logger.exception(f"Failed to generate greeting: {e}")
         return generate_fallback_greeting(event_titles), "Fallback Herald"
     
-    # If we got here, all retries failed
+    # --- Fallback if all retries fail ---
+    logger.warning(f"All retries failed for generate_greeting after {max_retries} attempts. Using fallback.")
     return generate_fallback_greeting(event_titles), "Fallback Herald"
 
-
-# ╔════════════════════════════════════════════════════════════════════╗
-# ║ 💬 generate_fallback_greeting                                      ║
-# ║ Creates a simple greeting when OpenAI API is unavailable          ║
-# ╚════════════════════════════════════════════════════════════════════╝
+# --- generate_fallback_greeting ---
+# Creates a simple, medieval-themed fallback greeting message.
+# Used when the OpenAI API is unavailable or fails.
+# Args:
+#     event_titles: A list of strings representing event titles for the day.
+# Returns: A formatted fallback greeting string.
 def generate_fallback_greeting(event_titles: list[str]) -> str:
     today = datetime.now().strftime("%A, %B %d")
     
@@ -271,18 +290,27 @@ def generate_fallback_greeting(event_titles: list[str]) -> str:
     
     return f"Oyez, oyez! On this fine {today}, {events_count} {event_word} await thee in thy royal calendar. May thy schedule be favorable and thy meetings most productive!\n\n— Royal Messenger"
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ IMAGE GENERATION                                                           ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
 
-# ╔════════════════════════════════════════════════════════════════════╗
-# 🎨 Generate Image from Text Prompt
-# ╚════════════════════════════════════════════════════════════════════╝
+# --- generate_image ---
+# Generates an image using the OpenAI DALL-E API based on the greeting and persona.
+# Saves the generated image locally for the specific server.
+# Implements retry logic for both API calls and image downloading.
+# Args:
+#     greeting: The text greeting used as inspiration for the image prompt.
+#     persona: The name of the persona used for the greeting, influencing image style.
+#     server_id: The ID of the Discord server to associate the image with.
+#     max_retries: The maximum number of times to retry the API call.
+# Returns: The local file path (str) of the saved image, or None if generation failed.
 def generate_image(greeting: str, persona: str, server_id: int, max_retries: int = 3) -> str | None:
-    """Generate an image based on the greeting and persona for a specific server."""
-    # Check if API is available (circuit breaker pattern)
+    # --- Check API Availability ---
     if not check_api_availability() or not client:
         logger.warning("OpenAI API unavailable or client not initialized. Skipping image generation.")
         return None
         
-    # Persona-specific visual styles
+    # --- Define Persona Visual Styles ---
     persona_vibe = {
         "Sir Reginald the Butler": "a dignified, well-dressed butler bowing in a candlelit medieval hallway",
         "Lyricus the Bard": "a cheerful bard strumming a lute in a bustling medieval tavern",
@@ -292,16 +320,17 @@ def generate_image(greeting: str, persona: str, server_id: int, max_retries: int
     }
 
     visual_context = persona_vibe.get(persona, "medieval character")
+    # --- Construct Image Prompt ---
     prompt = (
         f"Scene inspired by the following proclamation: '{greeting}'\n"
         f"Depict {visual_context}, illustrated in the style of the Bayeux Tapestry, "
         f"with humorous medieval cartoon characters, textured linen background, and stitched-looking text."
     )
 
-    # Define data directory with platform-agnostic path
+    # --- Define Image Save Directory ---
     art_dir = pathlib.Path(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "servers", str(server_id), "art"))
 
-    # Retry loop with exponential backoff
+    # --- API Call and Download with Retry Logic ---
     for attempt in range(max_retries):
         try:
             logger.debug(f"[{persona}] Generating image (attempt {attempt + 1}/{max_retries})...")
@@ -369,29 +398,27 @@ def generate_image(greeting: str, persona: str, server_id: int, max_retries: int
                 logger.error("Max retries reached. Skipping image.")
                 return None
 
+    # --- Return None if all retries fail ---
+    logger.error(f"All retries failed for image generation after {max_retries} attempts.")
     return None
 
-# ╔════════════════════════════════════════════════════════════════════╗
-# ║ 💬 generate_themed_greeting                                        ║
-# ║ Async wrapper for the greeting generator                           ║
-# ╚════════════════════════════════════════════════════════════════════╝
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ ASYNC WRAPPER                                                              ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- generate_themed_greeting ---
+# Asynchronous wrapper for the synchronous generate_greeting function.
+# Args:
+#     event_titles: Optional list of event titles.
+#     user_names: Optional list of user names.
+# Returns: The generated greeting text (str).
 async def generate_themed_greeting(event_titles: list[str] = None, user_names: list[str] = None) -> str:
-    """
-    Async wrapper function that generates a themed greeting.
-    
-    Args:
-        event_titles: Optional list of event titles to mention in the greeting
-        user_names: Optional list of user names to mention in the greeting
-        
-    Returns:
-        str: The generated greeting text
-    """
     if event_titles is None:
         event_titles = []
     if user_names is None:
         user_names = []
         
-    # Call the synchronous function and return only the greeting text
+    # --- Call Synchronous Function ---
     greeting, _ = generate_greeting(event_titles, user_names)
     return greeting
 

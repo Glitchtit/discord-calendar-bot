@@ -1,3 +1,9 @@
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                   BOT EVENTS EVENT FETCHING MODULE                         ║
+# ║    Handles fetching events from different calendar sources (Google, ICS)   ║
+# ║    with caching and error handling.                                        ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
 """
 event_fetching.py: Unified event fetching and source-specific logic.
 """
@@ -9,6 +15,19 @@ from .fingerprint import compute_event_fingerprint
 import requests
 from ics import Calendar as ICS_Calendar
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ GOOGLE CALENDAR EVENT FETCHING                                            ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- get_google_events ---
+# Fetches events from a specific Google Calendar within a date range.
+# Uses the initialized Google Calendar API service and handles API errors/retries.
+# Adds a 'source' field to each event.
+# Args:
+#     start_date: The start date (inclusive) for fetching events.
+#     end_date: The end date (inclusive) for fetching events.
+#     calendar_id: The ID of the Google Calendar.
+# Returns: A list of event dictionaries, or an empty list on failure.
 def get_google_events(start_date, end_date, calendar_id):
     try:
         if not service:
@@ -40,6 +59,21 @@ def get_google_events(start_date, end_date, calendar_id):
         logger.exception(f"Error fetching Google events from calendar {calendar_id}: {e}")
         return []
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ ICS CALENDAR EVENT FETCHING                                               ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- get_ics_events ---
+# Fetches and parses events from an ICS calendar URL within a date range.
+# Handles HTTP requests, parsing using the `ics` library, and date filtering.
+# Generates a stable ID for each event based on its properties.
+# Converts ICS event objects into a dictionary format similar to Google Calendar API.
+# Deduplicates events based on fingerprints.
+# Args:
+#     start_date: The start date (inclusive) for filtering events.
+#     end_date: The end date (inclusive) for filtering events.
+#     url: The URL of the ICS calendar file.
+# Returns: A list of unique event dictionaries, or an empty list on failure.
 def get_ics_events(start_date, end_date, url):
     try:
         logger.debug(f"Fetching ICS events from {url}")
@@ -92,6 +126,20 @@ def get_ics_events(start_date, end_date, url):
         logger.exception(f"Error parsing ICS calendar {url}: {e}")
         return []
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ UNIFIED EVENT FETCHER                                                     ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- get_events ---
+# The main function to fetch events for a given calendar source.
+# Acts as a dispatcher based on the calendar type ('google' or 'ics').
+# Implements caching based on calendar ID, type, and date range.
+# Sorts the fetched events by start time.
+# Args:
+#     source_meta: A dictionary containing metadata about the calendar source (type, id, name).
+#     start_date: The start date (inclusive) for fetching events.
+#     end_date: The end date (inclusive) for fetching events.
+# Returns: A sorted list of event dictionaries, potentially from cache, or an empty list on failure.
 def get_events(source_meta: Dict[str, str], start_date: date, end_date: date) -> List[Dict[str, Any]]:
     calendar_name = source_meta.get('name', 'Unknown Calendar')
     calendar_type = source_meta.get('type', 'unknown')

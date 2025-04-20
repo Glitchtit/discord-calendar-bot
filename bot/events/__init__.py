@@ -1,3 +1,8 @@
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                      BOT EVENTS PACKAGE INIT FILE                      ║
+# ║    Aggregates and re-exports symbols from the events submodules.          ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
 """
 events package: Shell logic for event‑related functionality,
 re‑exporting from submodules.

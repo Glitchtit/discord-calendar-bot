@@ -3,6 +3,14 @@
 # ║    Handles agenda queries for specific dates and user calendars           ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
 
+"""
+Handles the `/agenda` slash command.
+
+Allows users to query their configured Google Calendars for events on a specific date.
+Uses `dateparser` to interpret natural language date inputs.
+Fetches events using `bot.events.get_events` and formats the output.
+"""
+
 from datetime import date, datetime, timedelta
 import discord
 from discord import Interaction
@@ -19,6 +27,25 @@ from utils.message_formatter import format_agenda_message
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ AGENDA COMMAND HANDLER                                                    ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- handle_agenda_command ---
+# The core logic for the /agenda slash command.
+# 1. Defers the interaction response (ephemeral) while processing.
+# 2. Ensures calendar data is loaded.
+# 3. Determines server timezone and preferred date formats (DMY/MDY) for `dateparser`.
+# 4. Parses the user-provided `date_str` using `dateparser` with appropriate settings.
+# 5. Handles invalid date input.
+# 6. Retrieves the user's associated calendar sources from `GROUPED_CALENDARS`.
+# 7. Handles cases where the user has no configured calendars.
+# 8. Fetches events for the target date from each source using `get_events` (with retries).
+# 9. Groups fetched events by day.
+# 10. Handles cases where no events are found for the target date.
+# 11. Formats the agenda using `format_agenda_message`.
+# 12. Sends the formatted agenda as an ephemeral follow-up message.
+# 13. Includes error handling for the entire process.
+# Args:
+#     interaction: The discord.Interaction object from the command invocation.
+#     date_str: The date string provided by the user (e.g., "today", "next friday", "12/25").
 async def handle_agenda_command(interaction: Interaction, date_str: str):
     await interaction.response.defer(ephemeral=True)
     try:
@@ -87,7 +114,24 @@ async def handle_agenda_command(interaction: Interaction, date_str: str):
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ COMMAND REGISTRATION                                                      ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- register ---
+# Registers the /agenda slash command with the bot's command tree.
+# This function is typically called during bot setup.
+# It defines the command name, description, and parameters.
+# Args:
+#     bot: The discord.Client or discord.ext.commands.Bot instance.
 async def register(bot: discord.Client):
-    @bot.tree.command(name="agenda")
+    # --- agenda_command ---
+    # The actual slash command function decorated with `@bot.tree.command`.
+    # This is the function directly invoked by Discord when the command is used.
+    # It takes the interaction and the required 'date' string argument.
+    # It simply calls `handle_agenda_command` to process the request.
+    # Args:
+    #     interaction: The discord.Interaction object.
+    #     date: The date string input from the user.
+    @bot.tree.command(name="agenda", description="Shows your agenda for a specific date (e.g., 'today', 'tomorrow', 'next friday').")
     async def agenda_command(interaction: discord.Interaction, date: str):
+        """Shows your agenda for a specific date."""
         await handle_agenda_command(interaction, date)
+    logger.info("Registered /agenda command.")

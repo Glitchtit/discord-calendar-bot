@@ -1,12 +1,33 @@
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                         VALIDATION UTILITIES                              ║
+# ║     Event and calendar input validators with sync and async helpers       ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# Standard library imports
 from datetime import datetime, timedelta
 from typing import Optional, Tuple, Union
 import re
+import asyncio
+
+# Third-party imports
+import requests
+from googleapiclient.errors import HttpError
+
+# Local application imports
 import logging
-from googleapiclient.errors import HttpError  # Added missing import
-import asyncio  # Added missing import
-import requests  # Added missing import
 logger = logging.getLogger("calendarbot")
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ DATE VALIDATION FUNCTIONS                                                  ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- validate_event_dates ---
+# Validate logical constraints for event start and end datetimes.
+# Args:
+#     start: Event start datetime (timezone-aware if using time).
+#     end: Event end datetime (timezone-aware if using time).
+# Returns:
+#     Tuple (is_valid: bool, error_message: str).
 def validate_event_dates(start: Optional[datetime], end: Optional[datetime]) -> Tuple[bool, str]:
     """
     Validate event date logic with enhanced checks.
@@ -60,6 +81,16 @@ def validate_event_dates(start: Optional[datetime], end: Optional[datetime]) -> 
         
     return True, ""
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ CALENDAR TYPE DETECTION                                                    ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- detect_calendar_type ---
+# Determine calendar type based on URL or ID format.
+# Args:
+#     url_or_id: Input string representing calendar URL or ID.
+# Returns:
+#     'google', 'ics', or 'unknown'.
 def detect_calendar_type(url_or_id: str) -> str:
     """
     Detect calendar type based on the format of the input.
@@ -103,6 +134,17 @@ def detect_calendar_type(url_or_id: str) -> str:
     
     return "unknown"
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ CALENDAR CONNECTION TESTS                                                  ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- test_calendar_connection ---
+# Test accessibility of a calendar source asynchronously.
+# Args:
+#     calendar_type: 'google' or 'ics'.
+#     calendar_id: Calendar identifier or URL.
+# Returns:
+#     Tuple (success: bool, message: str).
 async def test_calendar_connection(calendar_type: str, calendar_id: str) -> Tuple[bool, str]:
     """
     Test a calendar connection to verify it's accessible.
@@ -125,6 +167,12 @@ async def test_calendar_connection(calendar_type: str, calendar_id: str) -> Tupl
         logger.exception(f"Error testing calendar connection: {e}")
         return False, f"Error testing calendar: {str(e)}"
 
+# --- test_google_calendar ---
+# Async test for Google Calendar API connection.
+# Args:
+#     calendar_id: Google Calendar ID.
+# Returns:
+#     Tuple (success: bool, message: str).
 async def test_google_calendar(calendar_id: str) -> Tuple[bool, str]:
     """Test connection to a Google Calendar."""
     # Import here to avoid circular imports
@@ -161,6 +209,12 @@ async def test_google_calendar(calendar_id: str) -> Tuple[bool, str]:
     except Exception as e:
         return False, f"Error connecting to Google Calendar: {str(e)}"
 
+# --- test_ics_calendar ---
+# Async test for ICS calendar URL accessibility.
+# Args:
+#     url: ICS calendar URL.
+# Returns:
+#     Tuple (success: bool, message: str).
 async def test_ics_calendar(url: str) -> Tuple[bool, str]:
     """Test connection to an ICS calendar URL."""
     # Convert webcal:// to https:// for compatibility

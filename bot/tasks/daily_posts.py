@@ -1,3 +1,9 @@
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                     BOT TASKS DAILY POSTS MODULE                     ║
+# ║    Handles the scheduled task for posting daily event summaries to       ║
+# ║    configured announcement channels.                                     ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
 """
 Daily event posting tasks and utilities.
 
@@ -15,6 +21,18 @@ from config.server_config import get_all_server_ids, load_server_config, get_ann
 from .health import TaskLock, update_task_health
 from .utilities import send_embed
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ DAILY POST SCHEDULER TASK                                                 ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- schedule_daily_posts (task loop) ---
+# Runs every minute to check if it's time to post daily summaries for any configured server.
+# Checks the current time against each server's configured timezone and post time (default 8:00 AM).
+# If it's time, calls `post_todays_happenings` for that server.
+# Uses TaskLock for concurrency control and updates task health.
+# Notifies admins on critical errors.
+# Args:
+#     bot: The discord.py Bot instance.
 @tasks.loop(minutes=1)
 async def schedule_daily_posts(bot):
     """Schedule daily posts at specific times"""
@@ -73,6 +91,21 @@ async def schedule_daily_posts(bot):
             # Add a small delay before the next iteration if we hit an error
             await asyncio.sleep(5)
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ EVENT POSTING LOGIC                                                       ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- post_todays_happenings ---
+# Posts the events for the current day to the appropriate announcement channel(s).
+# Can optionally include a greeting message.
+# If `server_id` is provided, posts only for that server.
+# Otherwise, iterates through all configured servers.
+# Calls `bot.commands.daily.post_daily_events` to handle the actual fetching and formatting for each user/calendar group.
+# Args:
+#     bot: The discord.py Bot instance.
+#     server_id: Optional server ID to post for a specific server.
+#     include_greeting: Boolean flag to include a greeting message.
+# Returns: True if events were successfully posted for at least one group, False otherwise.
 async def post_todays_happenings(bot, server_id=None, include_greeting: bool = False):
     """Post today's events to the announcement channel, not as DMs"""
     try:
@@ -127,6 +160,15 @@ async def post_todays_happenings(bot, server_id=None, include_greeting: bool = F
         logger.exception(f"Error in post_todays_happenings: {e}")
         return False
 
+# --- post_all_daily_events_to_channel ---
+# Fetches *all* events for a given date (defaults to today) across *all* configured calendars
+# for a specific server and posts them in a single embed to that server's announcement channel.
+# This is different from `post_todays_happenings` which posts per user/tag.
+# Sorts events by time and formats them.
+# Includes an @everyone ping if any of the calendars contributing events are server-wide (user_id=None).
+# Args:
+#     bot: The discord.py Bot instance.
+#     date: The date for which to post events (defaults to today).
 async def post_all_daily_events_to_channel(bot, date=None):
     """Post all daily events to the announcement channel."""
     if date is None:

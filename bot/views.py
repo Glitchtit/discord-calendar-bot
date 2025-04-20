@@ -1,3 +1,7 @@
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                       DISCORD UI VIEWS & MODALS                          ║
+# ║ Defines interactive components like buttons, modals, and dropdowns       ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
 import discord
 from discord.ui import View, Modal, Button, Select, TextInput, ChannelSelect # Added ChannelSelect
 from config.server_config import add_calendar, remove_calendar, load_server_config, set_announcement_channel, get_announcement_channel_id # Added set/get announcement channel
@@ -7,6 +11,12 @@ from utils.validators import detect_calendar_type
 # Removing this import to fix circular dependency
 # from bot.core import Bot
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ ADD CALENDAR MODAL                                                        ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- AddCalendarModal ---
+# A modal (popup form) for users to input calendar URL/ID and an optional display name.
 class AddCalendarModal(Modal, title="Add Calendar"):
     """Modal form for adding a new calendar."""
     calendar_url = TextInput(
@@ -23,11 +33,22 @@ class AddCalendarModal(Modal, title="Add Calendar"):
     )
     # Removed calendar_scope input field - will be handled by a dropdown after modal submission
 
+    # --- __init__ ---
+    # Initializes the modal.
+    # Args:
+    #     bot: The discord.Client instance.
+    #     guild_id: The ID of the server where the modal is invoked.
     def __init__(self, bot, guild_id):
         super().__init__(timeout=300)
         self.bot = bot
         self.guild_id = guild_id
 
+    # --- on_submit ---
+    # Handles the logic when the user submits the modal.
+    # Validates input, tests calendar connection, extracts name if needed,
+    # and then presents the CalendarUserSelectView for assignment.
+    # Args:
+    #     interaction: The discord.Interaction object from the modal submission.
     async def on_submit(self, interaction: discord.Interaction):
         """Handle the form submission."""
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -97,6 +118,12 @@ class AddCalendarModal(Modal, title="Add Calendar"):
             ephemeral=True
         )
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ REMOVE CALENDAR VIEW                                                      ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- CalendarRemoveView ---
+# A view containing a dropdown menu to select a calendar for removal.
 class CalendarRemoveView(View):
     """View for selecting which calendar to remove."""
     def __init__(self, bot, guild_id, calendars):
@@ -108,6 +135,8 @@ class CalendarRemoveView(View):
         # Create the dropdown
         self.update_dropdown()
 
+    # --- update_dropdown ---
+    # Clears existing items and rebuilds the dropdown menu with the current list of calendars.
     def update_dropdown(self):
         """Update the dropdown with the list of calendars."""
         self.clear_items()
@@ -123,6 +152,11 @@ class CalendarRemoveView(View):
         select.callback = self.select_callback
         self.add_item(select)
 
+    # --- select_callback ---
+    # Callback triggered when a user selects a calendar from the dropdown.
+    # Presents the ConfirmRemovalView for confirmation.
+    # Args:
+    #     interaction: The discord.Interaction object from the dropdown selection.
     async def select_callback(self, interaction: discord.Interaction):
         """Handle calendar selection for removal."""
         calendar_id = interaction.data["values"][0]
@@ -133,6 +167,12 @@ class CalendarRemoveView(View):
             ephemeral=True
         )
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ CONFIRM REMOVAL VIEW                                                      ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- ConfirmRemovalView ---
+# A simple view with "Confirm" and "Cancel" buttons for calendar removal.
 class ConfirmRemovalView(View):
     """Confirmation view for calendar removal."""
     def __init__(self, bot, guild_id, calendar_id):
@@ -141,6 +181,13 @@ class ConfirmRemovalView(View):
         self.guild_id = guild_id
         self.calendar_id = calendar_id
 
+    # --- confirm_button ---
+    # Callback for the "Confirm Removal" button.
+    # Calls the `remove_calendar` function, reinitializes events on success,
+    # and sends a confirmation message.
+    # Args:
+    #     interaction: The discord.Interaction object.
+    #     button: The discord.ui.Button object that was clicked.
     @discord.ui.button(label="Confirm Removal", style=discord.ButtonStyle.danger)
     async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Remove the calendar when confirmed."""
@@ -163,13 +210,24 @@ class ConfirmRemovalView(View):
             ephemeral=True
         )
 
+    # --- cancel_button ---
+    # Callback for the "Cancel" button.
+    # Sends a cancellation message and stops the view.
+    # Args:
+    #     interaction: The discord.Interaction object.
+    #     button: The discord.ui.Button object that was clicked.
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Cancel the removal."""
         await interaction.response.send_message("Calendar removal cancelled.", ephemeral=True)
         self.stop()
 
-# View for selecting the announcement channel
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ ANNOUNCEMENT CHANNEL VIEW                                                 ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- AnnouncementChannelView ---
+# A view containing a channel select dropdown for setting the server's announcement channel.
 class AnnouncementChannelView(View):
     """View for selecting the announcement channel."""
     def __init__(self, bot, guild_id):
@@ -188,6 +246,11 @@ class AnnouncementChannelView(View):
         self.channel_select.callback = self.select_callback
         self.add_item(self.channel_select)
 
+    # --- select_callback ---
+    # Callback triggered when a channel is selected from the dropdown.
+    # Saves the selected channel ID to the server configuration.
+    # Args:
+    #     interaction: The discord.Interaction object from the channel selection.
     async def select_callback(self, interaction: discord.Interaction):
         """Handle channel selection."""
         selected_channel = interaction.data["values"][0] # Channel ID as string
@@ -207,6 +270,13 @@ class AnnouncementChannelView(View):
             logger.error(f"Failed to set announcement channel for guild {self.guild_id}: {message}")
         self.stop() # Stop the view after selection
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ CALENDAR SETUP VIEW (MAIN)                                                ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- CalendarSetupView ---
+# The main interactive view for managing server calendar settings.
+# Includes buttons for adding, removing, listing calendars, and setting the announcement channel.
 class CalendarSetupView(View):
     """Main view for the calendar setup wizard."""
     def __init__(self, bot, guild_id):
@@ -216,6 +286,9 @@ class CalendarSetupView(View):
         # Add button to set announcement channel dynamically
         self.update_announcement_button()
 
+    # --- on_timeout ---
+    # Called when the view times out (no interaction for a while).
+    # Logs the timeout event.
     async def on_timeout(self):
         logger.info(f"CalendarSetupView for guild {self.guild_id} timed out.")
         # Optionally notify the user about the timeout
@@ -223,6 +296,9 @@ class CalendarSetupView(View):
         #    "The calendar setup session has timed out. Please restart the setup process."
         #)
 
+    # --- update_announcement_button ---
+    # Dynamically updates the label and style of the "Set Announcement Channel" button
+    # based on the current server configuration.
     def update_announcement_button(self):
         """Adds or updates the announcement channel button based on current config."""
         # Remove existing button if it exists
@@ -273,12 +349,24 @@ class CalendarSetupView(View):
              self.add_item(announcement_button) # Append if list button not found
 
 
+    # --- add_calendar_button ---
+    # Callback for the "Add Calendar" button.
+    # Opens the AddCalendarModal.
+    # Args:
+    #     interaction: The discord.Interaction object.
+    #     button: The discord.ui.Button object that was clicked.
     @discord.ui.button(label="Add Calendar", style=discord.ButtonStyle.primary, emoji="➕")
     async def add_calendar_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         logger.info(f"User {interaction.user.id} clicked 'Add Calendar' in guild {self.guild_id}.")
         modal = AddCalendarModal(self.bot, self.guild_id)
         await interaction.response.send_modal(modal)
 
+    # --- remove_calendar_button ---
+    # Callback for the "Remove Calendar" button.
+    # Loads existing calendars and presents the CalendarRemoveView.
+    # Args:
+    #     interaction: The discord.Interaction object.
+    #     button: The discord.ui.Button object that was clicked.
     @discord.ui.button(label="Remove Calendar", style=discord.ButtonStyle.danger, emoji="🗑️")
     async def remove_calendar_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         logger.info(f"User {interaction.user.id} clicked 'Remove Calendar' in guild {self.guild_id}.")
@@ -294,6 +382,12 @@ class CalendarSetupView(View):
         view = CalendarRemoveView(self.bot, self.guild_id, calendars)
         await interaction.response.send_message("Select the calendar you want to remove:", view=view, ephemeral=True)
 
+    # --- list_calendars_button ---
+    # Callback for the "List Calendars" button.
+    # Loads and displays the currently configured calendars for the server.
+    # Args:
+    #     interaction: The discord.Interaction object.
+    #     button: The discord.ui.Button object that was clicked.
     @discord.ui.button(label="List Calendars", style=discord.ButtonStyle.secondary, emoji="📋")
     async def list_calendars_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         logger.info(f"User {interaction.user.id} clicked 'List Calendars' in guild {self.guild_id}.")
@@ -314,7 +408,12 @@ class CalendarSetupView(View):
             lines.append(f"- {cal.get('name', 'Unnamed Calendar')} (ID: {cal.get('id', 'unknown')})")
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
-    # Callback for the new announcement channel button
+    # --- set_announcement_channel_button ---
+    # Callback for the "Set Announcement Channel" button.
+    # Presents the AnnouncementChannelView to the user.
+    # Waits for the sub-view to complete and updates its own button state.
+    # Args:
+    #     interaction: The discord.Interaction object.
     async def set_announcement_channel_button(self, interaction: discord.Interaction):
         """Callback for the 'Set Announcement Channel' button."""
         logger.info(f"User {interaction.user.id} clicked 'Set Announcement Channel' in guild {self.guild_id}.")
@@ -337,6 +436,13 @@ class CalendarSetupView(View):
         except Exception as e:
              logger.error(f"Error editing original setup message for guild {self.guild_id}: {e}")
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ CALENDAR USER ASSIGNMENT VIEW                                             ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- CalendarUserSelectView ---
+# A view presented after adding a calendar, allowing the user to assign it
+# to a specific server member or to "Everyone".
 class CalendarUserSelectView(View):
     """View for selecting users to assign a calendar to."""
     def __init__(self, bot, guild_id, calendar_data, connection_message):
@@ -349,6 +455,8 @@ class CalendarUserSelectView(View):
         # Create the dropdown for user selection
         self.create_user_dropdown()
     
+    # --- create_user_dropdown ---
+    # Creates the dropdown menu containing server members and the "Everyone" option.
     def create_user_dropdown(self):
         """Create the dropdown with server members and 'Everyone' option."""
         guild = self.bot.get_guild(self.guild_id)
@@ -390,6 +498,12 @@ class CalendarUserSelectView(View):
         select.callback = self.user_selected
         self.add_item(select)
     
+    # --- user_selected ---
+    # Callback triggered when a user or "Everyone" is selected from the dropdown.
+    # Sets the `user_id` in the calendar data, adds the calendar to the config,
+    # reinitializes events, and sends a confirmation message.
+    # Args:
+    #     interaction: The discord.Interaction object from the dropdown selection.
     async def user_selected(self, interaction: discord.Interaction):
         """Handle user selection for calendar assignment."""
         selected_value = interaction.data["values"][0]

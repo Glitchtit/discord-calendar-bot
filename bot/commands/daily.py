@@ -1,12 +1,20 @@
 # ╔════════════════════════════════════════════════════════════════════════════╗
-# ║                  CALENDAR BOT DAILY COMMAND HANDLER                      ║
-# ║    Handles daily event posting for users and announcement channels        ║
+# ║                   CALENDAR BOT DAILY COMMAND HANDLER                     ║
+# ║    Handles manual requests for the daily event summary post                ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+"""
+Handles the `/daily` slash command.
+
+Allows users (typically admins or those with permissions) to manually trigger
+the posting of the daily event summary for the current day or the next day.
+This uses the same logic as the automated daily task (`bot.tasks.daily_posts`).
+"""
 
 from datetime import date
 import discord
 import asyncio
-from discord import Interaction
+from discord import Interaction, app_commands
 from bot.events import GROUPED_CALENDARS, get_events
 from .utilities import send_embed
 from utils.logging import logger
@@ -16,6 +24,20 @@ from utils.message_formatter import format_daily_message
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ POST DAILY EVENTS                                                         ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- post_daily_events ---
+# Fetches and posts the daily events for a specific user ID or the server-wide ("1") tag.
+# Retrieves events for the given `day` from the user's/tag's associated calendars.
+# Formats the events into a message using `format_daily_message`.
+# Attempts to send the message to the configured announcement channel for the relevant server(s).
+# If no announcement channel is found, it can fall back to the `interaction_channel` if provided.
+# Args:
+#     bot: The discord.Client instance.
+#     user_id: The Discord user ID or "1" for server-wide calendars.
+#     day: The date object for which to fetch events.
+#     interaction_channel: (Optional) The channel where the command was invoked, used as a fallback.
+#     server_id: (Optional) The specific server ID to post for. If None, checks all servers.
+# Returns: True if events were successfully posted, False otherwise.
 async def post_daily_events(bot, user_id: str, day: date, interaction_channel=None, server_id=None):
     try:
         sources = GROUPED_CALENDARS.get(user_id, [])
@@ -78,9 +100,23 @@ async def post_daily_events(bot, user_id: str, day: date, interaction_channel=No
         return False
 
 # ╔════════════════════════════════════════════════════════════════════════════╗
-# ║ DAILY COMMAND HANDLER                                                     ║
+# ║ DAILY COMMAND HANDLER                                                      ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
-async def handle_daily_command(interaction: Interaction):
+
+# --- handle_daily_command ---
+# The core logic for the /daily slash command.
+# 1. Checks if the command is used within a server (guild).
+# 2. Defers the interaction response (ephemeral, thinking) while processing.
+# 3. Retrieves the server configuration.
+# 4. Checks if the invoking user has administrator permissions OR is the bot owner.
+# 5. Determines the target date (today or tomorrow) based on the `day` parameter.
+# 6. Calls `post_daily_events` (from `bot.tasks.daily_posts`) to generate and send the post.
+# 7. Sends a confirmation message to the invoking user (ephemeral).
+# 8. Includes error handling for missing configuration, permissions, and task execution.
+# Args:
+#     interaction: The discord.Interaction object from the command invocation.
+#     day: String indicating whether to post for "today" or "tomorrow".
+async def handle_daily_command(interaction: Interaction, day: str):
     await interaction.response.defer()
     try:
         count = 0
@@ -95,8 +131,29 @@ async def handle_daily_command(interaction: Interaction):
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ COMMAND REGISTRATION                                                      ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- register ---
+# Registers the /daily slash command with the bot's command tree.
+# This function is typically called during bot setup.
+# It defines the command name, description, and the required 'day' parameter
+# with choices ("today", "tomorrow").
+# Args:
+#     bot: The discord.Client or discord.ext.commands.Bot instance.
 async def register(bot: discord.Client):
-    @bot.tree.command(name="daily")
-    @discord.app_commands.checks.has_permissions(manage_messages=True)
-    async def daily_command(interaction: discord.Interaction):
-        await handle_daily_command(interaction)
+    # --- daily_command ---
+    # The actual slash command function decorated with `@bot.tree.command`.
+    # This is the function directly invoked by Discord when the command is used.
+    # It takes the interaction and the required 'day' choice argument.
+    # It simply calls `handle_daily_command` to process the request.
+    # Args:
+    #     interaction: The discord.Interaction object.
+    #     day: The choice selected by the user ("today" or "tomorrow").
+    @bot.tree.command(name="daily", description="Manually post the daily events summary.")
+    @app_commands.choices(day=[
+        app_commands.Choice(name="today", value="today"),
+        app_commands.Choice(name="tomorrow", value="tomorrow"),
+    ])
+    async def daily_command(interaction: discord.Interaction, day: app_commands.Choice[str]):
+        """Manually post the daily events summary for today or tomorrow."""
+        await handle_daily_command(interaction, day.value)
+    logger.info("Registered /daily command.")

@@ -1,17 +1,40 @@
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                       DISCORD MESSAGE FORMATTERS                           ║
+# ║ Utilities for formatting calendar events and agendas into Discord Markdown.║
+# ║ Includes functions for daily, weekly, and single-day agenda messages.      ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# Standard library imports
 from datetime import datetime, date
 from typing import Dict, List, Any, Optional
 import hashlib
 
-# --- UX-Optimized Markdown Formatters ---
+# Local application imports
+# (No local imports in this file)
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ HELPER FUNCTIONS                                                           ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- get_calendar_color_emoji ---
+# Generates a consistent colored square emoji based on a calendar name hash.
+# Used for visually distinguishing calendars in messages.
+# Args:
+#     calendar_name: The name of the calendar.
+# Returns: A string containing a colored square emoji.
 def get_calendar_color_emoji(calendar_name: str) -> str:
-    """Consistent colored emoji for a calendar name."""
     color_emojis = ['🟦', '🟥', '🟨', '🟩', '🟪', '🟧', '🟫', '⬛', '⬜']
     hash_value = int(hashlib.md5(calendar_name.encode()).hexdigest(), 16)
     return color_emojis[hash_value % len(color_emojis)]
 
+# --- format_event_markdown ---
+# Formats a single event dictionary into a Discord Markdown string.
+# Includes title, time, location (optional), and description (truncated).
+# Args:
+#     event: The event dictionary (expected keys: summary, start, end, location, description).
+#     calendar_emoji: Optional emoji string to prefix the event line.
+# Returns: A formatted string representing the event for Discord.
 def format_event_markdown(event: Dict[str, Any], calendar_emoji: Optional[str] = None) -> str:
-    """Format a single event for Discord markdown."""
     title = event.get("summary", "Untitled Event")
     location = event.get("location", "")
     description = event.get("description", "")
@@ -47,8 +70,13 @@ def format_event_markdown(event: Dict[str, Any], calendar_emoji: Optional[str] =
         line += f"\n  _{short_desc}_"
     return line
 
+# --- format_calendar_legend ---
+# Creates a Markdown legend mapping calendar names to their color emojis.
+# Only generates a legend if there are 2 or more calendars.
+# Args:
+#     calendar_names: A list of calendar names.
+# Returns: A list of strings representing the legend lines, or an empty list.
 def format_calendar_legend(calendar_names: List[str]) -> List[str]:
-    """Return a markdown legend for calendar colors."""
     if len(calendar_names) < 2:
         return []
     legend = ["**📊 Calendar Legend**"]
@@ -56,8 +84,20 @@ def format_calendar_legend(calendar_names: List[str]) -> List[str]:
         legend.append(f"{get_calendar_color_emoji(name)} {name}")
     return legend + [""]
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ AGENDA MESSAGE FORMATTERS                                                  ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- format_daily_message ---
+# Formats a daily agenda message for a user or public channel.
+# Includes a header, total event count, optional legend, and events grouped by calendar.
+# Args:
+#     user_id: The Discord user ID (or "1" for public channel).
+#     events_by_calendar: Dict mapping calendar names to lists of event dicts.
+#     day: The date for which the agenda is being generated.
+#     is_public: Boolean indicating if the message is for a public channel.
+# Returns: A formatted multi-line string for the daily agenda message.
 def format_daily_message(user_id: str, events_by_calendar: Dict[str, List[Dict[str, Any]]], day: date, is_public: bool = False) -> str:
-    """Format a daily agenda message for Discord."""
     today_str = day.strftime('%A, %B %d, %Y')
     total_events = sum(len(ev) for ev in events_by_calendar.values())
     user_mention = "everyone" if user_id == "1" and is_public else f"<@{user_id}>"
@@ -81,8 +121,15 @@ def format_daily_message(user_id: str, events_by_calendar: Dict[str, List[Dict[s
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     return "\n".join(lines)
 
+# --- format_weekly_message ---
+# Formats a weekly agenda message for a user.
+# Includes a header, total event count, optional legend, and events grouped by day.
+# Args:
+#     user_id: The Discord user ID.
+#     events_by_day: Dict mapping dates to lists of event dicts for the week.
+#     start_day: The starting date of the week (usually a Monday).
+# Returns: A formatted multi-line string for the weekly agenda message.
 def format_weekly_message(user_id: str, events_by_day: Dict[date, List[Dict[str, Any]]], start_day: date) -> str:
-    """Format a weekly agenda message for Discord."""
     week_of = start_day.strftime('%B %d, %Y')
     total_events = sum(len(ev) for ev in events_by_day.values())
     header = f"# 📆 <@{user_id}>'s Weekly Schedule • Week of {week_of}\n"
@@ -107,8 +154,16 @@ def format_weekly_message(user_id: str, events_by_day: Dict[date, List[Dict[str,
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     return "\n".join(lines)
 
+# --- format_agenda_message ---
+# Formats a single-day agenda message, often used for the /agenda command.
+# Similar to daily message but can have a custom source name.
+# Args:
+#     user_id: The Discord user ID.
+#     events_by_day: Dict mapping the target date to a list of event dicts.
+#     target_date: The specific date for the agenda.
+#     source_name: Optional name to display in the header (e.g., calendar name).
+# Returns: A formatted multi-line string for the single-day agenda.
 def format_agenda_message(user_id: str, events_by_day: Dict[date, List[Dict[str, Any]]], target_date: date, source_name: Optional[str] = None) -> str:
-    """Format a single-day agenda message for Discord."""
     date_str = target_date.strftime('%A, %B %d, %Y')
     total_events = sum(len(ev) for ev in events_by_day.values())
     header = f"# 🗒️ {source_name or f'<@{user_id}>'}'s Agenda • {date_str}\n"

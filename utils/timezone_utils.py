@@ -1,17 +1,23 @@
-"""
-timezone_utils.py: Standardized timezone handling across the application
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                         TIMEZONE UTILITIES                                 ║
+# ║    Functions for consistent timezone handling across the application       ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
 
-This module provides consistent timezone handling functions to ensure event times
-are displayed correctly across different calendar sources.
-"""
-
+# Standard library imports
 from datetime import datetime, date, time, timedelta
 import re
 from typing import Optional, Union, Dict, Any, Tuple
+
+# Third-party imports
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import logging
 
+# Local application imports
 logger = logging.getLogger("calendarbot")
+
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ TIMEZONE CONSTANTS                                                         ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
 
 # Default timezone to use if none is specified
 DEFAULT_TIMEZONE = "UTC"
@@ -30,18 +36,17 @@ COMMON_TIMEZONE_ALIASES = {
     "utc": "UTC"
 }
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ TIMEZONE FUNCTIONS                                                         ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- get_timezone ---
+# Get a ZoneInfo object for the specified timezone name.
+# Args:
+#     tz_name: Timezone name or alias
+# Returns: ZoneInfo object for the timezone
+#          Falls back to UTC if the timezone is invalid.
 def get_timezone(tz_name: str) -> ZoneInfo:
-    """
-    Get a ZoneInfo object for the specified timezone name.
-    
-    Args:
-        tz_name: Timezone name or alias
-        
-    Returns:
-        ZoneInfo object for the timezone
-    
-    Falls back to UTC if the timezone is invalid.
-    """
     if not tz_name:
         return ZoneInfo(DEFAULT_TIMEZONE)
     
@@ -58,17 +63,13 @@ def get_timezone(tz_name: str) -> ZoneInfo:
         logger.warning(f"Invalid timezone '{tz_name}', falling back to {DEFAULT_TIMEZONE}: {e}")
         return ZoneInfo(DEFAULT_TIMEZONE)
 
+# --- get_user_timezone ---
+# Get the appropriate timezone for a user, with fallbacks.
+# Args:
+#     user_id: Discord user ID
+#     source_meta: Optional calendar source metadata with timezone info
+# Returns: ZoneInfo object for the user's timezone
 def get_user_timezone(user_id: str, source_meta: Optional[Dict[str, Any]] = None) -> ZoneInfo:
-    """
-    Get the appropriate timezone for a user, with fallbacks.
-    
-    Args:
-        user_id: Discord user ID
-        source_meta: Optional calendar source metadata with timezone info
-        
-    Returns:
-        ZoneInfo object for the user's timezone
-    """
     # Try to get from user preferences (future implementation)
     # For now, use calendar timezone if available, otherwise default
     if source_meta and "timezone" in source_meta:
@@ -77,16 +78,12 @@ def get_user_timezone(user_id: str, source_meta: Optional[Dict[str, Any]] = None
     # Default timezone
     return ZoneInfo(DEFAULT_TIMEZONE)
 
+# --- get_server_timezone ---
+# Get the timezone configured for a specific server.
+# Args:
+#     server_id: The ID of the Discord server
+# Returns: The timezone string (e.g. 'Europe/Berlin') or None if not configured
 def get_server_timezone(server_id):
-    """
-    Get the timezone configured for a specific server.
-    
-    Args:
-        server_id (str): The ID of the Discord server
-        
-    Returns:
-        str: The timezone string (e.g. 'Europe/Berlin') or None if not configured
-    """
     from utils.server_utils import get_server_config
     
     server_config = get_server_config(server_id)
@@ -96,17 +93,17 @@ def get_server_timezone(server_id):
     # Default to UTC if not specified
     return None
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ DATETIME PARSING AND FORMATTING                                            ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- parse_datetime ---
+# Parse a datetime string into a timezone-aware datetime object.
+# Args:
+#     dt_str: Datetime string to parse
+#     timezone: Optional timezone to apply if the string has no timezone
+# Returns: Timezone-aware datetime object
 def parse_datetime(dt_str: str, timezone: Optional[Union[str, ZoneInfo]] = None) -> datetime:
-    """
-    Parse a datetime string into a timezone-aware datetime object.
-    
-    Args:
-        dt_str: Datetime string to parse
-        timezone: Optional timezone to apply if the string has no timezone
-        
-    Returns:
-        Timezone-aware datetime object
-    """
     # Convert timezone string to ZoneInfo if needed
     if isinstance(timezone, str):
         timezone = get_timezone(timezone)
@@ -149,17 +146,13 @@ def parse_datetime(dt_str: str, timezone: Optional[Union[str, ZoneInfo]] = None)
         # Return current time as fallback
         return datetime.now(timezone)
 
+# --- format_event_time ---
+# Format an event's time in a user-friendly way, accounting for timezones.
+# Args:
+#     event: Event dictionary
+#     user_timezone: Optional timezone to display the time in
+# Returns: Formatted time string
 def format_event_time(event: Dict[str, Any], user_timezone: Optional[ZoneInfo] = None) -> str:
-    """
-    Format an event's time in a user-friendly way, accounting for timezones.
-    
-    Args:
-        event: Event dictionary 
-        user_timezone: Optional timezone to display the time in
-        
-    Returns:
-        Formatted time string
-    """
     if not event:
         return "Unknown time"
     
@@ -170,13 +163,14 @@ def format_event_time(event: Dict[str, Any], user_timezone: Optional[ZoneInfo] =
     # Get start time
     start_container = event.get("start", {})
     
-    # Handle all-day events
+    # --- Handle all-day events ---
+    # For events without specific start times
     if "date" in start_container:
-        # All-day event
         start_date = date.fromisoformat(start_container["date"])
         return f"All day on {start_date.strftime('%A, %B %d, %Y')}"
     
-    # Handle timed events
+    # --- Handle timed events ---
+    # For events with specific start and end times
     if "dateTime" in start_container:
         start_dt = parse_datetime(start_container["dateTime"], user_timezone)
         end_container = event.get("end", {})

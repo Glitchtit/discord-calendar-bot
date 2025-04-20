@@ -19,6 +19,18 @@ from utils import split_message_by_lines
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ POST WEEKLY EVENTS                                                        ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- post_weekly_events ---
+# Fetches events for a specific user/group for the week starting from `monday`,
+# formats them into a weekly summary, and posts it to the configured announcement channel.
+# Handles message splitting for long summaries.
+# Falls back to the interaction channel if the announcement channel isn't found.
+# Args:
+#     bot: The discord.Client instance.
+#     user_id: The ID of the user/group (or "1" for server-wide) to fetch events for.
+#     monday: The date object representing the Monday of the target week.
+#     interaction_channel: The channel where the command was invoked, used as a fallback.
+# Returns: True if the message was sent successfully, False otherwise.
 async def post_weekly_events(bot, user_id: str, monday: date, interaction_channel=None):
     try:
         sources = GROUPED_CALENDARS.get(user_id, [])
@@ -97,6 +109,14 @@ async def post_weekly_events(bot, user_id: str, monday: date, interaction_channe
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ WEEKLY COMMAND HANDLER                                                     ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- handle_weekly_command ---
+# The core logic for the /weekly slash command.
+# Iterates through all known user/tag IDs in `GROUPED_CALENDARS`.
+# Calls `post_weekly_events` for each user/tag ID for the current week.
+# Sends a follow-up message indicating how many users' events were posted.
+# Args:
+#     interaction: The discord.Interaction object from the command invocation.
 async def handle_weekly_command(interaction: Interaction):
     await interaction.response.defer()
     try:
@@ -113,7 +133,19 @@ async def handle_weekly_command(interaction: Interaction):
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║ COMMAND REGISTRATION                                                      ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- register ---
+# Registers the /weekly slash command with the bot's command tree.
+# Requires 'Manage Messages' permission.
+# Args:
+#     bot: The discord.Client instance to register the command with.
 async def register(bot: discord.Client):
+    # --- weekly_command ---
+    # The actual slash command function invoked by Discord.
+    # Requires 'Manage Messages' permission.
+    # Calls `handle_weekly_command` to process the request.
+    # Args:
+    #     interaction: The discord.Interaction object.
     @bot.tree.command(name="weekly")
     @discord.app_commands.checks.has_permissions(manage_messages=True)
     async def weekly_command(interaction: discord.Interaction):

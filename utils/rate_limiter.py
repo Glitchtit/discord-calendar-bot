@@ -1,29 +1,39 @@
-"""
-rate_limiter.py: Implements token bucket rate limiting for API requests
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                           RATE LIMITER MODULE                              ║
+# ║    Token bucket implementation for controlling API request frequency       ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
 
-This module provides rate limiting functionality to prevent API quota exhaustion
-during peak usage times. It implements a token bucket algorithm that allows for
-controlled bursts of activity while maintaining a sustainable average rate.
-"""
-
+# Standard library imports
 import time
 import threading
 from typing import Dict, Optional, List
+
+# Local application imports
 from utils.logging import logger
 
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ TOKEN BUCKET IMPLEMENTATION                                                ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
 class TokenBucketRateLimiter:
-    """
-    Token bucket rate limiter for controlling API request rates.
+    # --- TokenBucketRateLimiter ---
+    # Implements the token bucket algorithm for rate limiting API requests.
+    # 
+    # The algorithm works by:
+    # 1. Adding tokens to a bucket at a fixed rate (token_refill_rate)
+    # 2. Allowing requests to consume tokens from the bucket
+    # 3. Blocking requests when the bucket is empty
+    #
+    # This allows for bursts of activity (up to max_tokens) while
+    # maintaining a sustainable long-term average rate.
     
-    The token bucket algorithm works by:
-    1. Adding tokens to a bucket at a fixed rate (token_refill_rate)
-    2. Allowing requests to consume tokens from the bucket
-    3. Blocking requests when the bucket is empty
-    
-    This allows for bursts of activity (up to max_tokens) while
-    maintaining a sustainable long-term average rate.
-    """
-    
+    # --- __init__ ---
+    # Initialize a new token bucket rate limiter.
+    # Args:
+    #     name: Name of the rate limiter for logging
+    #     max_tokens: Maximum number of tokens the bucket can hold
+    #     token_refill_rate: Rate at which tokens are added (tokens per second)
+    #     refill_interval: How often to refill tokens (in seconds)
     def __init__(
         self, 
         name: str,
@@ -31,15 +41,6 @@ class TokenBucketRateLimiter:
         token_refill_rate: float,
         refill_interval: float = 1.0
     ):
-        """
-        Initialize a new token bucket rate limiter.
-        
-        Args:
-            name: Name of the rate limiter for logging
-            max_tokens: Maximum number of tokens the bucket can hold
-            token_refill_rate: Rate at which tokens are added (tokens per second)
-            refill_interval: How often to refill tokens (in seconds)
-        """
         self.name = name
         self.max_tokens = max_tokens
         self.token_refill_rate = token_refill_rate
@@ -55,8 +56,9 @@ class TokenBucketRateLimiter:
         logger.info(f"Initialized rate limiter '{name}' with {max_tokens} max tokens, "
                   f"refill rate of {token_refill_rate} tokens/sec")
     
+    # --- _refill ---
+    # Refill tokens based on elapsed time since last refill.
     def _refill(self):
-        """Refill tokens based on elapsed time since last refill."""
         now = time.time()
         elapsed = now - self.last_refill
         
@@ -67,17 +69,13 @@ class TokenBucketRateLimiter:
         self.tokens = min(self.tokens + new_tokens, self.max_tokens)
         self.last_refill = now
     
+    # --- consume ---
+    # Attempt to consume tokens from the bucket.
+    # Args:
+    #     tokens: Number of tokens to consume (default 1.0)
+    #     wait: If True, wait until tokens are available
+    # Returns: True if tokens were consumed, False otherwise
     def consume(self, tokens: float = 1.0, wait: bool = False) -> bool:
-        """
-        Attempt to consume tokens from the bucket.
-        
-        Args:
-            tokens: Number of tokens to consume (default 1.0)
-            wait: If True, wait until tokens are available
-            
-        Returns:
-            True if tokens were consumed, False otherwise
-        """
         with self.lock:
             self.request_count += 1
             
@@ -116,8 +114,10 @@ class TokenBucketRateLimiter:
                 self.throttled_count += 1
                 return False
     
+    # --- get_stats ---
+    # Get current statistics for this rate limiter.
+    # Returns: Dictionary with rate limiter statistics
     def get_stats(self) -> Dict[str, float]:
-        """Get current stats for this rate limiter."""
         with self.lock:
             self._refill()  # Make sure token count is current
             return {
@@ -129,13 +129,17 @@ class TokenBucketRateLimiter:
                 "throttle_ratio": self.throttled_count / self.request_count if self.request_count else 0
             }
     
+    # --- get_token_count ---
+    # Get the current number of tokens in the bucket.
+    # Returns: Current token count as a float
     def get_token_count(self) -> float:
-        """Get the current number of tokens in the bucket."""
         with self.lock:
             self._refill()  # Make sure token count is current
             return self.tokens
 
-# Create rate limiters for different API endpoints
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║ PREDEFINED RATE LIMITERS                                                   ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
 
 # General Calendar API operations (excluding expensive list operations)
 # Allow bursts of up to 10 operations, long-term average of 2 per second
@@ -161,6 +165,10 @@ ENDPOINT_RATE_LIMITERS = {
     "calendars.get": CALENDAR_API_LIMITER
 }
 
+# --- get_rate_limiter_for_endpoint ---
+# Get the appropriate rate limiter for a specific API endpoint.
+# Args:
+#     endpoint: The API endpoint name
+# Returns: The appropriate TokenBucketRateLimiter instance
 def get_rate_limiter_for_endpoint(endpoint: str) -> TokenBucketRateLimiter:
-    """Get the appropriate rate limiter for a specific API endpoint."""
     return ENDPOINT_RATE_LIMITERS.get(endpoint, ENDPOINT_RATE_LIMITERS["default"])

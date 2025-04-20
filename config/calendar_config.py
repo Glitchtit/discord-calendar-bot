@@ -1,14 +1,25 @@
-"""Handles calendar storage and validation"""
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                      CALENDAR CONFIGURATION MODULE                       ║
+# ║                                                                            ║
+# ║  This module defines basic structures and constants related to calendar    ║
+# ║  configuration, primarily focusing on path handling.                       ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+# --- Imports ---
 from typing import Dict, List, Optional, Union
 import os
 from pathlib import Path
 import json
 import logging
 
-# Configure logger
+# --- Logger Setup ---
+# Obtain the logger instance for this module.
 logger = logging.getLogger("calendarbot")
 
-# Get the project base directory for consistent path handling
+# --- Constants ---
+# Determine the project's root directory for reliable path construction.
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Removed the DATA_DIR variable and replaced its usage with hardcoded paths.
+# Note: The DATA_DIR variable was previously defined here but has been removed.
+# Path logic now relies on functions in server_utils.py or hardcoded paths
+# relative to the project structure or Docker volume mounts.
