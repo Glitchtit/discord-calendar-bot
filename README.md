@@ -61,10 +61,12 @@ OPENAI_API_KEY=your-openai-api-key
 CALENDAR_SOURCES=google:your_calendar_id:T,ics:http://example.com/calendar.ics:B
 USER_TAG_MAPPING=1234567890:T,0987654321:B
 DEBUG=true
+AI_TOGGLE=true
 ```
 
 - `CALENDAR_SOURCES`: comma-separated list of `google:<id>:<tag>` or `ics:<url>:<tag>`
 - `USER_TAG_MAPPING`: comma-separated Discord `userID:TAG` mappings.
+- `AI_TOGGLE`: Set to `false` to disable OpenAI features (greetings, images). Defaults to `true`.
 
 ---
 

@@ -29,6 +29,7 @@ from events import (
 )
 from log import logger
 from ai import generate_greeting, generate_image
+from environ import AI_TOGGLE
 
 # Task health monitoring
 _task_last_success = {}
@@ -388,6 +389,11 @@ async def post_todays_happenings(bot, include_greeting: bool = False):
             retry_count = 0
             max_retries = 2
             
+            # Check if AI is enabled before attempting generation
+            if not AI_TOGGLE:
+                logger.info("AI features disabled via AI_TOGGLE. Skipping greeting generation.")
+                return # Exit the function early if AI is off
+                
             while retry_count <= max_retries:
                 try:
                     # Get user names if possible

@@ -27,6 +27,7 @@ from commands import (
 )
 from tasks import initialize_event_snapshots, start_all_tasks, post_todays_happenings
 from utils import get_today, get_monday_of_week, resolve_input_to_tags
+from environ import AI_TOGGLE
 
 # ╔═════════════════════════════════════════════════════════════╗
 # ║ 🤖 Discord Bot Initialization                               ║
@@ -205,6 +206,13 @@ async def agenda_command(interaction: discord.Interaction, input: str, target: s
 async def greet_command(interaction: discord.Interaction):
     try:
         await interaction.response.defer()
+        
+        # Check if AI is enabled before proceeding
+        if not AI_TOGGLE:
+            await interaction.followup.send("AI features are currently disabled. Cannot generate greeting.")
+            logger.info("Greet command skipped because AI_TOGGLE is false.")
+            return
+            
         await post_todays_happenings(bot, include_greeting=True)
         await interaction.followup.send("Greeting and image posted.")
     except Exception as e:

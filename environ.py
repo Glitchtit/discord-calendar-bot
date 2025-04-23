@@ -25,3 +25,6 @@ CALENDAR_SOURCES = os.getenv("CALENDAR_SOURCES")
 
 # Comma-separated user-to-tag mappings (e.g., 123456789:T, 987654321:A)
 USER_TAG_MAPPING = os.getenv("USER_TAG_MAPPING", "")
+
+# Toggle for AI features (greetings, images) - defaults to true
+AI_TOGGLE = os.getenv("AI_TOGGLE", "true").lower() == "true"

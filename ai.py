@@ -7,7 +7,7 @@ import math
 from datetime import datetime, timedelta
 from openai import OpenAI, APIError, RateLimitError, APITimeoutError, APIConnectionError
 from log import logger
-from environ import OPENAI_API_KEY
+from environ import OPENAI_API_KEY, AI_TOGGLE
 
 # Global circuit breaker state
 _circuit_open = False
@@ -84,6 +84,11 @@ def handle_api_error(error, context="API call"):
 # ║ based on upcoming event titles and present user names.            ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def generate_greeting(event_titles: list[str], user_names: list[str] = [], max_retries: int = 3) -> tuple[str | None, str]:
+    # Check if AI features are globally disabled
+    if not AI_TOGGLE:
+        logger.info("AI features disabled via AI_TOGGLE. Using fallback greeting.")
+        return generate_fallback_greeting(event_titles), "Fallback Herald"
+        
     # Check if API is available (circuit breaker pattern)
     if not check_api_availability() or not client:
         logger.warning("OpenAI API unavailable or client not initialized. Using fallback greeting.")
@@ -208,6 +213,11 @@ def generate_fallback_greeting(event_titles: list[str]) -> str:
 # ║ persona vibe, using a stylized Bayeux Tapestry art prompt.        ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | None:
+    # Check if AI features are globally disabled
+    if not AI_TOGGLE:
+        logger.info("AI features disabled via AI_TOGGLE. Skipping image generation.")
+        return None
+        
     # Check if API is available (circuit breaker pattern)
     if not check_api_availability() or not client:
         logger.warning("OpenAI API unavailable or client not initialized. Skipping image generation.")
