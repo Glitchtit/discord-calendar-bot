@@ -15,7 +15,7 @@ _datetime_str_pattern = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}')
 # ╚════════════════════════════════════════════════════════════════════╝
 def get_local_timezone():
     global _timezone_cache
-    if _timezone_cache is not None:
+    if (_timezone_cache is not None):
         return _timezone_cache
     
     try:
@@ -106,9 +106,13 @@ def parse_date_string(date_str: str, default_timezone=None):
         default_timezone = get_local_timezone()
     
     try:
-        # Handle date-only format (YYYY-MM-DD)
+        # Handle date-only format (YYYY-MM-DD) - All day events
         if _date_str_pattern.match(date_str):
-            return datetime.fromisoformat(date_str)
+            # Create datetime at noon on the specified date in local timezone
+            # Using noon avoids any potential date shifts during timezone conversions
+            date_obj = datetime.fromisoformat(date_str).date()
+            dt = datetime(date_obj.year, date_obj.month, date_obj.day, 12, 0, 0)
+            return dt.replace(tzinfo=default_timezone)
             
         # Handle Z (UTC) timezone indicator
         if date_str.endswith('Z'):
