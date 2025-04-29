@@ -194,14 +194,27 @@ async def post_tagged_events(bot, tag: str, day: datetime.date) -> bool:
             return False
 
         events_by_source = defaultdict(list)
+        all_events = []
+        
         for meta in calendars:
             try:
+                # Get events from the calendar
                 events = get_events(meta, day, day)
-                for e in events:
-                    events_by_source[meta["name"]].append(e)
+                all_events.extend([(meta["name"], e) for e in events])
             except Exception as e:
                 logger.exception(f"Error getting events for {meta['name']}: {e}")
                 # Continue with other calendars even if one fails
+
+        # Filter events to make sure they're actually on the requested day
+        for source_name, event in all_events:
+            start_str = event["start"].get("dateTime", event["start"].get("date"))
+            # Handle timezone for datetime events and simple dates for all-day events
+            dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
+            event_date = dt.date()
+            
+            # Only include events that actually fall on the requested day
+            if event_date == day:
+                events_by_source[source_name].append(event)
 
         if not events_by_source:
             logger.debug(f"Skipping {tag} — no events for {day}")
