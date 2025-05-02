@@ -429,9 +429,30 @@ def get_google_events(start_date, end_date, calendar_id):
 def get_ics_events(start_date, end_date, url):
     try:
         logger.debug(f"Fetching ICS events from {url}")
-        response = requests.get(url)
+        response = requests.get(url, timeout=10)
         response.encoding = 'utf-8'
-        cal = ICS_Calendar(response.text)
+        
+        # Basic validation of ICS content before attempting to parse
+        content = response.text
+        if not content or len(content) < 50:  # Minimal valid ICS would be larger
+            logger.warning(f"ICS content too small or empty from {url}")
+            return []
+            
+        if not content.startswith("BEGIN:VCALENDAR") or "END:VCALENDAR" not in content:
+            logger.warning(f"Invalid ICS format (missing BEGIN/END markers) from {url}")
+            return []
+        
+        # Safely parse the ICS calendar with error handling for specific parser issues    
+        try:
+            cal = ICS_Calendar(content)
+        except IndexError as ie:
+            # Handle the specific TatSu parser error we're seeing
+            logger.warning(f"Parser index error in ICS file from {url}: {ie}")
+            return []
+        except Exception as parser_error:
+            logger.warning(f"ICS parser error for {url}: {parser_error}")
+            return []
+            
         events = []
         for e in cal.events:
             if start_date <= e.begin.date() <= end_date:
@@ -455,6 +476,9 @@ def get_ics_events(start_date, end_date, url):
                 deduped.append(e)
         logger.debug(f"Deduplicated to {len(deduped)} ICS events")
         return deduped
+    except requests.exceptions.RequestException as e:
+        logger.exception(f"Error fetching ICS calendar: {url}")
+        return []
     except Exception as e:
         logger.exception(f"Error fetching/parsing ICS calendar: {url}")
         return []
