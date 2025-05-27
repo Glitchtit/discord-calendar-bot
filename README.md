@@ -325,6 +325,6 @@ The bot generates rich, themed announcements like:
 >
 > [Generated medieval artwork attached]
 
----
+----
 
 *Built with ⚔️ by developers who believe calendars should be more exciting than spreadsheets.*
