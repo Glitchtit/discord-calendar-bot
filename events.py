@@ -12,6 +12,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from environ import GOOGLE_APPLICATION_CREDENTIALS, CALENDAR_SOURCES, USER_TAG_MAPPING
 from log import logger
+from ai_title_parser import simplify_event_title
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔐 Google Calendar API Initialization                             ║
@@ -420,6 +421,16 @@ def get_google_events(start_date, end_date, calendar_id):
             orderBy="startTime"
         ).execute()
         items = result.get("items", [])
+        
+        # Process events to simplify titles
+        for event in items:
+            original_title = event.get("summary", "")
+            if original_title:
+                simplified_title = simplify_event_title(original_title)
+                event["original_summary"] = original_title  # Preserve original
+                event["summary"] = simplified_title
+                logger.debug(f"Title simplified: '{original_title}' -> '{simplified_title}'")
+        
         logger.debug(f"Fetched {len(items)} Google events for {calendar_id}")
         return items
     except Exception as e:
@@ -457,8 +468,12 @@ def get_ics_events(start_date, end_date, url):
         for e in cal.events:
             if start_date <= e.begin.date() <= end_date:
                 id_source = f"{e.name}|{e.begin}|{e.end}|{e.location or ''}"
+                original_title = e.name or ""
+                simplified_title = simplify_event_title(original_title) if original_title else "Event"
+                
                 event = {
-                    "summary": e.name,
+                    "summary": simplified_title,
+                    "original_summary": original_title,  # Preserve original
                     "start": {"dateTime": e.begin.isoformat()},
                     "end": {"dateTime": e.end.isoformat()},
                     "location": e.location or "",
@@ -466,6 +481,7 @@ def get_ics_events(start_date, end_date, url):
                     "id": hashlib.md5(id_source.encode("utf-8")).hexdigest()
                 }
                 events.append(event)
+                logger.debug(f"ICS title simplified: '{original_title}' -> '{simplified_title}'")
 
         seen_fps = set()
         deduped = []
