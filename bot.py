@@ -32,6 +32,10 @@ bot = commands.Bot(command_prefix="/", intents=intents)
 bot.is_initialized = False
 bot.announcement_channel = None
 
+# Global variables for tag mappings
+TAG_NAMES = {}  # Maps tags to display names
+TAG_COLORS = {}  # Maps tags to role colors
+
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🟢 Bot Event Handlers                                              ║
 # ╚════════════════════════════════════════════════════════════════════╝
@@ -59,8 +63,7 @@ async def on_ready():
         await setup_commands(bot)
         
         # Resolve tag mappings for display names
-        from src.discord_bot.commands import resolve_tag_mappings
-        await resolve_tag_mappings(bot)
+        await resolve_tag_mappings()
         
         # Sync slash commands
         try:
@@ -217,6 +220,72 @@ async def cleanup_task():
         
     except Exception as e:
         logger.exception(f"Error in cleanup task: {e}")
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🔗 Tag Mapping Resolution                                          ║
+# ╚════════════════════════════════════════════════════════════════════╝
+
+async def resolve_tag_mappings():
+    """Assigns display names and colors to tags based on Discord members."""
+    try:
+        logger.info("Resolving Discord tag-to-name mappings...")
+        
+        # Handle case where bot might be in multiple guilds
+        if not bot.guilds:
+            logger.warning("No guilds available. Tag mappings not resolved.")
+            return
+            
+        # Get user tag mapping from environment
+        user_tag_mapping = get_user_tag_mapping()
+        
+        # Process each guild the bot is in
+        for guild in bot.guilds:
+            logger.debug(f"Processing guild: {guild.name} (ID: {guild.id})")
+            
+            # Process each user-tag mapping
+            for user_id, tag in user_tag_mapping.items():
+                # Fetch member with retries
+                member = None
+                max_retries = 2
+                
+                for attempt in range(max_retries):
+                    try:
+                        # Try to get member from cache first
+                        member = guild.get_member(user_id)
+                        
+                        # If not in cache, fetch from API
+                        if member is None:
+                            member = await guild.fetch_member(user_id)
+                            
+                        if member:
+                            break
+                    except discord.errors.NotFound:
+                        # Member not in this guild, try the next one
+                        logger.debug(f"User ID {user_id} not found in guild {guild.name}")
+                        break
+                    except Exception as e:
+                        logger.warning(f"Error fetching member {user_id} (attempt {attempt+1}): {e}")
+                        await asyncio.sleep(1)
+                
+                # Process member if found
+                if member:
+                    display_name = member.nick or member.display_name
+                    TAG_NAMES[tag] = display_name
+                    
+                    # Get member's role color (defaulting to gray if none)
+                    role_color = next((r.color.value for r in member.roles if r.color.value != 0), 0x95a5a6)
+                    TAG_COLORS[tag] = role_color
+                    
+                    logger.info(f"Assigned {tag}: name={display_name}, color=#{role_color:06X}")
+                else:
+                    # Not found in any guild, set fallback name
+                    TAG_NAMES[tag] = TAG_NAMES.get(tag, tag)
+                    logger.warning(f"Could not resolve Discord member for ID {user_id} in any guild")
+        
+        logger.info(f"Tag mapping complete: {len(TAG_NAMES)} tags resolved")
+    except Exception as e:
+        logger.exception(f"Error in resolve_tag_mappings: {e}")
+        # Don't re-raise, allow initialization to continue
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🏃 Bot Startup                                                     ║
