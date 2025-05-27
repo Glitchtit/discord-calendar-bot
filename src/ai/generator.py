@@ -6,8 +6,8 @@ import os
 import math
 from datetime import datetime, timedelta
 from openai import OpenAI, APIError, RateLimitError, APITimeoutError, APIConnectionError
-from log import logger
-from environ import OPENAI_API_KEY, AI_TOGGLE
+from src.core.logger import logger
+from src.core.environment import OPENAI_API_KEY, AI_TOGGLE
 
 # Global circuit breaker state
 _circuit_open = False
@@ -273,7 +273,7 @@ def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | N
             except PermissionError:
                 logger.warning("Permission error creating /data/art directory. Trying alternate location.")
                 # Try a fallback location if we can't write to /data/art
-                art_dir = os.path.join(os.path.dirname(__file__), "art")
+                art_dir = os.path.join(os.path.dirname(__file__), "../../art")
                 os.makedirs(art_dir, exist_ok=True)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 image_path = os.path.join(art_dir, f"generated_{timestamp}.png")

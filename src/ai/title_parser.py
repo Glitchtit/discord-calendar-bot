@@ -2,7 +2,7 @@ import re
 import json
 import openai
 from typing import Dict, Optional
-from log import logger
+from src.core.logger import logger
 import os
 from functools import lru_cache
 
@@ -112,7 +112,7 @@ Examples:
 Return ONLY the simplified title, nothing else."""
 
             response = self.client.chat.completions.create(
-                model="gpt-4.1-nano",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Simplify this calendar event title: {title}"}

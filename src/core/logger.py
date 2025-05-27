@@ -9,7 +9,7 @@ from logging.handlers import TimedRotatingFileHandler, MemoryHandler
 from logging.handlers import QueueHandler, QueueListener
 import queue
 from colorlog import ColoredFormatter
-from environ import DEBUG
+from .environment import DEBUG
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📁 Log Directory & File Setup                                     ║

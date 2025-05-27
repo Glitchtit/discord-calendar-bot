@@ -1,314 +1,248 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from datetime import datetime
-import dateparser
+from datetime import datetime, timedelta
 import asyncio
-import random
+import os
 
-from log import logger
-from events import (
-    load_calendar_sources,
-    GROUPED_CALENDARS,
-    USER_TAG_MAP,
-    TAG_NAMES,
-    TAG_COLORS,
-    get_events
-)
-from ai import generate_greeting, generate_image
-from commands import (
-    post_tagged_events,
-    post_tagged_week,
-    send_embed,
-    autocomplete_tag,
-    autocomplete_range,
-    autocomplete_agenda_target,
-    autocomplete_agenda_input
-)
-from tasks import initialize_event_snapshots, start_all_tasks, post_todays_happenings
-from utils import get_today, get_monday_of_week, resolve_input_to_tags
-from environ import AI_TOGGLE
+# Import from new refactored structure
+from src.core.logger import logger
+from src.core.environment import DISCORD_BOT_TOKEN, ANNOUNCEMENT_CHANNEL_ID, AI_TOGGLE
+from src.calendar.sources import load_calendar_sources, get_user_tag_mapping
+from src.calendar.events import get_events
+from src.calendar.storage import load_previous_events, save_current_events_for_key
+from src.ai.generator import generate_greeting, generate_image
+from src.ai.title_parser import simplify_event_title
+from src.discord_bot.commands import setup_commands
+from src.discord_bot.embeds import create_announcement_embed
+from src.scheduling import get_scheduler
+from src.utils import get_date_range, cleanup_old_files
 
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 🤖 Discord Bot Initialization                               ║
-# ║ Configures the bot with necessary intents and slash system ║
-# ╚═════════════════════════════════════════════════════════════╝
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🤖 Discord Bot Initialization                                     ║
+# ║ Configures the bot with necessary intents and modern architecture ║
+# ╚════════════════════════════════════════════════════════════════════╝
+
 intents = discord.Intents.default()
 intents.members = True
+intents.message_content = True  # Required for some Discord features
 bot = commands.Bot(command_prefix="/", intents=intents)
 
 # Track initialization state to avoid duplicate startups
 bot.is_initialized = False
+bot.announcement_channel = None
 
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🟢 Bot Event Handlers                                              ║
+# ╚════════════════════════════════════════════════════════════════════╝
 
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 🟢 on_ready                                                  ║
-# ║ Called once the bot is online and ready                     ║
-# ╚═════════════════════════════════════════════════════════════╝
 @bot.event
 async def on_ready():
-    logger.info(f"Logged in as {bot.user}")
+    """Called when the bot is ready and connected to Discord."""
+    logger.info(f"Bot logged in as {bot.user} (ID: {bot.user.id})")
     
-    # Prevent multiple initializations if Discord reconnects
+    # Prevent multiple initializations on reconnects
     if bot.is_initialized:
         logger.info("Bot reconnected, skipping initialization")
         return
     
-    # Perform initialization with progressive backoff for retries
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        try:
-            # Step 1: Resolve tag mappings
-            await resolve_tag_mappings()
-            
-            # Step 2: Add slight delay to avoid rate limiting
-            await asyncio.sleep(1)
-            
-            # Step 3: Sync slash commands
-            synced = await bot.tree.sync()
-            logger.info(f"Synced {len(synced)} commands.")
-            
-            # Step 4: Initialize event snapshots
-            await initialize_event_snapshots()
-            
-            # Step 5: Start recurring tasks
-            start_all_tasks(bot)
-            
-            # Mark successful initialization
-            bot.is_initialized = True
-            logger.info("Bot initialization completed successfully")
-            break
-            
-        except discord.errors.HTTPException as e:
-            # Handle Discord API issues with exponential backoff
-            retry_delay = 2 ** attempt + random.uniform(0, 1)
-            logger.warning(f"Discord API error during initialization (attempt {attempt}/{max_retries}): {e}")
-            
-            if attempt < max_retries:
-                logger.info(f"Retrying initialization in {retry_delay:.2f} seconds...")
-                await asyncio.sleep(retry_delay)
+    try:
+        # Get announcement channel
+        if ANNOUNCEMENT_CHANNEL_ID:
+            bot.announcement_channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+            if bot.announcement_channel:
+                logger.info(f"Found announcement channel: #{bot.announcement_channel.name}")
             else:
-                logger.error("Maximum retries reached. Continuing with partial initialization.")
-                # Still mark as initialized to prevent endless retries on reconnect
-                bot.is_initialized = True
-                
+                logger.warning(f"Announcement channel {ANNOUNCEMENT_CHANNEL_ID} not found")
+        
+        # Set up bot commands
+        await setup_commands(bot)
+        
+        # Resolve tag mappings for display names
+        from src.discord_bot.commands import resolve_tag_mappings
+        await resolve_tag_mappings(bot)
+        
+        # Sync slash commands
+        try:
+            synced = await bot.tree.sync()
+            logger.info(f"Synced {len(synced)} slash commands")
         except Exception as e:
-            logger.exception(f"Unexpected error during initialization: {e}")
-            # Mark as initialized despite error to prevent retry loops
-            bot.is_initialized = True
+            logger.error(f"Failed to sync commands: {e}")
+        
+        # Initialize calendar data
+        calendar_sources = load_calendar_sources()
+        logger.info(f"Loaded {len(calendar_sources)} calendar source groups")
+        
+        # Set up scheduled tasks
+        scheduler = get_scheduler()
+        scheduler.schedule_daily_task("daily_announcement", daily_announcement_task, hour=8, minute=0)
+        scheduler.schedule_daily_task("cleanup_task", cleanup_task, hour=2, minute=0)
+        
+        # Mark as initialized
+        bot.is_initialized = True
+        logger.info("Bot initialization completed successfully")
+        
+    except Exception as e:
+        logger.exception(f"Error during bot initialization: {e}")
+        bot.is_initialized = True  # Prevent retry loops
 
-
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 🔌 on_disconnect                                            ║
-# ║ Called when the bot disconnects from Discord                ║
-# ╚═════════════════════════════════════════════════════════════╝
 @bot.event
 async def on_disconnect():
-    logger.warning("Bot disconnected from Discord. Waiting for reconnection...")
+    """Called when the bot disconnects from Discord."""
+    logger.warning("Bot disconnected from Discord")
 
-
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 🔌 on_resumed                                               ║
-# ║ Called when the bot reconnects after a disconnect           ║
-# ╚═════════════════════════════════════════════════════════════╝
 @bot.event
 async def on_resumed():
+    """Called when the bot reconnects to Discord."""
     logger.info("Bot connection resumed")
 
+@bot.event
+async def on_command_error(ctx, error):
+    """Handle command errors."""
+    logger.error(f"Command error in {ctx.command}: {error}")
 
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 📜 /herald                                                   ║
-# ║ Posts the weekly + daily event summaries for all tags       ║
-# ╚═════════════════════════════════════════════════════════════╝
-@bot.tree.command(
-    name="herald",
-    description="Post all weekly and daily events for every calendar tag"
-)
-async def herald_command(interaction: discord.Interaction):
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📅 Daily Announcement Task                                         ║
+# ╚════════════════════════════════════════════════════════════════════╝
+
+async def daily_announcement_task():
+    """Generate and post daily calendar announcements."""
     try:
-        await interaction.response.defer()
-        today = get_today()
-        monday = get_monday_of_week(today)
-
-        for tag in GROUPED_CALENDARS:
-            await post_tagged_week(bot, tag, monday)
-        for tag in GROUPED_CALENDARS:
-            await post_tagged_events(bot, tag, today)
-
-        await interaction.followup.send("Herald posted for **all** tags — week and today.")
-    except Exception as e:
-        logger.exception(f"Error in /herald command: {e}")
-        await interaction.followup.send("An error occurred while posting the herald.")
-
-
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 🗓️ /agenda                                                   ║
-# ║ Posts events for a given date or natural language input     ║
-# ╚═════════════════════════════════════════════════════════════╝
-@bot.tree.command(
-    name="agenda",
-    description="Post events for a date or range (e.g. 'tomorrow', 'week'), with optional tag filter"
-)
-@app_commands.describe(
-    input="A natural date or keyword: 'today', 'week', 'next monday', 'April 10', 'DD.MM'",
-    target="Optional calendar tag or display name (e.g. Bob, xXsNiPeRkId69Xx)"
-)
-@app_commands.autocomplete(input=autocomplete_agenda_input, target=autocomplete_agenda_target)
-async def agenda_command(interaction: discord.Interaction, input: str, target: str = ""):
-    try:
-        await interaction.response.defer()
-
-        today = get_today()
-        tags = resolve_input_to_tags(target, TAG_NAMES, GROUPED_CALENDARS) if target.strip() else list(GROUPED_CALENDARS.keys())
-
-        if not tags:
-            await interaction.followup.send("No matching tags or names found.")
+        if not bot.announcement_channel:
+            logger.warning("No announcement channel configured, skipping daily announcement")
             return
-
-        any_posted = False
-        if input.lower() == "today":
-            for tag in tags:
-                posted = await post_tagged_events(bot, tag, today)
-                any_posted |= posted
-            label = today.strftime("%A, %B %d")
-        elif input.lower() == "week":
-            monday = get_monday_of_week(today)
-            for tag in tags:
-                await post_tagged_week(bot, tag, monday)
-            any_posted = True  # Weekly always posts if calendars are valid
-            label = f"week of {monday.strftime('%B %d')}"
-        else:
-            parsed = dateparser.parse(input)
-            if not parsed:
-                await interaction.followup.send("Could not understand the date. Try 'today', 'week', or a real date.")
-                return
-            day = parsed.date()
-            for tag in tags:
-                posted = await post_tagged_events(bot, tag, day)
-                any_posted |= posted
-            label = day.strftime("%A, %B %d")
-
-        tag_names = ", ".join(TAG_NAMES.get(t, t) for t in tags)
-        if any_posted:
-            await interaction.followup.send(f"Agenda posted for **{tag_names}** on **{label}**.")
-        else:
-            await interaction.followup.send(f"No events found for **{tag_names}** on **{label}**.")
-    except Exception as e:
-        logger.exception(f"Error in /agenda command: {e}")
-        await interaction.followup.send("An error occurred while processing the agenda.")
-
-
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 🎭 /greet                                                    ║
-# ║ Generates a persona-based medieval greeting with image      ║
-# ╚═════════════════════════════════════════════════════════════╝
-@bot.tree.command(name="greet", description="Post the morning greeting with image")
-async def greet_command(interaction: discord.Interaction):
-    try:
-        await interaction.response.defer()
         
-        # Check if AI is enabled before proceeding
-        if not AI_TOGGLE:
-            await interaction.followup.send("AI features are currently disabled. Cannot generate greeting.")
-            logger.info("Greet command skipped because AI_TOGGLE is false.")
-            return
-            
-        await post_todays_happenings(bot, include_greeting=True)
-        await interaction.followup.send("Greeting and image posted.")
-    except Exception as e:
-        logger.exception(f"Error in /greet command: {e}")
-        await interaction.followup.send("An error occurred while posting the greeting.")
-
-
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 🔄 /reload                                                   ║
-# ║ Reloads calendar sources and tag-to-user mapping            ║
-# ╚═════════════════════════════════════════════════════════════╝
-@bot.tree.command(name="reload", description="Reload calendar sources and tag-user mappings")
-async def reload_command(interaction: discord.Interaction):
-    try:
-        await interaction.response.defer()
-        load_calendar_sources()
-        await resolve_tag_mappings()
-        await interaction.followup.send("Reloaded calendar sources and tag mappings.")
-    except Exception as e:
-        logger.exception(f"Error in /reload command: {e}")
-        await interaction.followup.send("An error occurred while reloading.")
-
-
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 📇 /who                                                      ║
-# ║ Displays all active tags and their mapped display names     ║
-# ╚═════════════════════════════════════════════════════════════╝
-@bot.tree.command(name="who", description="List calendar tags and their assigned users")
-async def who_command(interaction: discord.Interaction):
-    try:
-        await interaction.response.defer()
-        lines = [f"**{tag}** → {TAG_NAMES.get(tag, tag)}" for tag in sorted(GROUPED_CALENDARS)]
-        await interaction.followup.send("**Calendar Tags:**\n" + "\n".join(lines))
-    except Exception as e:
-        logger.exception(f"Error in /who command: {e}")
-        await interaction.followup.send("An error occurred while listing tags.")
-
-
-# ╔═════════════════════════════════════════════════════════════╗
-# ║ 🔗 resolve_tag_mappings                                      ║
-# ║ Assigns display names and colors to tags based on members   ║
-# ╚═════════════════════════════════════════════════════════════╝
-async def resolve_tag_mappings():
-    try:
-        logger.info("Resolving Discord tag-to-name mappings...")
+        logger.info("Starting daily announcement task")
         
-        # Handle case where bot might be in multiple guilds
-        if not bot.guilds:
-            logger.warning("No guilds available. Tag mappings not resolved.")
-            return
-            
-        # Process each guild the bot is in
-        for guild in bot.guilds:
-            logger.debug(f"Processing guild: {guild.name} (ID: {guild.id})")
-            
-            # Process each user-tag mapping
-            for user_id, tag in USER_TAG_MAP.items():
-                # Fetch member with retries
-                member = None
-                max_retries = 2
-                
-                for attempt in range(max_retries):
-                    try:
-                        # Try to get member from cache first
-                        member = guild.get_member(user_id)
-                        
-                        # If not in cache, fetch from API
-                        if member is None:
-                            member = await guild.fetch_member(user_id)
+        # Get today's events from all calendar sources
+        calendar_sources = load_calendar_sources()
+        start_date, end_date = get_date_range(days=3)  # Look ahead 3 days
+        
+        all_events = []
+        event_titles = []
+        
+        for tag, sources in calendar_sources.items():
+            for source in sources:
+                try:
+                    events = get_events(source, start_date.date(), end_date.date())
+                    all_events.extend(events)
+                    
+                    # Collect titles for greeting generation
+                    for event in events:
+                        title = event.get('summary', 'Event')
+                        if title not in event_titles:
+                            event_titles.append(title)
                             
-                        if member:
-                            break
-                    except discord.errors.NotFound:
-                        # Member not in this guild, try the next one
-                        logger.debug(f"User ID {user_id} not found in guild {guild.name}")
-                        break
-                    except Exception as e:
-                        logger.warning(f"Error fetching member {user_id} (attempt {attempt+1}): {e}")
-                        await asyncio.sleep(1)
-                
-                # Process member if found
-                if member:
-                    display_name = member.nick or member.display_name
-                    TAG_NAMES[tag] = display_name
-                    
-                    # Get member's role color (defaulting to gray if none)
-                    role_color = next((r.color.value for r in member.roles if r.color.value != 0), 0x95a5a6)
-                    TAG_COLORS[tag] = role_color
-                    
-                    logger.info(f"Assigned {tag}: name={display_name}, color=#{role_color:06X}")
-                else:
-                    # Not found in any guild, set fallback name
-                    TAG_NAMES[tag] = TAG_NAMES.get(tag, tag)
-                    logger.warning(f"Could not resolve Discord member for ID {user_id} in any guild")
+                except Exception as e:
+                    logger.warning(f"Error fetching events from {source.get('name', 'unknown')}: {e}")
         
-        logger.info(f"Tag mapping complete: {len(TAG_NAMES)} tags resolved")
+        # Get present users for greeting
+        present_users = []
+        if bot.announcement_channel.guild:
+            user_tag_mapping = get_user_tag_mapping()
+            for user_id in user_tag_mapping.keys():
+                try:
+                    member = bot.announcement_channel.guild.get_member(user_id)
+                    if member and member.status != discord.Status.offline:
+                        present_users.append(member.display_name)
+                except Exception:
+                    pass
+        
+        # Generate greeting and image if AI is enabled
+        greeting = None
+        persona = "Royal Messenger"
+        image_path = None
+        
+        if AI_TOGGLE:
+            try:
+                greeting, persona = generate_greeting(event_titles[:5], present_users)  # Limit titles
+                if greeting:
+                    image_path = generate_image(greeting, persona)
+            except Exception as e:
+                logger.warning(f"Error generating AI content: {e}")
+        
+        # Use fallback greeting if AI failed
+        if not greeting:
+            today = datetime.now().strftime("%A, %B %d")
+            if event_titles:
+                greeting = f"Good morrow! On this {today}, {len(event_titles)} events await thy attention."
+            else:
+                greeting = f"Good morrow! On this {today}, thy calendar is free for noble pursuits."
+            greeting += f"\n\n— {persona}"
+        
+        # Create and send announcement
+        embed = create_announcement_embed(greeting, all_events, persona)
+        
+        # Send the message
+        files = []
+        if image_path and os.path.exists(image_path):
+            try:
+                files.append(discord.File(image_path, filename="daily_greeting.png"))
+                embed.set_image(url="attachment://daily_greeting.png")
+            except Exception as e:
+                logger.warning(f"Error attaching image: {e}")
+        
+        await bot.announcement_channel.send(embed=embed, files=files)
+        logger.info("Daily announcement posted successfully")
+        
     except Exception as e:
-        logger.exception(f"Error in resolve_tag_mappings: {e}")
-        # Don't re-raise, allow initialization to continue
+        logger.exception(f"Error in daily announcement task: {e}")
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🧹 Cleanup Task                                                    ║
+# ╚════════════════════════════════════════════════════════════════════╝
+
+async def cleanup_task():
+    """Clean up old files and logs."""
+    try:
+        logger.info("Starting cleanup task")
+        
+        # Clean up old generated images
+        image_dirs = ["/data/art", "art", "src/art"]
+        for img_dir in image_dirs:
+            if os.path.exists(img_dir):
+                deleted = cleanup_old_files(img_dir, max_age_days=7, pattern="generated_*.png")
+                if deleted > 0:
+                    logger.info(f"Cleaned up {deleted} old images from {img_dir}")
+        
+        # Clean up old log files
+        log_dirs = ["/data/logs", "logs"]
+        for log_dir in log_dirs:
+            if os.path.exists(log_dir):
+                deleted = cleanup_old_files(log_dir, max_age_days=14, pattern="*.log.*")
+                if deleted > 0:
+                    logger.info(f"Cleaned up {deleted} old log files from {log_dir}")
+        
+        logger.info("Cleanup task completed")
+        
+    except Exception as e:
+        logger.exception(f"Error in cleanup task: {e}")
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🏃 Bot Startup                                                     ║
+# ╚════════════════════════════════════════════════════════════════════╝
+
+async def main():
+    """Main bot startup function."""
+    try:
+        if not DISCORD_BOT_TOKEN:
+            logger.error("DISCORD_BOT_TOKEN not set in environment variables")
+            return
+        
+        logger.info("Starting Discord Calendar Bot...")
+        
+        # Start the bot
+        async with bot:
+            await bot.start(DISCORD_BOT_TOKEN)
+            
+    except Exception as e:
+        logger.exception(f"Error starting bot: {e}")
+    finally:
+        # Clean up scheduled tasks
+        scheduler = get_scheduler()
+        scheduler.stop_all_tasks()
+        logger.info("Bot shutdown complete")
+
+if __name__ == "__main__":
+    # Run the bot
+    asyncio.run(main())
