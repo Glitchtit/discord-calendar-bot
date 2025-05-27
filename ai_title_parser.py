@@ -112,7 +112,7 @@ Examples:
 Return ONLY the simplified title, nothing else."""
 
             response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4.1-nano",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Simplify this calendar event title: {title}"}
