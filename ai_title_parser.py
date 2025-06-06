@@ -19,16 +19,17 @@ class AITitleParser:
         
         # Fallback patterns for when API is unavailable
         self.fallback_patterns = {
-            'meeting': r'\b(meeting|meet|call|conference|sync|standup|retrospective|review)\b',
+            'meeting': r'\b(meeting|meet|call|conference|sync|standup|retrospective|review|möte|utveckling)\b',
             'appointment': r'\b(appointment|appt|visit|consultation|checkup)\b',
-            'class': r'\b(class|lecture|lesson|training|workshop|seminar)\b',
+            'class': r'\b(class|lecture|lesson|training|workshop|seminar|EM|GT)\b',
             'event': r'\b(event|party|celebration|ceremony|launch)\b',
             'deadline': r'\b(deadline|due|submit|delivery|finish)\b',
             'interview': r'\b(interview|screening|hiring)\b',
             'lunch': r'\b(lunch|dinner|breakfast|meal|eat)\b',
             'travel': r'\b(flight|travel|trip|vacation|holiday)\b',
             'birthday': r'\b(birthday|bday|anniversary)\b',
-            'reminder': r'\b(reminder|remind|follow.?up|todo)\b'
+            'reminder': r'\b(reminder|remind|follow.?up|todo)\b',
+            'remote work' : r'\b(ansvarsarbetstid|undervisning)\b'
         }
 
     def _setup_openai(self):
@@ -96,6 +97,8 @@ Rules:
 3. Focus on the most important information
 4. Remove unnecessary details like times, locations, recurring indicators
 5. Preserve the core meaning and purpose
+6. Determine if the event is related to work, school or private and add prefix WORK: SCHOOL: EVENT: accordingly
+7. Apply all rules and examples no matter the language of the original title
 
 Examples:
 "Weekly Team Standup Meeting - Project Alpha" → "Team Standup"
