@@ -3,8 +3,8 @@ import asyncio
 import random
 from datetime import datetime, timedelta
 from dateutil import tz
-import discord
-from discord import app_commands, errors as discord_errors
+import discord # type: ignore
+from discord import app_commands, errors as discord_errors # type: ignore
 from collections import defaultdict
 
 from events import (

@@ -6,10 +6,10 @@ import time
 import random
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional, Any
-from ics import Calendar as ICS_Calendar
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+from ics import Calendar as ICS_Calendar # type: ignore
+from google.oauth2 import service_account # type: ignore
+from googleapiclient.discovery import build # type: ignore
+from googleapiclient.errors import HttpError # type: ignore
 from environ import GOOGLE_APPLICATION_CREDENTIALS, CALENDAR_SOURCES, USER_TAG_MAPPING
 from log import logger
 from ai_title_parser import simplify_event_title
