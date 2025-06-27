@@ -102,7 +102,7 @@ class AITitleParser:
             system_prompt = """You are an expert at simplifying calendar event titles. Your task is to convert long, complex event titles into concise 3-word maximum titles that capture the essence of the event.
 
 Rules:
-1. Maximum 3 words
+1. Maximum 3 words, but if the title is very short, keep it as is
 2. Use title case (First Letter Capitalized)
 3. Focus on the most important information
 4. Remove unnecessary details like times, locations, recurring indicators
