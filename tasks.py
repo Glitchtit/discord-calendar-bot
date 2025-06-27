@@ -267,17 +267,32 @@ async def watch_for_event_changes(bot):
                     # Instead of immediately posting, queue for verification
                     global _pending_changes
                     
+                    current_timestamp = datetime.now()
+                    
                     # Check if this tag already has pending changes
                     if tag in _pending_changes:
-                        logger.debug(f"Tag '{tag}' already has pending changes, updating them")
-                    
-                    current_timestamp = datetime.now()
-                    _pending_changes[tag] = {
-                        'timestamp': current_timestamp,
-                        'added_events': added_week,
-                        'removed_events': removed_week,
-                        'verification_count': 0
-                    }
+                        logger.debug(f"Tag '{tag}' already has pending changes, preserving original timestamp")
+                        # Keep the original timestamp but update the events
+                        existing_data = _pending_changes[tag]
+                        _pending_changes[tag] = {
+                            'timestamp': existing_data['timestamp'],  # Preserve original timestamp
+                            'added_events': added_week,  # Update with latest detected changes
+                            'removed_events': removed_week,  # Update with latest detected changes
+                            'verification_count': existing_data.get('verification_count', 0)  # Preserve attempt count
+                        }
+                        
+                        time_elapsed = current_timestamp - existing_data['timestamp']
+                        time_remaining = _VERIFICATION_DELAY - time_elapsed
+                        logger.debug(f"Updated pending changes for '{tag}', original timer preserved (elapsed: {time_elapsed.total_seconds():.1f}s, remaining: {time_remaining.total_seconds():.1f}s)")
+                    else:
+                        # New pending change
+                        _pending_changes[tag] = {
+                            'timestamp': current_timestamp,
+                            'added_events': added_week,
+                            'removed_events': removed_week,
+                            'verification_count': 0
+                        }
+                        logger.debug(f"New pending changes for '{tag}' queued at timestamp: {current_timestamp}")
                     
                     change_summary = f"+{len(added_week)} added" if added_week else ""
                     if change_summary and removed_week:
@@ -285,8 +300,12 @@ async def watch_for_event_changes(bot):
                     if removed_week:
                         change_summary += f"-{len(removed_week)} removed"
                     
-                    logger.info(f"Detected potential changes for '{tag}' ({change_summary}) - queued for verification in {_VERIFICATION_DELAY.total_seconds():.1f} seconds")
-                    logger.debug(f"Queued changes for '{tag}' at timestamp: {current_timestamp}, verification due at: {current_timestamp + _VERIFICATION_DELAY}")
+                    if tag not in _pending_changes or _pending_changes[tag]['timestamp'] == current_timestamp:
+                        logger.info(f"Detected potential changes for '{tag}' ({change_summary}) - queued for verification in {_VERIFICATION_DELAY.total_seconds():.1f} seconds")
+                    else:
+                        time_elapsed = current_timestamp - _pending_changes[tag]['timestamp']
+                        time_remaining = _VERIFICATION_DELAY - time_elapsed
+                        logger.info(f"Updated potential changes for '{tag}' ({change_summary}) - verification in {time_remaining.total_seconds():.1f} seconds")
                     
                     # Log some details for debugging (but not too verbose)
                     if len(added_week) <= 3:
@@ -626,17 +645,26 @@ async def verify_changes(tag: str, calendars: list, original_added: list, origin
         verified_added_fps = {compute_event_fingerprint(e): e for e in verified_added_week if compute_event_fingerprint(e)}
         verified_removed_fps = {compute_event_fingerprint(e): e for e in verified_removed_week if compute_event_fingerprint(e)}
         
-        # Only keep changes that are consistent between original detection and verification
-        consistent_added = [e for fp, e in verified_added_fps.items() if fp in original_added_fps]
+        # For added events: include events that are either in original detection OR currently detected
+        # This handles the case where new events were added while waiting for verification
+        all_added_fps = set(original_added_fps.keys()) | set(verified_added_fps.keys())
+        consistent_added = [verified_added_fps.get(fp) or original_added_fps.get(fp) for fp in all_added_fps if fp in verified_added_fps]
+        
+        # For removed events: only include events that were in original detection AND are still missing
+        # This is more conservative to avoid false positives
         consistent_removed = [e for fp, e in verified_removed_fps.items() if fp in original_removed_fps]
         
         # Log verification results
         original_count = len(original_added) + len(original_removed)
         verified_count = len(consistent_added) + len(consistent_removed)
         
-        if verified_count < original_count:
-            logger.info(f"Verification filtered out false positives for '{tag}': {original_count} -> {verified_count} changes")
-        elif verified_count == original_count:
+        if verified_count != original_count:
+            logger.info(f"Verification adjusted changes for '{tag}': {original_count} -> {verified_count} changes")
+            if len(consistent_added) != len(original_added):
+                logger.debug(f"  Added events: {len(original_added)} -> {len(consistent_added)}")
+            if len(consistent_removed) != len(original_removed):
+                logger.debug(f"  Removed events: {len(original_removed)} -> {len(consistent_removed)}")
+        elif verified_count == original_count and verified_count > 0:
             logger.debug(f"Verification confirmed all changes for '{tag}': {verified_count} changes")
         
         return consistent_added, consistent_removed
@@ -664,21 +692,22 @@ async def process_pending_verifications(bot):
     pending_tags = list(_pending_changes.keys())
     
     # Debug: Log pending changes status
-    logger.debug(f"Checking {len(pending_tags)} pending changes for verification")
-    for tag in pending_tags:
-        if tag not in _pending_changes:  # Tag may have been removed by another process
-            continue
+    if _pending_changes:
+        logger.debug(f"Checking {len(pending_tags)} pending changes for verification")
+        for tag in pending_tags:
+            if tag not in _pending_changes:  # Tag may have been removed by another process
+                continue
+                
+            change_data = _pending_changes[tag]
+            time_elapsed = current_time - change_data['timestamp']
+            time_remaining = _VERIFICATION_DELAY - time_elapsed
+            is_ready = time_elapsed >= _VERIFICATION_DELAY
             
-        change_data = _pending_changes[tag]
-        time_elapsed = current_time - change_data['timestamp']
-        time_remaining = _VERIFICATION_DELAY - time_elapsed
-        is_ready = time_elapsed >= _VERIFICATION_DELAY
-        
-        logger.debug(f"  {tag}: elapsed={time_elapsed.total_seconds():.1f}s, remaining={time_remaining.total_seconds():.1f}s, ready={is_ready}")
-        
-        if is_ready:
-            logger.info(f"Tag '{tag}' is ready for verification (waited {time_elapsed.total_seconds():.1f} seconds)")
-            await process_single_verification(bot, tag)
+            logger.debug(f"  {tag}: queued_at={change_data['timestamp'].strftime('%H:%M:%S')}, elapsed={time_elapsed.total_seconds():.1f}s, remaining={time_remaining.total_seconds():.1f}s, ready={is_ready}")
+            
+            if is_ready:
+                logger.info(f"Tag '{tag}' is ready for verification (waited {time_elapsed.total_seconds():.1f} seconds)")
+                await process_single_verification(bot, tag)
 
 async def process_single_verification(bot, tag: str):
     """Process verification for a single tag."""
@@ -868,15 +897,16 @@ def debug_verification_system():
     current_time = datetime.now()
     
     print(f"\n=== Verification System Debug Info ===")
-    print(f"Current time: {current_time}")
+    print(f"Current time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Verification delay: {_VERIFICATION_DELAY.total_seconds()} seconds")
     print(f"Total pending changes: {status['total_pending']}")
     
     if status['tags']:
         for tag, info in status['tags'].items():
+            queued_time = datetime.fromisoformat(info['timestamp'])
             print(f"\nTag: {tag}")
             print(f"  Added: {info['added_count']}, Removed: {info['removed_count']}")
-            print(f"  Queued at: {info['timestamp']}")
+            print(f"  Queued at: {queued_time.strftime('%H:%M:%S')}")
             print(f"  Elapsed: {info['time_elapsed_seconds']:.1f}s")
             print(f"  Remaining: {info['time_remaining_seconds']:.1f}s")
             print(f"  Ready: {info['ready_for_verification']}")
