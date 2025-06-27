@@ -109,7 +109,7 @@ Rules:
 5. Preserve the core meaning and purpose
 6. Determine if the event is related to work, school or private and add prefix WORK: SCHOOL: EVENT: accordingly
 7. IMPORTANT: If the original title contains emojis, preserve them in the simplified title
-8. Apply all rules and examples no matter the language of the original title
+8. Apply all rules and examples no matter the language of the original title, return the simplified title in English
 
 Examples:
 "Weekly Team Standup Meeting - Project Alpha" → "Team Standup"
