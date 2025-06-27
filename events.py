@@ -4,6 +4,7 @@ import hashlib
 import requests
 import time
 import random
+import ssl
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional, Any
 from ics import Calendar as ICS_Calendar # type: ignore
@@ -225,6 +226,13 @@ def retry_api_call(func, *args, max_retries=3, **kwargs):
             time.sleep(backoff)
             last_exception = e
             
+        except ssl.SSLError as e:
+            # SSL errors are retryable as they're often temporary network issues
+            backoff = (2 ** attempt) + random.uniform(0, 1)
+            logger.warning(f"SSL error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
+            time.sleep(backoff)
+            last_exception = e
+            
         except requests.exceptions.RequestException as e:
             # Network errors are retryable
             backoff = (2 ** attempt) + random.uniform(0, 1)
@@ -409,17 +417,32 @@ def save_current_events_for_key(key, events):
 # ║ Retrieves events from Google or ICS sources                        ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def get_google_events(start_date, end_date, calendar_id):
+    """Fetch events from Google Calendar with robust error handling and retry logic."""
+    if not service:
+        logger.error(f"Google Calendar service not initialized, cannot fetch events for {calendar_id}")
+        return []
+    
     try:
         start_utc = start_date.isoformat() + "T00:00:00Z"
         end_utc = end_date.isoformat() + "T23:59:59Z"
         logger.debug(f"Fetching Google events for calendar {calendar_id} from {start_utc} to {end_utc}")
-        result = service.events().list(
-            calendarId=calendar_id,
-            timeMin=start_utc,
-            timeMax=end_utc,
-            singleEvents=True,
-            orderBy="startTime"
-        ).execute()
+        
+        # Use retry_api_call to handle transient errors
+        def api_call():
+            return service.events().list(
+                calendarId=calendar_id,
+                timeMin=start_utc,
+                timeMax=end_utc,
+                singleEvents=True,
+                orderBy="startTime"
+            ).execute()
+        
+        result = retry_api_call(api_call, max_retries=3)
+        
+        if result is None:
+            logger.warning(f"Failed to fetch events for calendar {calendar_id} after retries")
+            return []
+            
         items = result.get("items", [])
         
         # Process events to simplify titles
@@ -433,15 +456,37 @@ def get_google_events(start_date, end_date, calendar_id):
         
         logger.debug(f"Fetched {len(items)} Google events for {calendar_id}")
         return items
+        
+    except ssl.SSLError as e:
+        logger.error(f"SSL error fetching Google events from calendar {calendar_id}: {e}")
+        logger.info("This may be a temporary network issue. The calendar will be retried on the next sync.")
+        return []
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"Connection error fetching Google events from calendar {calendar_id}: {e}")
+        logger.info("Network connection issue. The calendar will be retried on the next sync.")
+        return []
+    except requests.exceptions.Timeout as e:
+        logger.error(f"Timeout error fetching Google events from calendar {calendar_id}: {e}")
+        logger.info("Request timed out. The calendar will be retried on the next sync.")
+        return []
+    except HttpError as e:
+        if e.resp.status in [403, 404]:
+            logger.error(f"Access denied or calendar not found for {calendar_id}: {e}")
+            logger.info("Check calendar permissions and ID validity.")
+        else:
+            logger.error(f"Google API error fetching events from calendar {calendar_id}: {e}")
+        return []
     except Exception as e:
-        logger.exception(f"Error fetching Google events from calendar {calendar_id}: {e}")
+        logger.exception(f"Unexpected error fetching Google events from calendar {calendar_id}: {e}")
         return []
 
 def get_ics_events(start_date, end_date, url):
+    """Fetch events from ICS calendar with robust error handling."""
     try:
         logger.debug(f"Fetching ICS events from {url}")
         response = requests.get(url, timeout=10)
         response.encoding = 'utf-8'
+        response.raise_for_status()  # Raise an exception for bad status codes
         
         # Basic validation of ICS content before attempting to parse
         content = response.text
@@ -492,11 +537,33 @@ def get_ics_events(start_date, end_date, url):
                 deduped.append(e)
         logger.debug(f"Deduplicated to {len(deduped)} ICS events")
         return deduped
+        
+    except ssl.SSLError as e:
+        logger.error(f"SSL error fetching ICS calendar {url}: {e}")
+        logger.info("This may be a temporary network issue. The calendar will be retried on the next sync.")
+        return []
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"Connection error fetching ICS calendar {url}: {e}")
+        logger.info("Network connection issue. The calendar will be retried on the next sync.")
+        return []
+    except requests.exceptions.Timeout as e:
+        logger.error(f"Timeout error fetching ICS calendar {url}: {e}")
+        logger.info("Request timed out. The calendar will be retried on the next sync.")
+        return []
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"HTTP error fetching ICS calendar {url}: {e}")
+        if e.response.status_code in [403, 404]:
+            logger.info("Check calendar URL validity and permissions.")
+        else:
+            logger.info("The calendar will be retried on the next sync.")
+        return []
     except requests.exceptions.RequestException as e:
-        logger.exception(f"Error fetching ICS calendar: {url}")
+        logger.error(f"Network error fetching ICS calendar {url}: {e}")
+        logger.info("The calendar will be retried on the next sync.")
         return []
     except Exception as e:
-        logger.exception(f"Error fetching/parsing ICS calendar: {url}")
+        logger.exception(f"Unexpected error fetching/parsing ICS calendar {url}: {e}")
+        logger.info("The calendar will be retried on the next sync.")
         return []
 
 def get_events(source_meta, start_date, end_date):
