@@ -86,6 +86,16 @@ class AITitleParser:
             logger.warning(f"Error simplifying title '{original_title}': {e}")
             return self._fallback_simplify(original_title)
 
+    def _extract_emojis(self, text: str) -> list:
+        """Extract emojis from text using Unicode ranges."""
+        import unicodedata
+        emojis = []
+        for char in text:
+            # Check for emoji using Unicode categories
+            if unicodedata.category(char) in ['So', 'Sm'] or ord(char) > 0x1F600:
+                emojis.append(char)
+        return emojis
+
     def _simplify_with_openai(self, title: str) -> str:
         """Use OpenAI API to intelligently simplify the title."""
         try:
@@ -98,7 +108,8 @@ Rules:
 4. Remove unnecessary details like times, locations, recurring indicators
 5. Preserve the core meaning and purpose
 6. Determine if the event is related to work, school or private and add prefix WORK: SCHOOL: EVENT: accordingly
-7. Apply all rules and examples no matter the language of the original title
+7. IMPORTANT: If the original title contains emojis, preserve them in the simplified title
+8. Apply all rules and examples no matter the language of the original title
 
 Examples:
 "Weekly Team Standup Meeting - Project Alpha" → "Team Standup"
@@ -111,6 +122,11 @@ Examples:
 "Lunch Break" → "Lunch"
 "Python Programming Workshop - Advanced Level" → "Python Workshop"
 "Client Presentation - Final Project Deliverable" → "Client Presentation"
+"🎂 Birthday Party for Emma" → "🎂 Birthday Party"
+"📊 Sales Meeting with Team" → "📊 Sales Meeting"
+"🏥 Doctor Appointment at 2pm" → "🏥 Doctor Appointment"
+"✈️ Flight to Paris - Air France" → "✈️ Flight Paris"
+"🍽️ Dinner with Friends at Restaurant" → "🍽️ Dinner Friends"
 
 Return ONLY the simplified title, nothing else."""
 
@@ -143,6 +159,9 @@ Return ONLY the simplified title, nothing else."""
     def _fallback_simplify(self, title: str) -> str:
         """Fallback pattern-based simplification when OpenAI is unavailable."""
         try:
+            # Extract emojis first to preserve them
+            emojis = self._extract_emojis(title)
+            
             # Detect event type using patterns
             event_type = self._detect_event_type_fallback(title)
             
@@ -151,6 +170,11 @@ Return ONLY the simplified title, nothing else."""
             
             # Build simplified title
             words = []
+            
+            # Start with emojis if present
+            if emojis:
+                emoji_str = ''.join(emojis[:2])  # Limit to 2 emojis to save space
+                words.append(emoji_str)
             
             # Start with event type if detected
             if event_type and event_type not in ['event']:
@@ -180,10 +204,20 @@ Return ONLY the simplified title, nothing else."""
             
         except Exception as e:
             logger.warning(f"Fallback simplification failed for '{title}': {e}")
-            # Ultimate fallback - just take first 3 words
+            # Ultimate fallback - just take first 3 words but preserve emojis
             try:
+                emojis = self._extract_emojis(title)
                 words = title.split()[:3]
-                return " ".join(word.strip(".,!?()[]{}") for word in words if word.strip())
+                clean_words = [word.strip(".,!?()[]{}") for word in words if word.strip()]
+                
+                # If we have emojis, prepend them
+                if emojis:
+                    emoji_str = ''.join(emojis[:1])
+                    result = [emoji_str] + clean_words[:2]
+                else:
+                    result = clean_words
+                    
+                return " ".join(result) if result else "Event"
             except:
                 return "Event"
 
@@ -197,16 +231,26 @@ Return ONLY the simplified title, nothing else."""
 
     def _extract_key_terms_fallback(self, title: str) -> list:
         """Extract key terms using simple pattern matching."""
-        # Clean and tokenize
-        cleaned = re.sub(r'[^\w\s-]', ' ', title)
+        # Clean and tokenize, but preserve emojis
+        # Remove punctuation but keep emojis and alphanumeric characters
+        cleaned = re.sub(r'[^\w\s\-\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002600-\U000027BF\U0001f900-\U0001f9ff\U0001f600-\U0001f64f]', ' ', title)
         words = [w.strip() for w in cleaned.split() if w.strip() and len(w) > 2]
         
         # Remove common noise words
         noise_words = {'the', 'and', 'with', 'for', 'meeting', 'call', 'at', 'on', 'in'}
         filtered = [w for w in words if w.lower() not in noise_words]
         
-        # Prioritize capitalized words and longer words
-        scored = [(w, len(w) + (5 if w[0].isupper() else 0)) for w in filtered]
+        # Prioritize capitalized words, words with emojis, and longer words
+        scored = []
+        for w in filtered:
+            score = len(w)
+            if w[0].isupper():
+                score += 5
+            # Bonus for words with emojis
+            if any(ord(char) > 0x1F600 for char in w):
+                score += 10
+            scored.append((w, score))
+        
         scored.sort(key=lambda x: x[1], reverse=True)
         
         return [word for word, score in scored[:3]]
