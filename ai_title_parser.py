@@ -17,19 +17,21 @@ class AITitleParser:
         # Cache for repeated titles to save API calls
         self._title_cache = {}
         
-        # Fallback patterns for when API is unavailable
+        # Enhanced fallback patterns with international terms
         self.fallback_patterns = {
-            'meeting': r'\b(meeting|meet|call|conference|sync|standup|retrospective|review|möte|utveckling)\b',
-            'appointment': r'\b(appointment|appt|visit|consultation|checkup)\b',
-            'class': r'\b(class|lecture|lesson|training|workshop|seminar|EM|GT)\b',
-            'event': r'\b(event|party|celebration|ceremony|launch)\b',
-            'deadline': r'\b(deadline|due|submit|delivery|finish)\b',
-            'interview': r'\b(interview|screening|hiring)\b',
-            'lunch': r'\b(lunch|dinner|breakfast|meal|eat)\b',
-            'travel': r'\b(flight|travel|trip|vacation|holiday)\b',
-            'birthday': r'\b(birthday|bday|anniversary)\b',
-            'reminder': r'\b(reminder|remind|follow.?up|todo)\b',
-            'remote work' : r'\b(ansvarsarbetstid|undervisning)\b'
+            'meeting': r'\b(meeting|meet|call|conference|sync|standup|retrospective|review|möte|utveckling|reunión|réunion|besprechung|vergadering)\b',
+            'appointment': r'\b(appointment|appt|visit|consultation|checkup|termin|cita|rendez-vous|afspraak)\b',
+            'class': r'\b(class|lecture|lesson|training|workshop|seminar|EM|GT|klass|lektion|curso|cours|unterricht|les)\b',
+            'event': r'\b(event|party|celebration|ceremony|launch|evenemang|evento|événement|veranstaltung|evenement)\b',
+            'deadline': r'\b(deadline|due|submit|delivery|finish|frist|plazo|échéance|deadline)\b',
+            'interview': r'\b(interview|screening|hiring|intervju|entrevista|entretien|vorstellungsgespräch|sollicitatiegesprek)\b',
+            'lunch': r'\b(lunch|dinner|breakfast|meal|eat|lunch|almuerzo|déjeuner|mittagessen|ontbijt|middag)\b',
+            'travel': r'\b(flight|travel|trip|vacation|holiday|resa|viaje|voyage|reise|reis|vakantie)\b',
+            'birthday': r'\b(birthday|bday|anniversary|födelsedag|cumpleaños|anniversaire|geburtstag|verjaardag)\b',
+            'reminder': r'\b(reminder|remind|follow.?up|todo|påminnelse|recordatorio|rappel|erinnerung|herinnering)\b',
+            'work': r'\b(ansvarsarbetstid|undervisning|arbete|trabajo|travail|arbeit|werk)\b',
+            'doctor': r'\b(doctor|medical|health|läkare|doctor|médecin|arzt|dokter|doktor)\b',
+            'shopping': r'\b(shopping|store|buy|handla|compras|courses|einkaufen|winkelen)\b'
         }
 
     def _setup_openai(self):
@@ -99,73 +101,170 @@ class AITitleParser:
     def _simplify_with_openai(self, title: str) -> str:
         """Use OpenAI API to intelligently simplify the title."""
         try:
-            system_prompt = """You are an expert at simplifying calendar event titles. Your task is to convert long, complex event titles into concise 3-word maximum titles that capture the essence of the event.
+            system_prompt = """You are an expert at simplifying calendar event titles. Your task is to convert long, complex event titles into concise, clear titles that capture the essence of the event.
 
-Rules:
-1. Maximum 3 words, but if the title is very short, keep it as is
-2. Use title case (First Letter Capitalized)
-3. Focus on the most important information
-4. Remove unnecessary details like times, locations, recurring indicators
-5. Preserve the core meaning and purpose
-6. Determine if the event is related to work, school or private and add prefix WORK: SCHOOL: EVENT: accordingly
-7. IMPORTANT: If the original title contains emojis, preserve them in the simplified title
-8. Apply all rules and examples no matter the language of the original title, return the simplified title in English
+CRITICAL RULES:
+1. ALWAYS output in English, regardless of input language
+2. Maximum 3 words (but 2 words is often better)
+3. Use title case (First Letter Capitalized)
+4. Focus on the most important information
+5. Remove unnecessary details like times, locations, specific room numbers, recurring indicators
+6. Preserve the core meaning and purpose
+7. If the original title contains emojis, preserve them in the simplified title
+8. Translate non-English titles to English while maintaining meaning
+9. Use common, clear English words that are easily understood
+10. For work events, prefer generic terms over specific company jargon
 
-Examples:
-"Weekly Team Standup Meeting - Project Alpha" → "Team Standup"
-"Dentist Appointment - Dr. Smith at 3pm" → "Dentist Appointment"
-"Sarah's Birthday Party Celebration" → "Sarah's Birthday"
+Language Translation Examples:
+"Möte med utvecklingsteam" → "Dev Meeting"
+"Réunion équipe marketing" → "Marketing Meeting"
+"Cita médica con Dr. García" → "Doctor Visit"
+"Geburtstag von Anna" → "Anna's Birthday"
+"Déjeuner avec clients" → "Client Lunch"
+"Besprechung Projekt Alpha" → "Project Meeting"
+"Ansvarsarbetstid hemma" → "Work Time"
+"Undervisning matematik" → "Math Class"
+
+Quality Examples:
+"Weekly Team Standup Meeting - Project Alpha Q4" → "Team Standup"
+"Dentist Appointment - Dr. Smith at 3pm Room 205" → "Dentist Visit"
+"Sarah's Birthday Party Celebration at Restaurant" → "Sarah's Birthday"
 "Q4 Sales Review Meeting with Leadership Team" → "Sales Review"
-"Flight to New York - AA1234" → "Flight NYC"
+"Flight to New York - Delta Airlines AA1234" → "Flight NYC"
 "Coffee with John to discuss project updates" → "Coffee John"
 "Annual Performance Review - HR Department" → "Performance Review"
-"Lunch Break" → "Lunch"
 "Python Programming Workshop - Advanced Level" → "Python Workshop"
 "Client Presentation - Final Project Deliverable" → "Client Presentation"
-"🎂 Birthday Party for Emma" → "🎂 Birthday Party"
-"📊 Sales Meeting with Team" → "📊 Sales Meeting"
-"🏥 Doctor Appointment at 2pm" → "🏥 Doctor Appointment"
+"🎂 Birthday Party for Emma at home" → "🎂 Emma's Birthday"
+"📊 Monthly Sales Meeting with Team" → "📊 Sales Meeting"
+"🏥 Doctor Appointment at 2pm" → "🏥 Doctor Visit"
 "✈️ Flight to Paris - Air France" → "✈️ Flight Paris"
-"🍽️ Dinner with Friends at Restaurant" → "🍽️ Dinner Friends"
+"🍽️ Dinner with Friends at Italian Restaurant" → "🍽️ Dinner Friends"
+"Recurring: Daily Stand-up Meeting" → "Daily Standup"
+"CANCELLED: Team Building Event" → "Team Building"
+"Moved: Project Kickoff Meeting" → "Project Kickoff"
 
-Return ONLY the simplified title, nothing else."""
+Return ONLY the simplified English title, nothing else."""
 
-            response = self.client.chat.completions.create(
-                model="gpt-4.1-nano",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Simplify this calendar event title: {title}"}
-                ],
-                max_tokens=50,
-                temperature=0.8
-            )
+            # Try with higher temperature first for creativity, then lower if needed
+            for attempt in range(2):
+                response = self.client.chat.completions.create(
+                    model="gpt-4.1-nano",  # More capable model (corrected)
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f"Simplify this calendar event title to English: {title}"}
+                    ],
+                    max_tokens=100,  # Increased token limit
+                    temperature=0.3 if attempt == 0 else 0.1,  # Lower temperature for more focused output
+                    top_p=0.9,
+                    frequency_penalty=0.0,
+                    presence_penalty=0.0
+                )
+                
+                simplified = response.choices[0].message.content.strip()
+                
+                # Validate and clean the response
+                if self._validate_simplified_title(simplified, title):
+                    return self._clean_title(simplified)
+                
+                logger.debug(f"Attempt {attempt + 1} failed validation: '{simplified}', retrying...")
             
-            simplified = response.choices[0].message.content.strip()
-            
-            # Validate the response
-            if not simplified or len(simplified.split()) > 3:
-                logger.warning(f"OpenAI returned invalid response: '{simplified}', using fallback")
-                return self._fallback_simplify(title)
-            
-            # Clean up any quotes or extra formatting
-            simplified = simplified.strip('"\'`')
-            
-            return simplified
+            # If both attempts failed, use fallback
+            logger.warning(f"OpenAI failed validation after 2 attempts for '{title}', using fallback")
+            return self._fallback_simplify(title)
             
         except Exception as e:
             logger.warning(f"OpenAI API error for title '{title}': {e}")
             return self._fallback_simplify(title)
 
+    def _validate_simplified_title(self, simplified: str, original: str) -> bool:
+        """Validate that the simplified title meets our requirements."""
+        if not simplified:
+            return False
+        
+        # Clean the title for validation
+        cleaned = self._clean_title(simplified)
+        words = cleaned.split()
+        
+        # Remove emojis for word count
+        text_words = []
+        for word in words:
+            # Remove emojis from word for counting
+            clean_word = ''.join(char for char in word if ord(char) < 0x1F600 or ord(char) > 0x1F9FF)
+            if clean_word.strip():
+                text_words.append(clean_word.strip())
+        
+        # Check word count (max 3 words of actual text)
+        if len(text_words) > 3:
+            logger.debug(f"Title too long: {len(text_words)} words")
+            return False
+        
+        # Check if it's mostly English (basic check)
+        if not self._is_mostly_english(cleaned):
+            logger.debug(f"Title not in English: '{cleaned}'")
+            return False
+        
+        # Check for meaningless responses
+        meaningless = ['event', 'title', 'calendar', 'appointment', 'meeting only']
+        if cleaned.lower().strip() in meaningless:
+            logger.debug(f"Meaningless title: '{cleaned}'")
+            return False
+        
+        return True
+
+    def _is_mostly_english(self, text: str) -> bool:
+        """Basic check if text is mostly English."""
+        # Remove emojis and punctuation for language detection
+        clean_text = ''.join(char for char in text if char.isalpha() or char.isspace())
+        clean_text = clean_text.strip()
+        
+        if not clean_text:
+            return True  # If only emojis, consider valid
+        
+        # Check for common non-English characters
+        non_english_chars = set('àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ' + 
+                               'ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞŸ' +
+                               'ßščřžýáíéóúůň' + 'ñáéíóúü')
+        
+        # If more than 30% non-English chars, likely not English
+        total_alpha = sum(1 for c in clean_text if c.isalpha())
+        non_english_count = sum(1 for c in clean_text if c in non_english_chars)
+        
+        if total_alpha > 0 and (non_english_count / total_alpha) > 0.3:
+            return False
+        
+        return True
+
+    def _clean_title(self, title: str) -> str:
+        """Clean and format the title properly."""
+        # Remove extra quotes, brackets, and formatting
+        cleaned = title.strip('"\'`[]{}()')
+        
+        # Remove common prefixes that might be added
+        prefixes_to_remove = ['simplified:', 'title:', 'english:', 'result:']
+        for prefix in prefixes_to_remove:
+            if cleaned.lower().startswith(prefix):
+                cleaned = cleaned[len(prefix):].strip()
+        
+        # Ensure proper spacing around emojis
+        cleaned = re.sub(r'([^\s])(\U0001F600-\U0001F64F|\U0001F300-\U0001F5FF|\U0001F680-\U0001F6FF|\U0001F1E0-\U0001F1FF|\U00002600-\U000027BF|\U0001f900-\U0001f9ff)', r'\1 \2', cleaned)
+        cleaned = re.sub(r'(\U0001F600-\U0001F64F|\U0001F300-\U0001F5FF|\U0001F680-\U0001F6FF|\U0001F1E0-\U0001F1FF|\U00002600-\U000027BF|\U0001f900-\U0001f9ff)([^\s])', r'\1 \2', cleaned)
+        
+        # Clean up multiple spaces
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        
+        return cleaned
+
     def _fallback_simplify(self, title: str) -> str:
-        """Fallback pattern-based simplification when OpenAI is unavailable."""
+        """Enhanced fallback pattern-based simplification when OpenAI is unavailable."""
         try:
             # Extract emojis first to preserve them
             emojis = self._extract_emojis(title)
             
-            # Detect event type using patterns
+            # Detect event type using enhanced patterns
             event_type = self._detect_event_type_fallback(title)
             
-            # Extract key terms
+            # Extract key terms with better international support
             key_terms = self._extract_key_terms_fallback(title)
             
             # Build simplified title
@@ -173,18 +272,21 @@ Return ONLY the simplified title, nothing else."""
             
             # Start with emojis if present
             if emojis:
-                emoji_str = ''.join(emojis[:2])  # Limit to 2 emojis to save space
+                emoji_str = ''.join(emojis[:1])  # Limit to 1 emoji to save space
                 words.append(emoji_str)
             
-            # Start with event type if detected
-            if event_type and event_type not in ['event']:
-                words.append(event_type.title())
+            # Add event type if detected and meaningful
+            if event_type and event_type not in ['event', 'work']:
+                if event_type == 'remote work':
+                    words.append('Work')
+                else:
+                    words.append(event_type.replace('_', ' ').title())
             
             # Add key terms
             for term in key_terms:
                 if len(words) >= 3:
                     break
-                if term.lower() != event_type:
+                if term.lower() != event_type and len(term) > 1:
                     words.append(term.title())
             
             # If we don't have enough words, use first few words from title
@@ -193,33 +295,37 @@ Return ONLY the simplified title, nothing else."""
                 for word in additional:
                     if len(words) >= 3:
                         break
-                    if word.lower() not in [w.lower() for w in words]:
+                    if word.lower() not in [w.lower().replace('_', ' ') for w in words]:
                         words.append(word.title())
             
             # Ensure we have at least one word
             if not words:
                 return "Event"
             
-            return " ".join(words[:3])
+            result = " ".join(words[:3])
+            return self._clean_title(result)
             
         except Exception as e:
-            logger.warning(f"Fallback simplification failed for '{title}': {e}")
-            # Ultimate fallback - just take first 3 words but preserve emojis
-            try:
-                emojis = self._extract_emojis(title)
-                words = title.split()[:3]
-                clean_words = [word.strip(".,!?()[]{}") for word in words if word.strip()]
+            logger.warning(f"Enhanced fallback simplification failed for '{title}': {e}")
+            return self._basic_fallback(title)
+
+    def _basic_fallback(self, title: str) -> str:
+        """Ultimate basic fallback."""
+        try:
+            emojis = self._extract_emojis(title)
+            words = title.split()[:3]
+            clean_words = [word.strip(".,!?()[]{}") for word in words if word.strip() and len(word) > 1]
+            
+            # If we have emojis, prepend them
+            if emojis:
+                emoji_str = ''.join(emojis[:1])
+                result = [emoji_str] + clean_words[:2]
+            else:
+                result = clean_words
                 
-                # If we have emojis, prepend them
-                if emojis:
-                    emoji_str = ''.join(emojis[:1])
-                    result = [emoji_str] + clean_words[:2]
-                else:
-                    result = clean_words
-                    
-                return " ".join(result) if result else "Event"
-            except:
-                return "Event"
+            return " ".join(result) if result else "Event"
+        except:
+            return "Event"
 
     def _detect_event_type_fallback(self, title: str) -> Optional[str]:
         """Detect event type using fallback patterns."""
