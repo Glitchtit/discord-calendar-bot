@@ -40,7 +40,7 @@ _HEALTH_CHECK_INTERVAL = timedelta(hours=1)
 
 # Change verification system
 _pending_changes = {}  # tag -> {timestamp, added_events, removed_events, verification_count}
-_VERIFICATION_DELAY = timedelta(minutes=1)  # Wait 1 minute before re-checking (reduced for faster testing)
+_VERIFICATION_DELAY = timedelta(seconds=90)  # Wait 90 seconds before re-checking (avoid exact minute boundary issues)
 _MAX_VERIFICATION_ATTEMPTS = 3  # Maximum number of verification attempts
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -108,6 +108,9 @@ def start_all_tasks(bot):
         schedule_daily_posts.start(bot)
         watch_for_event_changes.start(bot)
         
+        # Start verification watchdog (runs more frequently to catch stuck verifications)
+        verification_watchdog.start(bot)
+        
         # Start health monitoring
         monitor_task_health.start(bot)
         
@@ -118,6 +121,7 @@ def start_all_tasks(bot):
         # Try to start tasks individually
         try_start_task(schedule_daily_posts, bot)
         try_start_task(watch_for_event_changes, bot)
+        try_start_task(verification_watchdog, bot)
         try_start_task(monitor_task_health, bot)
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -267,8 +271,9 @@ async def watch_for_event_changes(bot):
                     if tag in _pending_changes:
                         logger.debug(f"Tag '{tag}' already has pending changes, updating them")
                     
+                    current_timestamp = datetime.now()
                     _pending_changes[tag] = {
-                        'timestamp': datetime.now(),
+                        'timestamp': current_timestamp,
                         'added_events': added_week,
                         'removed_events': removed_week,
                         'verification_count': 0
@@ -280,7 +285,8 @@ async def watch_for_event_changes(bot):
                     if removed_week:
                         change_summary += f"-{len(removed_week)} removed"
                     
-                    logger.info(f"Detected potential changes for '{tag}' ({change_summary}) - queued for verification in {_VERIFICATION_DELAY.total_seconds()/60:.1f} minutes")
+                    logger.info(f"Detected potential changes for '{tag}' ({change_summary}) - queued for verification in {_VERIFICATION_DELAY.total_seconds():.1f} seconds")
+                    logger.debug(f"Queued changes for '{tag}' at timestamp: {current_timestamp}, verification due at: {current_timestamp + _VERIFICATION_DELAY}")
                     
                     # Log some details for debugging (but not too verbose)
                     if len(added_week) <= 3:
@@ -307,6 +313,12 @@ async def watch_for_event_changes(bot):
                         
             # Process any pending verifications
             await process_pending_verifications(bot)
+            
+            # Debug: Log current pending changes status after processing
+            if _pending_changes:
+                logger.debug(f"After verification processing, {len(_pending_changes)} changes still pending")
+            else:
+                logger.debug("No pending changes after verification processing")
                     
             # Update task health status
             update_task_health(task_name, True)
@@ -337,7 +349,8 @@ async def monitor_task_health(bot):
             # Check all registered tasks
             all_tasks = {
                 "schedule_daily_posts": schedule_daily_posts,
-                "watch_for_event_changes": watch_for_event_changes
+                "watch_for_event_changes": watch_for_event_changes,
+                "verification_watchdog": verification_watchdog
             }
             
             for task_name, task_func in all_tasks.items():
@@ -551,7 +564,7 @@ async def verify_changes(tag: str, calendars: list, original_added: list, origin
     Returns (verified_added, verified_removed) with only the changes that are confirmed.
     """
     try:
-        logger.debug(f"Verifying changes for tag '{tag}'...")
+        logger.info(f"VERIFY_CHANGES: Starting verification for tag '{tag}' with {len(original_added)} originally added and {len(original_removed)} originally removed events")
         
         today = get_today()
         earliest = today - timedelta(days=30)
@@ -642,85 +655,157 @@ async def process_pending_verifications(bot):
     """Process changes that are pending verification."""
     global _pending_changes
     
+    if not _pending_changes:
+        return  # No pending changes to process
+    
     current_time = datetime.now()
-    tags_to_process = []
     
-    # Find tags with changes ready for verification
-    for tag, change_data in _pending_changes.items():
+    # Create a copy of the keys to avoid modification during iteration
+    pending_tags = list(_pending_changes.keys())
+    
+    # Debug: Log pending changes status
+    logger.debug(f"Checking {len(pending_tags)} pending changes for verification")
+    for tag in pending_tags:
+        if tag not in _pending_changes:  # Tag may have been removed by another process
+            continue
+            
+        change_data = _pending_changes[tag]
         time_elapsed = current_time - change_data['timestamp']
-        if time_elapsed >= _VERIFICATION_DELAY:
-            tags_to_process.append(tag)
-    
-    # Process each ready tag
-    for tag in tags_to_process:
-        try:
-            change_data = _pending_changes[tag]
-            calendars = GROUPED_CALENDARS.get(tag, [])
-            
-            if not calendars:
-                logger.warning(f"No calendars found for tag '{tag}' during verification")
-                del _pending_changes[tag]
-                continue
-            
-            # Verify the changes
-            verified_added, verified_removed = await verify_changes(
-                tag, calendars, change_data['added_events'], change_data['removed_events']
-            )
-            
-            # If changes are verified, post them
-            if verified_added or verified_removed:
-                try:
-                    lines = []
-                    if verified_added:
-                        lines.append("**📥 Added Events This Week:**")
-                        lines += [f"➕ {format_event(e)}" for e in verified_added]
-                    if verified_removed:
-                        lines.append("**📤 Removed Events This Week:**")
-                        lines += [f"➖ {format_event(e)}" for e in verified_removed]
+        time_remaining = _VERIFICATION_DELAY - time_elapsed
+        is_ready = time_elapsed >= _VERIFICATION_DELAY
+        
+        logger.debug(f"  {tag}: elapsed={time_elapsed.total_seconds():.1f}s, remaining={time_remaining.total_seconds():.1f}s, ready={is_ready}")
+        
+        if is_ready:
+            logger.info(f"Tag '{tag}' is ready for verification (waited {time_elapsed.total_seconds():.1f} seconds)")
+            await process_single_verification(bot, tag)
 
-                    await send_embed(
-                        bot,
-                        title=f"📣 Event Changes – {get_name_for_tag(tag)}",
-                        description="\n".join(lines),
-                        color=get_color_for_tag(tag)
-                    )
-                    logger.info(f"Posted verified changes for '{tag}': {len(verified_added)} added, {len(verified_removed)} removed")
-                    
-                    # Update the snapshot with current events
-                    today = get_today()
-                    earliest = today - timedelta(days=30)
-                    latest = today + timedelta(days=90)
-                    all_events = []
-                    for meta in calendars:
-                        try:
-                            events = await asyncio.to_thread(get_events, meta, earliest, latest)
-                            all_events += events
-                        except Exception as e:
-                            logger.warning(f"Error fetching events for snapshot update: {e}")
-                    
-                    if all_events:
-                        all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
-                        save_current_events_for_key(f"{tag}_full", all_events)
-                        
-                except Exception as e:
-                    logger.exception(f"Error posting verified changes for tag {tag}: {e}")
-            else:
-                # No verified changes - were false positives
-                logger.info(f"No verified changes for '{tag}' - original detection was false positive")
+async def process_single_verification(bot, tag: str):
+    """Process verification for a single tag."""
+    global _pending_changes
+    
+    if tag not in _pending_changes:
+        logger.warning(f"Tag '{tag}' no longer in pending changes when processing verification")
+        return
+    
+    logger.info(f"Starting verification process for tag '{tag}'")
+    try:
+        change_data = _pending_changes[tag]
+        calendars = GROUPED_CALENDARS.get(tag, [])
+        
+        if not calendars:
+            logger.warning(f"No calendars found for tag '{tag}' during verification")
+            del _pending_changes[tag]
+            return
+        
+        logger.debug(f"Calling verify_changes for tag '{tag}' with {len(change_data['added_events'])} added and {len(change_data['removed_events'])} removed events")
+        
+        # Verify the changes
+        verified_added, verified_removed = await verify_changes(
+            tag, calendars, change_data['added_events'], change_data['removed_events']
+        )
+        
+        logger.debug(f"Verification complete for tag '{tag}': {len(verified_added)} verified added, {len(verified_removed)} verified removed")
+        
+        # If changes are verified, post them
+        if verified_added or verified_removed:
+            try:
+                lines = []
+                if verified_added:
+                    lines.append("**📥 Added Events This Week:**")
+                    lines += [f"➕ {format_event(e)}" for e in verified_added]
+                if verified_removed:
+                    lines.append("**📤 Removed Events This Week:**")
+                    lines += [f"➖ {format_event(e)}" for e in verified_removed]
+
+                await send_embed(
+                    bot,
+                    title=f"📣 Event Changes – {get_name_for_tag(tag)}",
+                    description="\n".join(lines),
+                    color=get_color_for_tag(tag)
+                )
+                logger.info(f"Posted verified changes for '{tag}': {len(verified_added)} added, {len(verified_removed)} removed")
                 
-            # Remove from pending changes
+                # Update the snapshot with current events
+                await update_snapshot_after_verification(tag, calendars)
+                
+            except Exception as e:
+                logger.exception(f"Error posting verified changes for tag {tag}: {e}")
+        else:
+            # No verified changes - were false positives
+            logger.info(f"No verified changes for '{tag}' - original detection was false positive")
+            
+        # Remove from pending changes
+        if tag in _pending_changes:
             del _pending_changes[tag]
             
-        except Exception as e:
-            logger.exception(f"Error processing pending verification for tag '{tag}': {e}")
-            
-            # Increment verification attempt count
+    except Exception as e:
+        logger.exception(f"Error processing pending verification for tag '{tag}': {e}")
+        
+        # Increment verification attempt count
+        if tag in _pending_changes:
+            change_data = _pending_changes[tag]
             change_data['verification_count'] = change_data.get('verification_count', 0) + 1
             
             # Remove if we've exceeded max attempts
             if change_data['verification_count'] >= _MAX_VERIFICATION_ATTEMPTS:
                 logger.warning(f"Max verification attempts reached for tag '{tag}', discarding changes")
                 del _pending_changes[tag]
+
+async def update_snapshot_after_verification(tag: str, calendars: list):
+    """Update the event snapshot after successful verification."""
+    try:
+        today = get_today()
+        earliest = today - timedelta(days=30)
+        latest = today + timedelta(days=90)
+        all_events = []
+        
+        for meta in calendars:
+            try:
+                events = await asyncio.to_thread(get_events, meta, earliest, latest)
+                all_events += events
+            except Exception as e:
+                logger.warning(f"Error fetching events for snapshot update: {e}")
+        
+        if all_events:
+            all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
+            save_current_events_for_key(f"{tag}_full", all_events)
+            logger.debug(f"Updated snapshot for '{tag}' after verification with {len(all_events)} events")
+    except Exception as e:
+        logger.exception(f"Error updating snapshot after verification for tag '{tag}': {e}")
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🔍 verification_watchdog                                           ║
+# ║ Dedicated task to ensure pending verifications are processed      ║
+# ╚════════════════════════════════════════════════════════════════════╝
+@tasks.loop(seconds=30)
+async def verification_watchdog(bot):
+    """Dedicated task to process pending verifications more frequently."""
+    task_name = "verification_watchdog"
+    
+    async with TaskLock(task_name) as acquired:
+        if not acquired:
+            return
+            
+        try:
+            global _pending_changes
+            
+            # Clean up any stale pending changes first
+            stale_count = cleanup_stale_pending_changes()
+            if stale_count > 0:
+                logger.info(f"Cleaned up {stale_count} stale pending changes")
+            
+            if _pending_changes:
+                logger.debug(f"Verification watchdog: checking {len(_pending_changes)} pending changes")
+                await process_pending_verifications(bot)
+            
+            # Update task health status
+            update_task_health(task_name, True)
+            
+        except Exception as e:
+            logger.exception(f"Error in {task_name}: {e}")
+            update_task_health(task_name, False)
+            await asyncio.sleep(5)
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📊 get_pending_changes_status                                      ║
@@ -729,19 +814,73 @@ async def process_pending_verifications(bot):
 def get_pending_changes_status() -> dict:
     """Get status information about pending change verifications (for debugging)."""
     current_time = datetime.now()
-    status = {}
+    status = {
+        'total_pending': len(_pending_changes),
+        'verification_delay_seconds': _VERIFICATION_DELAY.total_seconds(),
+        'tags': {}
+    }
     
     for tag, change_data in _pending_changes.items():
         time_elapsed = current_time - change_data['timestamp']
         time_remaining = _VERIFICATION_DELAY - time_elapsed
         
-        status[tag] = {
+        status['tags'][tag] = {
             'added_count': len(change_data['added_events']),
             'removed_count': len(change_data['removed_events']),
             'verification_attempts': change_data['verification_count'],
-            'time_elapsed_minutes': time_elapsed.total_seconds() / 60,
-            'time_remaining_minutes': max(0, time_remaining.total_seconds() / 60),
-            'ready_for_verification': time_elapsed >= _VERIFICATION_DELAY
+            'time_elapsed_seconds': time_elapsed.total_seconds(),
+            'time_remaining_seconds': max(0, time_remaining.total_seconds()),
+            'ready_for_verification': time_elapsed >= _VERIFICATION_DELAY,
+            'timestamp': change_data['timestamp'].isoformat()
         }
     
     return status
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🧹 cleanup_stale_pending_changes                                   ║
+# ║ Removes pending changes that have been stuck for too long         ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def cleanup_stale_pending_changes():
+    """Remove pending changes that have been waiting too long (failsafe)."""
+    global _pending_changes
+    current_time = datetime.now()
+    stale_threshold = timedelta(minutes=10)  # Clean up anything older than 10 minutes
+    
+    stale_tags = []
+    for tag, change_data in _pending_changes.items():
+        time_elapsed = current_time - change_data['timestamp']
+        if time_elapsed > stale_threshold:
+            stale_tags.append(tag)
+    
+    for tag in stale_tags:
+        logger.warning(f"Cleaning up stale pending change for tag '{tag}' (stuck for {(current_time - _pending_changes[tag]['timestamp']).total_seconds():.1f} seconds)")
+        del _pending_changes[tag]
+    
+    return len(stale_tags)
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🐛 debug_verification_system                                       ║
+# ║ Utility function to help debug the verification system            ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def debug_verification_system():
+    """Print debug information about the verification system."""
+    status = get_pending_changes_status()
+    current_time = datetime.now()
+    
+    print(f"\n=== Verification System Debug Info ===")
+    print(f"Current time: {current_time}")
+    print(f"Verification delay: {_VERIFICATION_DELAY.total_seconds()} seconds")
+    print(f"Total pending changes: {status['total_pending']}")
+    
+    if status['tags']:
+        for tag, info in status['tags'].items():
+            print(f"\nTag: {tag}")
+            print(f"  Added: {info['added_count']}, Removed: {info['removed_count']}")
+            print(f"  Queued at: {info['timestamp']}")
+            print(f"  Elapsed: {info['time_elapsed_seconds']:.1f}s")
+            print(f"  Remaining: {info['time_remaining_seconds']:.1f}s")
+            print(f"  Ready: {info['ready_for_verification']}")
+            print(f"  Attempts: {info['verification_attempts']}")
+    else:
+        print("No pending changes")
+    print("=" * 40)
