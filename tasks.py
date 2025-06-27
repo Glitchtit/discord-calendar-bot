@@ -40,7 +40,7 @@ _HEALTH_CHECK_INTERVAL = timedelta(hours=1)
 
 # Change verification system
 _pending_changes = {}  # tag -> {timestamp, added_events, removed_events, verification_count}
-_VERIFICATION_DELAY = timedelta(seconds=90)  # Wait 90 seconds before re-checking (avoid exact minute boundary issues)
+_VERIFICATION_DELAY = timedelta(minutes=6)  # Wait 6 minutes before re-checking (avoid exact minute boundary issues)
 _MAX_VERIFICATION_ATTEMPTS = 3  # Maximum number of verification attempts
 
 # ╔════════════════════════════════════════════════════════════════════╗
