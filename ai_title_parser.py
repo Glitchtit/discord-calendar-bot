@@ -137,7 +137,7 @@ Return ONLY the simplified title, nothing else."""
                     {"role": "user", "content": f"Simplify this calendar event title: {title}"}
                 ],
                 max_tokens=50,
-                temperature=0.3
+                temperature=0.8
             )
             
             simplified = response.choices[0].message.content.strip()
