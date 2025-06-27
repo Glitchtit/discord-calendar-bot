@@ -17,21 +17,25 @@ class AITitleParser:
         # Cache for repeated titles to save API calls
         self._title_cache = {}
         
-        # Enhanced fallback patterns with international terms
+        # Enhanced fallback patterns with Nordic languages and slang
         self.fallback_patterns = {
-            'meeting': r'\b(meeting|meet|call|conference|sync|standup|retrospective|review|möte|utveckling|reunión|réunion|besprechung|vergadering)\b',
-            'appointment': r'\b(appointment|appt|visit|consultation|checkup|termin|cita|rendez-vous|afspraak)\b',
-            'class': r'\b(class|lecture|lesson|training|workshop|seminar|EM|GT|klass|lektion|curso|cours|unterricht|les)\b',
-            'event': r'\b(event|party|celebration|ceremony|launch|evenemang|evento|événement|veranstaltung|evenement)\b',
-            'deadline': r'\b(deadline|due|submit|delivery|finish|frist|plazo|échéance|deadline)\b',
-            'interview': r'\b(interview|screening|hiring|intervju|entrevista|entretien|vorstellungsgespräch|sollicitatiegesprek)\b',
-            'lunch': r'\b(lunch|dinner|breakfast|meal|eat|lunch|almuerzo|déjeuner|mittagessen|ontbijt|middag)\b',
-            'travel': r'\b(flight|travel|trip|vacation|holiday|resa|viaje|voyage|reise|reis|vakantie)\b',
-            'birthday': r'\b(birthday|bday|anniversary|födelsedag|cumpleaños|anniversaire|geburtstag|verjaardag)\b',
-            'reminder': r'\b(reminder|remind|follow.?up|todo|påminnelse|recordatorio|rappel|erinnerung|herinnering)\b',
-            'work': r'\b(ansvarsarbetstid|undervisning|arbete|trabajo|travail|arbeit|werk)\b',
-            'doctor': r'\b(doctor|medical|health|läkare|doctor|médecin|arzt|dokter|doktor)\b',
-            'shopping': r'\b(shopping|store|buy|handla|compras|courses|einkaufen|winkelen)\b'
+            'meeting': r'\b(meeting|meet|call|conference|sync|standup|retrospective|review|möte|mötesdjur|träff|sammankallelse|kokous|tapaaminen|palaveri|neuvottelu|reunión|réunion|besprechung|vergadering)\b',
+            'appointment': r'\b(appointment|appt|visit|consultation|checkup|besök|tid|tidsbokning|aika|varaus|käynti|termin|cita|rendez-vous|afspraak)\b',
+            'class': r'\b(class|lecture|lesson|training|workshop|seminar|EM|GT|klass|lektion|föreläsning|utbildning|kurs|kurssit|luento|opetus|koulutus|curso|cours|unterricht|les)\b',
+            'event': r'\b(event|party|celebration|ceremony|launch|evenemang|fest|kalas|firande|tillfälle|tapahtuma|juhla|juhlat|bileet|evento|événement|veranstaltung|evenement)\b',
+            'deadline': r'\b(deadline|due|submit|delivery|finish|deadline|sista|datum|inlämning|palautus|määräaika|frist|plazo|échéance)\b',
+            'interview': r'\b(interview|screening|hiring|intervju|anställningsintervju|jobbintervju|haastattelu|työhaastattelu|entrevista|entretien|vorstellungsgespräch|sollicitatiegesprek)\b',
+            'lunch': r'\b(lunch|dinner|breakfast|meal|eat|lunch|middag|frukost|måltid|äta|lounas|ruoka|syödä|aamiainen|päivällinen|almuerzo|déjeuner|mittagessen|ontbijt)\b',
+            'travel': r'\b(flight|travel|trip|vacation|holiday|resa|flyg|semester|ledighet|matka|loma|lento|viaje|voyage|reise|reis|vakantie)\b',
+            'birthday': r'\b(birthday|bday|anniversary|födelsedag|bursdag|grattis|syntymäpäivä|synttärit|syndet|cumpleaños|anniversaire|geburtstag|verjaardag)\b',
+            'reminder': r'\b(reminder|remind|follow.?up|todo|påminnelse|kom.?ihåg|muistutus|muista|recordatorio|rappel|erinnerung|herinnering)\b',
+            'work': r'\b(work|job|arbete|jobb|ansvarsarbetstid|distansarbete|hemarbete|työ|etätyö|kotityö|trabajo|travail|arbeit|werk)\b',
+            'doctor': r'\b(doctor|medical|health|läkare|doktor|hälsa|vård|lääkäri|terveys|hoito|doctor|médecin|arzt|dokter)\b',
+            'shopping': r'\b(shopping|store|buy|handla|köpa|affär|butik|ostokset|kauppa|ostaa|compras|courses|einkaufen|winkelen)\b',
+            'coffee': r'\b(coffee|kaffe|fika|kahvi|café|kaffepaus|kahvitauko)\b',
+            'gym': r'\b(gym|träning|motion|idrott|kuntoilu|liikunta|urheilu|training)\b',
+            'study': r'\b(studera|plugga|läsa|opiskella|lukea|tentti|koe|exam|prov)\b',
+            'call': r'\b(ring|ringa|soita|puhelu|samtal|call)\b'
         }
 
     def _setup_openai(self):
@@ -101,7 +105,7 @@ class AITitleParser:
     def _simplify_with_openai(self, title: str) -> str:
         """Use OpenAI API to intelligently simplify the title."""
         try:
-            system_prompt = """You are an expert at simplifying calendar event titles. Your task is to convert long, complex event titles into concise, clear titles that capture the essence of the event.
+            system_prompt = """You are an expert at simplifying calendar event titles, with special expertise in Swedish and Finnish languages including slang and colloquial expressions. Your task is to convert long, complex event titles into concise, clear English titles that capture the essence of the event.
 
 CRITICAL RULES:
 1. ALWAYS output in English, regardless of input language
@@ -111,21 +115,73 @@ CRITICAL RULES:
 5. Remove unnecessary details like times, locations, specific room numbers, recurring indicators
 6. Preserve the core meaning and purpose
 7. If the original title contains emojis, preserve them in the simplified title
-8. Translate non-English titles to English while maintaining meaning
-9. Use common, clear English words that are easily understood
+8. Translate Swedish, Finnish, and other languages to English while maintaining meaning
+9. Understand Nordic slang and colloquial expressions
 10. For work events, prefer generic terms over specific company jargon
 
-Language Translation Examples:
+SWEDISH LANGUAGE & SLANG EXAMPLES:
 "Möte med utvecklingsteam" → "Dev Meeting"
-"Réunion équipe marketing" → "Marketing Meeting"
-"Cita médica con Dr. García" → "Doctor Visit"
-"Geburtstag von Anna" → "Anna's Birthday"
-"Déjeuner avec clients" → "Client Lunch"
-"Besprechung Projekt Alpha" → "Project Meeting"
+"Fika med kollegorna" → "Coffee Break"
+"Träff med chefen" → "Boss Meeting"
+"Tandläkartid kl 14" → "Dentist Visit"
+"Mamma födelsedag" → "Mom's Birthday"
+"Plugga inför tentan" → "Study Session"
+"Handla mat efter jobbet" → "Grocery Shopping"
+"Träning på gymmet" → "Gym Workout"
+"Läkarbesök för hälsokontroll" → "Health Checkup"
+"Jobbintervju på Microsoft" → "Job Interview"
+"Middag med familjen" → "Family Dinner"
 "Ansvarsarbetstid hemma" → "Work Time"
-"Undervisning matematik" → "Math Class"
+"Undervisning i matematik" → "Math Class"
+"Ringa mormor" → "Call Grandma"
+"Städa lägenheten" → "Clean Apartment"
+"Veckomöte projektgrupp Alpha" → "Project Meeting"
+"Kvartalsmöte försäljning" → "Sales Meeting"
+"Personalfest på kontoret" → "Office Party"
+"Föreläsning om AI" → "AI Lecture"
+"Tandvård - rengöring" → "Dental Cleaning"
+"Bilbesiktning Volvo" → "Car Inspection"
 
-Quality Examples:
+FINNISH LANGUAGE & SLANG EXAMPLES:
+"Kokous kehitystiimin kanssa" → "Dev Meeting"
+"Kahvitauko toimistolla" → "Coffee Break"
+"Tapaaminen pomojen kanssa" → "Boss Meeting"
+"Hammaslääkäri klo 15" → "Dentist Visit"
+"Äidin syntymäpäivä" → "Mom's Birthday"
+"Lukemista tenttiin" → "Study Session"
+"Ruokaostokset töiden jälkeen" → "Grocery Shopping"
+"Treenit salilla" → "Gym Workout"
+"Lääkärikäynti terveystarkastus" → "Health Checkup"
+"Työhaastattelu Nokialla" → "Job Interview"
+"Illallinen perheen kanssa" → "Family Dinner"
+"Etätyö kotoa" → "Work Time"
+"Matematiikan opetus" → "Math Class"
+"Soitto mummille" → "Call Grandma"
+"Asunnon siivous" → "Clean Apartment"
+"Viikkokokous projektiryhmä Beta" → "Project Meeting"
+"Kvartaalitapaaminen myynti" → "Sales Meeting"
+"Henkilöstöjuhlat toimistossa" → "Office Party"
+"Luento tekoälystä" → "AI Lecture"
+"Hammashoito - puhdistus" → "Dental Cleaning"
+"Auton katsastus" → "Car Inspection"
+"Bileet Pekan luona" → "Party Pekka"
+"Synttärikahvit" → "Birthday Coffee"
+
+COLLOQUIAL & SLANG RECOGNITION:
+"Plugga" = Study
+"Fika" = Coffee break
+"Träff" = Meeting
+"Treenit" = Workout
+"Bileet" = Party
+"Synttärit/Syndet" = Birthday
+"Mötesdjur" = Meeting (humorous)
+"Kaffepaus" = Coffee break
+"Kahvitauko" = Coffee break
+"Ruokaostokset" = Grocery shopping
+"Henkkareita" = ID/Documents
+"Kämpän siivous" = Apartment cleaning
+
+MORE QUALITY EXAMPLES:
 "Weekly Team Standup Meeting - Project Alpha Q4" → "Team Standup"
 "Dentist Appointment - Dr. Smith at 3pm Room 205" → "Dentist Visit"
 "Sarah's Birthday Party Celebration at Restaurant" → "Sarah's Birthday"
@@ -140,25 +196,22 @@ Quality Examples:
 "🏥 Doctor Appointment at 2pm" → "🏥 Doctor Visit"
 "✈️ Flight to Paris - Air France" → "✈️ Flight Paris"
 "🍽️ Dinner with Friends at Italian Restaurant" → "🍽️ Dinner Friends"
-"Recurring: Daily Stand-up Meeting" → "Daily Standup"
-"CANCELLED: Team Building Event" → "Team Building"
-"Moved: Project Kickoff Meeting" → "Project Kickoff"
 
 Return ONLY the simplified English title, nothing else."""
 
             # Try with higher temperature first for creativity, then lower if needed
             for attempt in range(2):
                 response = self.client.chat.completions.create(
-                    model="gpt-4.1-nano",  # More capable model (corrected)
+                    model="gpt-4.1-nano",
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"Simplify this calendar event title to English: {title}"}
+                        {"role": "user", "content": f"Simplify this calendar event title to English (may contain Swedish/Finnish slang): {title}"}
                     ],
-                    max_tokens=100,  # Increased token limit
-                    temperature=0.3 if attempt == 0 else 0.1,  # Lower temperature for more focused output
-                    top_p=0.9,
-                    frequency_penalty=0.0,
-                    presence_penalty=0.0
+                    max_tokens=120,  # Slightly increased for better Nordic language processing
+                    temperature=0.2 if attempt == 0 else 0.05,  # Even lower temperature for better consistency
+                    top_p=0.8,
+                    frequency_penalty=0.1,
+                    presence_penalty=0.1
                 )
                 
                 simplified = response.choices[0].message.content.strip()
@@ -336,17 +389,28 @@ Return ONLY the simplified English title, nothing else."""
         return None
 
     def _extract_key_terms_fallback(self, title: str) -> list:
-        """Extract key terms using simple pattern matching."""
+        """Extract key terms using simple pattern matching with Nordic language support."""
         # Clean and tokenize, but preserve emojis
-        # Remove punctuation but keep emojis and alphanumeric characters
-        cleaned = re.sub(r'[^\w\s\-\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002600-\U000027BF\U0001f900-\U0001f9ff\U0001f600-\U0001f64f]', ' ', title)
-        words = [w.strip() for w in cleaned.split() if w.strip() and len(w) > 2]
+        # Remove punctuation but keep emojis and alphanumeric characters including Nordic characters
+        cleaned = re.sub(r'[^\w\s\-åäöÅÄÖ\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002600-\U000027BF\U0001f900-\U0001f9ff\U0001f600-\U0001f64f]', ' ', title)
+        words = [w.strip() for w in cleaned.split() if w.strip() and len(w) > 1]
         
-        # Remove common noise words
-        noise_words = {'the', 'and', 'with', 'for', 'meeting', 'call', 'at', 'on', 'in'}
+        # Enhanced noise words with Swedish and Finnish common words
+        noise_words = {
+            'the', 'and', 'with', 'for', 'meeting', 'call', 'at', 'on', 'in',
+            'med', 'och', 'för', 'på', 'i', 'av', 'till', 'från', 'det', 'den', 'är', 'att',
+            'ja', 'kanssa', 'että', 'on', 'se', 'tai', 'kun', 'klo', 'kl', 'time', 'tid'
+        }
         filtered = [w for w in words if w.lower() not in noise_words]
         
         # Prioritize capitalized words, words with emojis, and longer words
+        # Also give bonus to Nordic-specific terms
+        nordic_bonus_terms = {
+            'fika', 'träff', 'möte', 'plugga', 'treenit', 'bileet', 'synttärit',
+            'kokous', 'tapaaminen', 'kahvitauko', 'ruokaostokset', 'lääkäri',
+            'hammaslääkäri', 'tandläkare', 'arbetstid', 'etätyö', 'hemarbete'
+        }
+        
         scored = []
         for w in filtered:
             score = len(w)
@@ -355,6 +419,12 @@ Return ONLY the simplified English title, nothing else."""
             # Bonus for words with emojis
             if any(ord(char) > 0x1F600 for char in w):
                 score += 10
+            # Bonus for Nordic terms
+            if w.lower() in nordic_bonus_terms:
+                score += 8
+            # Bonus for names (capitalized non-common words)
+            if w[0].isupper() and len(w) > 3 and w.lower() not in noise_words:
+                score += 3
             scored.append((w, score))
         
         scored.sort(key=lambda x: x[1], reverse=True)
