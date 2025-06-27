@@ -38,6 +38,11 @@ _task_error_counts = {}
 _MAX_CONSECUTIVE_ERRORS = 5
 _HEALTH_CHECK_INTERVAL = timedelta(hours=1)
 
+# Change verification system
+_pending_changes = {}  # tag -> {timestamp, added_events, removed_events, verification_count}
+_VERIFICATION_DELAY = timedelta(minutes=1)  # Wait 1 minute before re-checking (reduced for faster testing)
+_MAX_VERIFICATION_ATTEMPTS = 3  # Maximum number of verification attempts
+
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔒 TaskLock                                                        ║
 # ║ Context manager for safely acquiring and releasing task locks     ║
@@ -255,25 +260,43 @@ async def watch_for_event_changes(bot):
                 removed_week = [e for e in removed if is_in_current_week(e, today)]
 
                 if added_week or removed_week:
-                    try:
-                        lines = []
-                        if added_week:
-                            lines.append("**📥 Added Events This Week:**")
-                            lines += [f"➕ {format_event(e)}" for e in added_week]
-                        if removed_week:
-                            lines.append("**📤 Removed Events This Week:**")
-                            lines += [f"➖ {format_event(e)}" for e in removed_week]
-
-                        await send_embed(
-                            bot,
-                            title=f"📣 Event Changes – {get_name_for_tag(tag)}",
-                            description="\n".join(lines),
-                            color=get_color_for_tag(tag)
-                        )
-                        logger.info(f"Detected changes for '{tag}', snapshot updated.")
-                        save_current_events_for_key(key, all_events)
-                    except Exception as e:
-                        logger.exception(f"Error posting changes for tag {tag}: {e}")
+                    # Instead of immediately posting, queue for verification
+                    global _pending_changes
+                    
+                    # Check if this tag already has pending changes
+                    if tag in _pending_changes:
+                        logger.debug(f"Tag '{tag}' already has pending changes, updating them")
+                    
+                    _pending_changes[tag] = {
+                        'timestamp': datetime.now(),
+                        'added_events': added_week,
+                        'removed_events': removed_week,
+                        'verification_count': 0
+                    }
+                    
+                    change_summary = f"+{len(added_week)} added" if added_week else ""
+                    if change_summary and removed_week:
+                        change_summary += ", "
+                    if removed_week:
+                        change_summary += f"-{len(removed_week)} removed"
+                    
+                    logger.info(f"Detected potential changes for '{tag}' ({change_summary}) - queued for verification in {_VERIFICATION_DELAY.total_seconds()/60:.1f} minutes")
+                    
+                    # Log some details for debugging (but not too verbose)
+                    if len(added_week) <= 3:
+                        for event in added_week:
+                            title = event.get("summary", "Untitled")[:30] + ("..." if len(event.get("summary", "")) > 30 else "")
+                            logger.debug(f"  Added: {title}")
+                    else:
+                        logger.debug(f"  Added {len(added_week)} events (too many to log individually)")
+                        
+                    if len(removed_week) <= 3:
+                        for event in removed_week:
+                            title = event.get("summary", "Untitled")[:30] + ("..." if len(event.get("summary", "")) > 30 else "")
+                            logger.debug(f"  Removed: {title}")
+                    else:
+                        logger.debug(f"  Removed {len(removed_week)} events (too many to log individually)")
+                    
                 else:
                     # Only save if we have data and it differs from previous
                     if all_events and (len(all_events) != len(prev_snapshot)):
@@ -281,6 +304,9 @@ async def watch_for_event_changes(bot):
                         logger.debug(f"Updated snapshot for '{tag}' with {len(all_events)} events")
                     else:
                         logger.debug(f"No changes for '{tag}'. Snapshot unchanged.")
+                        
+            # Process any pending verifications
+            await process_pending_verifications(bot)
                     
             # Update task health status
             update_task_health(task_name, True)
@@ -514,3 +540,208 @@ async def initialize_event_snapshots():
         logger.info(f"Initial snapshot {status}. Processed {processed}/{total_calendars} calendars.")
     except Exception as e:
         logger.exception(f"Error in initialize_event_snapshots: {e}")
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🔍 verify_changes                                                  ║
+# ║ Re-checks a calendar to verify that detected changes are genuine  ║
+# ╚════════════════════════════════════════════════════════════════════╝
+async def verify_changes(tag: str, calendars: list, original_added: list, original_removed: list) -> tuple:
+    """
+    Re-check the calendar to verify if the detected changes are still present.
+    Returns (verified_added, verified_removed) with only the changes that are confirmed.
+    """
+    try:
+        logger.debug(f"Verifying changes for tag '{tag}'...")
+        
+        today = get_today()
+        earliest = today - timedelta(days=30)
+        latest = today + timedelta(days=90)
+        
+        # Re-fetch current events
+        current_events = []
+        for meta in calendars:
+            try:
+                events = await asyncio.to_thread(get_events, meta, earliest, latest)
+                current_events += events
+            except Exception as e:
+                logger.warning(f"Error re-fetching events for verification from {meta['name']}: {e}")
+                continue
+        
+        if not current_events:
+            logger.warning(f"No events found during verification for tag '{tag}'")
+            return [], []
+            
+        # Sort events reliably
+        current_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
+        
+        # Get previous snapshot for comparison
+        key = f"{tag}_full"
+        prev_snapshot = load_previous_events().get(key, [])
+        
+        # Create fingerprints for verification
+        prev_fps = {}
+        curr_fps = {}
+        
+        for e in prev_snapshot:
+            try:
+                fp = compute_event_fingerprint(e)
+                if fp:
+                    prev_fps[fp] = e
+            except Exception:
+                continue
+        
+        for e in current_events:
+            try:
+                fp = compute_event_fingerprint(e)
+                if fp:
+                    curr_fps[fp] = e
+            except Exception:
+                continue
+        
+        # Re-determine added and removed events
+        verified_added = [e for fp, e in curr_fps.items() if fp not in prev_fps]
+        verified_removed = [e for fp, e in prev_fps.items() if fp not in curr_fps]
+        
+        # Filter to current week
+        verified_added_week = [e for e in verified_added if is_in_current_week(e, today)]
+        verified_removed_week = [e for e in verified_removed if is_in_current_week(e, today)]
+        
+        # Compare with original detections to see what's still consistent
+        original_added_fps = {compute_event_fingerprint(e): e for e in original_added if compute_event_fingerprint(e)}
+        original_removed_fps = {compute_event_fingerprint(e): e for e in original_removed if compute_event_fingerprint(e)}
+        
+        verified_added_fps = {compute_event_fingerprint(e): e for e in verified_added_week if compute_event_fingerprint(e)}
+        verified_removed_fps = {compute_event_fingerprint(e): e for e in verified_removed_week if compute_event_fingerprint(e)}
+        
+        # Only keep changes that are consistent between original detection and verification
+        consistent_added = [e for fp, e in verified_added_fps.items() if fp in original_added_fps]
+        consistent_removed = [e for fp, e in verified_removed_fps.items() if fp in original_removed_fps]
+        
+        # Log verification results
+        original_count = len(original_added) + len(original_removed)
+        verified_count = len(consistent_added) + len(consistent_removed)
+        
+        if verified_count < original_count:
+            logger.info(f"Verification filtered out false positives for '{tag}': {original_count} -> {verified_count} changes")
+        elif verified_count == original_count:
+            logger.debug(f"Verification confirmed all changes for '{tag}': {verified_count} changes")
+        
+        return consistent_added, consistent_removed
+        
+    except Exception as e:
+        logger.exception(f"Error during change verification for tag '{tag}': {e}")
+        # On verification error, return empty lists to be safe (don't post potentially false changes)
+        return [], []
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📋 process_pending_verifications                                    ║
+# ║ Checks and processes changes that are pending verification         ║
+# ╚════════════════════════════════════════════════════════════════════╝
+async def process_pending_verifications(bot):
+    """Process changes that are pending verification."""
+    global _pending_changes
+    
+    current_time = datetime.now()
+    tags_to_process = []
+    
+    # Find tags with changes ready for verification
+    for tag, change_data in _pending_changes.items():
+        time_elapsed = current_time - change_data['timestamp']
+        if time_elapsed >= _VERIFICATION_DELAY:
+            tags_to_process.append(tag)
+    
+    # Process each ready tag
+    for tag in tags_to_process:
+        try:
+            change_data = _pending_changes[tag]
+            calendars = GROUPED_CALENDARS.get(tag, [])
+            
+            if not calendars:
+                logger.warning(f"No calendars found for tag '{tag}' during verification")
+                del _pending_changes[tag]
+                continue
+            
+            # Verify the changes
+            verified_added, verified_removed = await verify_changes(
+                tag, calendars, change_data['added_events'], change_data['removed_events']
+            )
+            
+            # If changes are verified, post them
+            if verified_added or verified_removed:
+                try:
+                    lines = []
+                    if verified_added:
+                        lines.append("**📥 Added Events This Week:**")
+                        lines += [f"➕ {format_event(e)}" for e in verified_added]
+                    if verified_removed:
+                        lines.append("**📤 Removed Events This Week:**")
+                        lines += [f"➖ {format_event(e)}" for e in verified_removed]
+
+                    await send_embed(
+                        bot,
+                        title=f"📣 Event Changes – {get_name_for_tag(tag)}",
+                        description="\n".join(lines),
+                        color=get_color_for_tag(tag)
+                    )
+                    logger.info(f"Posted verified changes for '{tag}': {len(verified_added)} added, {len(verified_removed)} removed")
+                    
+                    # Update the snapshot with current events
+                    today = get_today()
+                    earliest = today - timedelta(days=30)
+                    latest = today + timedelta(days=90)
+                    all_events = []
+                    for meta in calendars:
+                        try:
+                            events = await asyncio.to_thread(get_events, meta, earliest, latest)
+                            all_events += events
+                        except Exception as e:
+                            logger.warning(f"Error fetching events for snapshot update: {e}")
+                    
+                    if all_events:
+                        all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
+                        save_current_events_for_key(f"{tag}_full", all_events)
+                        
+                except Exception as e:
+                    logger.exception(f"Error posting verified changes for tag {tag}: {e}")
+            else:
+                # No verified changes - were false positives
+                logger.info(f"No verified changes for '{tag}' - original detection was false positive")
+                
+            # Remove from pending changes
+            del _pending_changes[tag]
+            
+        except Exception as e:
+            logger.exception(f"Error processing pending verification for tag '{tag}': {e}")
+            
+            # Increment verification attempt count
+            change_data['verification_count'] = change_data.get('verification_count', 0) + 1
+            
+            # Remove if we've exceeded max attempts
+            if change_data['verification_count'] >= _MAX_VERIFICATION_ATTEMPTS:
+                logger.warning(f"Max verification attempts reached for tag '{tag}', discarding changes")
+                del _pending_changes[tag]
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📊 get_pending_changes_status                                      ║
+# ║ Returns status information about pending change verifications      ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def get_pending_changes_status() -> dict:
+    """Get status information about pending change verifications (for debugging)."""
+    current_time = datetime.now()
+    status = {}
+    
+    for tag, change_data in _pending_changes.items():
+        time_elapsed = current_time - change_data['timestamp']
+        time_remaining = _VERIFICATION_DELAY - time_elapsed
+        
+        status[tag] = {
+            'added_count': len(change_data['added_events']),
+            'removed_count': len(change_data['removed_events']),
+            'verification_attempts': change_data['verification_count'],
+            'time_elapsed_minutes': time_elapsed.total_seconds() / 60,
+            'time_remaining_minutes': max(0, time_remaining.total_seconds() / 60),
+            'ready_for_verification': time_elapsed >= _VERIFICATION_DELAY
+        }
+    
+    return status

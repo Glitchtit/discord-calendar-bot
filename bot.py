@@ -252,6 +252,53 @@ async def who_command(interaction: discord.Interaction):
 
 
 # ╔═════════════════════════════════════════════════════════════╗
+# ║ 🔍 /verify_status                                           ║
+# ║ Shows the status of pending change verifications (debug)    ║
+# ╚═════════════════════════════════════════════════════════════╝
+@bot.tree.command(name="verify_status", description="Show status of pending change verifications (debug)")
+async def verify_status_command(interaction: discord.Interaction):
+    try:
+        await interaction.response.defer()
+        
+        from tasks import get_pending_changes_status
+        status = get_pending_changes_status()
+        
+        if not status:
+            await interaction.followup.send("No pending change verifications.")
+            return
+        
+        lines = ["**📋 Pending Change Verifications:**\n"]
+        for tag, info in status.items():
+            ready = "✅ Ready" if info['ready_for_verification'] else f"⏳ {info['time_remaining_minutes']:.1f}min left"
+            lines.append(f"**{tag}**: +{info['added_count']} -{info['removed_count']} ({ready})")
+        
+        await interaction.followup.send("\n".join(lines))
+    except Exception as e:
+        logger.exception(f"Error in /verify_status command: {e}")
+        await interaction.followup.send("An error occurred while checking verification status.")
+
+
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ 🧹 /clear_pending                                           ║
+# ║ Clears all pending change verifications (debug/admin)       ║
+# ╚═════════════════════════════════════════════════════════════╝
+@bot.tree.command(name="clear_pending", description="Clear all pending change verifications (admin)")
+async def clear_pending_command(interaction: discord.Interaction):
+    try:
+        await interaction.response.defer()
+        
+        from tasks import _pending_changes
+        count = len(_pending_changes)
+        _pending_changes.clear()
+        
+        await interaction.followup.send(f"Cleared {count} pending change verification(s).")
+        logger.info(f"Manually cleared {count} pending change verifications")
+    except Exception as e:
+        logger.exception(f"Error in /clear_pending command: {e}")
+        await interaction.followup.send("An error occurred while clearing pending verifications.")
+
+
+# ╔═════════════════════════════════════════════════════════════╗
 # ║ 🔗 resolve_tag_mappings                                      ║
 # ║ Assigns display names and colors to tags based on members   ║
 # ╚═════════════════════════════════════════════════════════════╝

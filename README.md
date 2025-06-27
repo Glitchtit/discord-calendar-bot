@@ -12,7 +12,8 @@
 - 🤹‍♂️ **Themed Morning Greetings** — Uses GPT to generate a whimsical medieval message.
 - 🎨 **AI-Generated Art** — DALL·E illustrations styled like the Bayeux Tapestry.
 - 🧠 **Natural Language Parsing** — `/agenda tomorrow` or `/agenda next friday Anniina`
-- 🔀 **Live Event Monitoring** — Posts alerts for added/removed events.
+- 🔀 **Live Event Monitoring** — Posts alerts for added/removed events with double-verification to prevent false positives.
+- 🔍 **Change Verification System** — Detected calendar changes are verified after a delay to ensure they're genuine before posting.
 - 🧩 **User–Tag Mapping** — Assign Discord users to calendar tags via env variables.
 - ⚒️ **Slash Commands with Autocomplete**
 
@@ -27,6 +28,8 @@
 | `/greet`          | Post the themed morning greeting with image. |
 | `/reload`         | Reload calendars and tag mappings. |
 | `/who`            | Show current calendar tags and assigned users. |
+| `/verify_status`  | Show status of pending change verifications (debug). |
+| `/clear_pending`  | Clear all pending change verifications (admin). |
 
 ---
 
@@ -98,6 +101,22 @@ tail -f ./data/logs/bot.log
 <img src="example.png" width="400"/>
 
 > _“Hark, noble kin! The morrow bringeth study, questing, and banquet at sundown.”_
+
+---
+
+## 🔍 Change Verification System
+
+To prevent false positive notifications (events being marked as "removed" and then immediately "added"), the bot now implements a two-stage verification process:
+
+1. **Initial Detection**: When potential changes are detected, they're queued for verification instead of immediately posted
+2. **Verification**: After a 1-minute delay, the calendar is re-checked to confirm the changes are still present
+3. **Posting**: Only verified, consistent changes are posted to Discord
+
+### Debug Commands
+
+- Use `/verify_status` to see pending verifications
+- Use `/clear_pending` to clear the verification queue if needed
+- Check logs for detailed verification information
 
 ---
 
