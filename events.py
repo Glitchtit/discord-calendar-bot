@@ -611,3 +611,37 @@ def compute_event_fingerprint(event: dict) -> str:
     except Exception as e:
         logger.exception(f"Error computing event fingerprint: {e}")
         return ""
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🎯 compute_event_core_fingerprint                                  ║
+# ║ Generates a stable hash for an event's identity (excluding time)  ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def compute_event_core_fingerprint(event: dict) -> str:
+    """
+    Compute a fingerprint for an event's core identity, excluding timing details.
+    This allows detection of the same event even when times are changed.
+    """
+    try:
+        def clean(text: str) -> str:
+            return " ".join(text.strip().split())
+
+        summary = clean(event.get("summary", ""))
+        location = clean(event.get("location", ""))
+        description = clean(event.get("description", ""))
+        
+        # Include event ID if available for more precise matching
+        event_id = event.get("id", "")
+
+        # Core identity without timing
+        core = {
+            "summary": summary,
+            "location": location,
+            "description": description,
+            "id": event_id
+        }
+
+        normalized_json = json.dumps(core, sort_keys=True)
+        return hashlib.md5(normalized_json.encode("utf-8")).hexdigest()
+    except Exception as e:
+        logger.exception(f"Error computing event core fingerprint: {e}")
+        return ""

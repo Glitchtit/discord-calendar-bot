@@ -25,7 +25,8 @@ from events import (
     get_color_for_tag,
     load_previous_events,
     save_current_events_for_key,
-    compute_event_fingerprint
+    compute_event_fingerprint,
+    compute_event_core_fingerprint
 )
 from log import logger
 from ai import generate_greeting, generate_image
@@ -39,7 +40,7 @@ _MAX_CONSECUTIVE_ERRORS = 5
 _HEALTH_CHECK_INTERVAL = timedelta(hours=1)
 
 # Change verification system
-_pending_changes = {}  # tag -> {timestamp, added_events, removed_events, verification_count}
+_pending_changes = {}  # tag -> {timestamp, added_events, removed_events, changed_events, verification_count}
 _VERIFICATION_DELAY = timedelta(minutes=6)  # Wait 6 minutes before re-checking (avoid exact minute boundary issues)
 _MAX_VERIFICATION_ATTEMPTS = 3  # Maximum number of verification attempts
 
@@ -139,6 +140,86 @@ def try_start_task(task_func, *args, **kwargs):
         logger.exception(f"Failed to start task {task_func.__name__}: {e}")
 
 # ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🔍 detect_event_changes                                            ║
+# ║ Analyzes events to distinguish between added, removed, and changed ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def detect_event_changes(prev_events: list, curr_events: list, today) -> tuple:
+    """
+    Analyze events to detect additions, removals, and changes.
+    Returns (added_events, removed_events, changed_events) for events in current week.
+    """
+    try:
+        # Create fingerprint mappings
+        prev_fps = {}
+        prev_core_fps = {}
+        curr_fps = {}
+        curr_core_fps = {}
+        
+        # Build previous event mappings
+        for e in prev_events:
+            try:
+                fp = compute_event_fingerprint(e)
+                core_fp = compute_event_core_fingerprint(e)
+                if fp and core_fp:
+                    prev_fps[fp] = e
+                    prev_core_fps[core_fp] = e
+            except Exception as ex:
+                logger.warning(f"Error fingerprinting previous event: {ex}")
+                continue
+        
+        # Build current event mappings
+        for e in curr_events:
+            try:
+                fp = compute_event_fingerprint(e)
+                core_fp = compute_event_core_fingerprint(e)
+                if fp and core_fp:
+                    curr_fps[fp] = e
+                    curr_core_fps[core_fp] = e
+            except Exception as ex:
+                logger.warning(f"Error fingerprinting current event: {ex}")
+                continue
+        
+        # Detect changes
+        added = []
+        removed = []
+        changed = []
+        
+        # Find events that exist in current but not in previous
+        for fp, event in curr_fps.items():
+            if fp not in prev_fps:
+                # Check if this is a changed event (same core but different details)
+                core_fp = compute_event_core_fingerprint(event)
+                if core_fp and core_fp in prev_core_fps:
+                    # This is a changed event
+                    changed.append((prev_core_fps[core_fp], event))  # (old_event, new_event)
+                else:
+                    # This is a truly new event
+                    added.append(event)
+        
+        # Find events that exist in previous but not in current
+        for fp, event in prev_fps.items():
+            if fp not in curr_fps:
+                # Check if this event was changed (core exists in current)
+                core_fp = compute_event_core_fingerprint(event)
+                if core_fp and core_fp in curr_core_fps:
+                    # This event was changed, already handled above
+                    pass
+                else:
+                    # This event was truly removed
+                    removed.append(event)
+        
+        # Filter to current week
+        added_week = [e for e in added if is_in_current_week(e, today)]
+        removed_week = [e for e in removed if is_in_current_week(e, today)]
+        changed_week = [(old, new) for old, new in changed if is_in_current_week(new, today)]
+        
+        return added_week, removed_week, changed_week
+        
+    except Exception as e:
+        logger.exception(f"Error detecting event changes: {e}")
+        return [], [], []
+
+# ╔════════════════════════════════════════════════════════════════════╗
 # ║ ⏰ schedule_daily_posts                                            ║
 # ║ Triggers daily and weekly posting tasks at scheduled times        ║
 # ╚════════════════════════════════════════════════════════════════════╝
@@ -235,35 +316,10 @@ async def watch_for_event_changes(bot):
                 key = f"{tag}_full"
                 prev_snapshot = load_previous_events().get(key, [])
                 
-                # Create fingerprints, with added error handling
-                prev_fps = {}
-                curr_fps = {}
-                
-                for e in prev_snapshot:
-                    try:
-                        fp = compute_event_fingerprint(e)
-                        if fp:  # Only add valid fingerprints
-                            prev_fps[fp] = e
-                    except Exception as ex:
-                        logger.warning(f"Error fingerprinting previous event: {ex}")
-                
-                for e in all_events:
-                    try:
-                        fp = compute_event_fingerprint(e)
-                        if fp:  # Only add valid fingerprints 
-                            curr_fps[fp] = e
-                    except Exception as ex:
-                        logger.warning(f"Error fingerprinting current event: {ex}")
+                # Use improved change detection that distinguishes between added/removed/changed
+                added_week, removed_week, changed_week = detect_event_changes(prev_snapshot, all_events, today)
 
-                # Find added and removed events
-                added = [e for fp, e in curr_fps.items() if fp not in prev_fps]
-                removed = [e for fp, e in prev_fps.items() if fp not in curr_fps]
-
-                # Limit notifications to events in this week
-                added_week = [e for e in added if is_in_current_week(e, today)]
-                removed_week = [e for e in removed if is_in_current_week(e, today)]
-
-                if added_week or removed_week:
+                if added_week or removed_week or changed_week:
                     # Instead of immediately posting, queue for verification
                     global _pending_changes
                     
@@ -278,6 +334,7 @@ async def watch_for_event_changes(bot):
                             'timestamp': existing_data['timestamp'],  # Preserve original timestamp
                             'added_events': added_week,  # Update with latest detected changes
                             'removed_events': removed_week,  # Update with latest detected changes
+                            'changed_events': changed_week,  # Update with latest detected changes
                             'verification_count': existing_data.get('verification_count', 0)  # Preserve attempt count
                         }
                         
@@ -290,6 +347,7 @@ async def watch_for_event_changes(bot):
                             'timestamp': current_timestamp,
                             'added_events': added_week,
                             'removed_events': removed_week,
+                            'changed_events': changed_week,
                             'verification_count': 0
                         }
                         logger.debug(f"New pending changes for '{tag}' queued at timestamp: {current_timestamp}")
@@ -297,6 +355,12 @@ async def watch_for_event_changes(bot):
                     change_summary = f"+{len(added_week)} added" if added_week else ""
                     if change_summary and removed_week:
                         change_summary += ", "
+                    if removed_week:
+                        change_summary += f"-{len(removed_week)} removed"
+                    if change_summary and changed_week:
+                        change_summary += ", "
+                    if changed_week:
+                        change_summary += f"~{len(changed_week)} changed"
                     if removed_week:
                         change_summary += f"-{len(removed_week)} removed"
                     
@@ -321,6 +385,13 @@ async def watch_for_event_changes(bot):
                             logger.debug(f"  Removed: {title}")
                     else:
                         logger.debug(f"  Removed {len(removed_week)} events (too many to log individually)")
+                    
+                    if len(changed_week) <= 3:
+                        for old_event, new_event in changed_week:
+                            title = new_event.get("summary", "Untitled")[:30] + ("..." if len(new_event.get("summary", "")) > 30 else "")
+                            logger.debug(f"  Changed: {title}")
+                    else:
+                        logger.debug(f"  Changed {len(changed_week)} events (too many to log individually)")
                     
                 else:
                     # Only save if we have data and it differs from previous
@@ -577,13 +648,16 @@ async def initialize_event_snapshots():
 # ║ 🔍 verify_changes                                                  ║
 # ║ Re-checks a calendar to verify that detected changes are genuine  ║
 # ╚════════════════════════════════════════════════════════════════════╝
-async def verify_changes(tag: str, calendars: list, original_added: list, original_removed: list) -> tuple:
+async def verify_changes(tag: str, calendars: list, original_added: list, original_removed: list, original_changed: list = None) -> tuple:
     """
     Re-check the calendar to verify if the detected changes are still present.
-    Returns (verified_added, verified_removed) with only the changes that are confirmed.
+    Returns (verified_added, verified_removed, verified_changed) with only the changes that are confirmed.
     """
     try:
-        logger.info(f"VERIFY_CHANGES: Starting verification for tag '{tag}' with {len(original_added)} originally added and {len(original_removed)} originally removed events")
+        if original_changed is None:
+            original_changed = []
+            
+        logger.info(f"VERIFY_CHANGES: Starting verification for tag '{tag}' with {len(original_added)} originally added, {len(original_removed)} originally removed, and {len(original_changed)} originally changed events")
         
         today = get_today()
         earliest = today - timedelta(days=30)
@@ -601,7 +675,7 @@ async def verify_changes(tag: str, calendars: list, original_added: list, origin
         
         if not current_events:
             logger.warning(f"No events found during verification for tag '{tag}'")
-            return [], []
+            return [], [], []
             
         # Sort events reliably
         current_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
@@ -610,53 +684,40 @@ async def verify_changes(tag: str, calendars: list, original_added: list, origin
         key = f"{tag}_full"
         prev_snapshot = load_previous_events().get(key, [])
         
-        # Create fingerprints for verification
-        prev_fps = {}
-        curr_fps = {}
-        
-        for e in prev_snapshot:
-            try:
-                fp = compute_event_fingerprint(e)
-                if fp:
-                    prev_fps[fp] = e
-            except Exception:
-                continue
-        
-        for e in current_events:
-            try:
-                fp = compute_event_fingerprint(e)
-                if fp:
-                    curr_fps[fp] = e
-            except Exception:
-                continue
-        
-        # Re-determine added and removed events
-        verified_added = [e for fp, e in curr_fps.items() if fp not in prev_fps]
-        verified_removed = [e for fp, e in prev_fps.items() if fp not in curr_fps]
-        
-        # Filter to current week
-        verified_added_week = [e for e in verified_added if is_in_current_week(e, today)]
-        verified_removed_week = [e for e in verified_removed if is_in_current_week(e, today)]
+        # Use the improved change detection for verification
+        verified_added_week, verified_removed_week, verified_changed_week = detect_event_changes(prev_snapshot, current_events, today)
         
         # Compare with original detections to see what's still consistent
+        
+        # For added events: only include events that are still detected as added
         original_added_fps = {compute_event_fingerprint(e): e for e in original_added if compute_event_fingerprint(e)}
-        original_removed_fps = {compute_event_fingerprint(e): e for e in original_removed if compute_event_fingerprint(e)}
-        
         verified_added_fps = {compute_event_fingerprint(e): e for e in verified_added_week if compute_event_fingerprint(e)}
+        consistent_added = [e for fp, e in verified_added_fps.items() if fp in original_added_fps]
+        
+        # For removed events: only include events that are still detected as removed
+        original_removed_fps = {compute_event_fingerprint(e): e for e in original_removed if compute_event_fingerprint(e)}
         verified_removed_fps = {compute_event_fingerprint(e): e for e in verified_removed_week if compute_event_fingerprint(e)}
-        
-        # For added events: include events that are either in original detection OR currently detected
-        # This handles the case where new events were added while waiting for verification
-        all_added_fps = set(original_added_fps.keys()) | set(verified_added_fps.keys())
-        consistent_added = [verified_added_fps.get(fp) or original_added_fps.get(fp) for fp in all_added_fps if fp in verified_added_fps]
-        
-        # For removed events: only include events that were in original detection AND are still missing
-        # This is more conservative to avoid false positives
         consistent_removed = [e for fp, e in verified_removed_fps.items() if fp in original_removed_fps]
         
+        # For changed events: verify that the changes are still detected
+        consistent_changed = []
+        if original_changed:
+            # Create a mapping of core fingerprints for original changed events
+            original_changed_core_fps = {}
+            for old_event, new_event in original_changed:
+                core_fp = compute_event_core_fingerprint(new_event)
+                if core_fp:
+                    original_changed_core_fps[core_fp] = (old_event, new_event)
+            
+            # Check if the verified changed events match the original ones
+            for old_event, new_event in verified_changed_week:
+                core_fp = compute_event_core_fingerprint(new_event)
+                if core_fp and core_fp in original_changed_core_fps:
+                    consistent_changed.append((old_event, new_event))
+        
         # Log verification results
-        original_count = len(original_added) + len(original_removed)
-        verified_count = len(consistent_added) + len(consistent_removed)
+        original_count = len(original_added) + len(original_removed) + len(original_changed)
+        verified_count = len(consistent_added) + len(consistent_removed) + len(consistent_changed)
         
         if verified_count != original_count:
             logger.info(f"Verification adjusted changes for '{tag}': {original_count} -> {verified_count} changes")
@@ -664,15 +725,17 @@ async def verify_changes(tag: str, calendars: list, original_added: list, origin
                 logger.debug(f"  Added events: {len(original_added)} -> {len(consistent_added)}")
             if len(consistent_removed) != len(original_removed):
                 logger.debug(f"  Removed events: {len(original_removed)} -> {len(consistent_removed)}")
+            if len(consistent_changed) != len(original_changed):
+                logger.debug(f"  Changed events: {len(original_changed)} -> {len(consistent_changed)}")
         elif verified_count == original_count and verified_count > 0:
             logger.debug(f"Verification confirmed all changes for '{tag}': {verified_count} changes")
         
-        return consistent_added, consistent_removed
+        return consistent_added, consistent_removed, consistent_changed
         
     except Exception as e:
         logger.exception(f"Error during change verification for tag '{tag}': {e}")
         # On verification error, return empty lists to be safe (don't post potentially false changes)
-        return [], []
+        return [], [], []
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -727,17 +790,17 @@ async def process_single_verification(bot, tag: str):
             del _pending_changes[tag]
             return
         
-        logger.debug(f"Calling verify_changes for tag '{tag}' with {len(change_data['added_events'])} added and {len(change_data['removed_events'])} removed events")
+        logger.debug(f"Calling verify_changes for tag '{tag}' with {len(change_data['added_events'])} added, {len(change_data['removed_events'])} removed, and {len(change_data.get('changed_events', []))} changed events")
         
         # Verify the changes
-        verified_added, verified_removed = await verify_changes(
-            tag, calendars, change_data['added_events'], change_data['removed_events']
+        verified_added, verified_removed, verified_changed = await verify_changes(
+            tag, calendars, change_data['added_events'], change_data['removed_events'], change_data.get('changed_events', [])
         )
         
-        logger.debug(f"Verification complete for tag '{tag}': {len(verified_added)} verified added, {len(verified_removed)} verified removed")
+        logger.debug(f"Verification complete for tag '{tag}': {len(verified_added)} verified added, {len(verified_removed)} verified removed, {len(verified_changed)} verified changed")
         
         # If changes are verified, post them
-        if verified_added or verified_removed:
+        if verified_added or verified_removed or verified_changed:
             try:
                 lines = []
                 if verified_added:
@@ -746,6 +809,9 @@ async def process_single_verification(bot, tag: str):
                 if verified_removed:
                     lines.append("**📤 Removed Events This Week:**")
                     lines += [f"➖ {format_event(e)}" for e in verified_removed]
+                if verified_changed:
+                    lines.append("**🔄 Changed Events This Week:**")
+                    lines += [f"🔄 {format_event(new_event)}" for old_event, new_event in verified_changed]
 
                 await send_embed(
                     bot,
@@ -753,7 +819,7 @@ async def process_single_verification(bot, tag: str):
                     description="\n".join(lines),
                     color=get_color_for_tag(tag)
                 )
-                logger.info(f"Posted verified changes for '{tag}': {len(verified_added)} added, {len(verified_removed)} removed")
+                logger.info(f"Posted verified changes for '{tag}': {len(verified_added)} added, {len(verified_removed)} removed, {len(verified_changed)} changed")
                 
                 # Update the snapshot with current events
                 await update_snapshot_after_verification(tag, calendars)
@@ -856,6 +922,7 @@ def get_pending_changes_status() -> dict:
         status['tags'][tag] = {
             'added_count': len(change_data['added_events']),
             'removed_count': len(change_data['removed_events']),
+            'changed_count': len(change_data.get('changed_events', [])),
             'verification_attempts': change_data['verification_count'],
             'time_elapsed_seconds': time_elapsed.total_seconds(),
             'time_remaining_seconds': max(0, time_remaining.total_seconds()),
@@ -905,7 +972,7 @@ def debug_verification_system():
         for tag, info in status['tags'].items():
             queued_time = datetime.fromisoformat(info['timestamp'])
             print(f"\nTag: {tag}")
-            print(f"  Added: {info['added_count']}, Removed: {info['removed_count']}")
+            print(f"  Added: {info['added_count']}, Removed: {info['removed_count']}, Changed: {info.get('changed_count', 0)}")
             print(f"  Queued at: {queued_time.strftime('%H:%M:%S')}")
             print(f"  Elapsed: {info['time_elapsed_seconds']:.1f}s")
             print(f"  Remaining: {info['time_remaining_seconds']:.1f}s")
