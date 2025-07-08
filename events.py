@@ -494,48 +494,214 @@ def get_ics_events(start_date, end_date, url):
             logger.warning(f"ICS content too small or empty from {url}")
             return []
             
+        # Additional content validation
+        if len(content) > 50_000_000:  # 50MB limit to prevent memory issues
+            logger.warning(f"ICS content too large (>{len(content)/1_000_000:.1f}MB) from {url}")
+            return []
+            
         if not content.startswith("BEGIN:VCALENDAR") or "END:VCALENDAR" not in content:
             logger.warning(f"Invalid ICS format (missing BEGIN/END markers) from {url}")
             return []
+            
+        # Check for potential malicious content patterns
+        suspicious_patterns = [
+            b'\x00',  # Null bytes
+            '\x00',   # Null bytes in text
+        ]
         
-        # Safely parse the ICS calendar with error handling for specific parser issues    
+        content_bytes = content.encode('utf-8', errors='ignore')
+        for pattern in suspicious_patterns:
+            if isinstance(pattern, bytes) and pattern in content_bytes:
+                logger.warning(f"Suspicious content detected in ICS from {url}")
+                return []
+            elif isinstance(pattern, str) and pattern in content:
+                logger.warning(f"Suspicious content detected in ICS from {url}")
+                return []
+        
+        # Safely parse the ICS calendar with comprehensive error handling for parser issues    
         try:
             cal = ICS_Calendar(content)
         except IndexError as ie:
-            # Handle the specific TatSu parser error we're seeing
+            # Handle the specific TatSu parser error we're seeing (pop from empty list)
             logger.warning(f"Parser index error in ICS file from {url}: {ie}")
             return []
+        except ValueError as ve:
+            # Handle malformed datetime or other value parsing errors
+            logger.warning(f"ICS value parsing error for {url}: {ve}")
+            return []
+        except TypeError as te:
+            # Handle 'NoneType' object is not iterable and similar type errors
+            logger.warning(f"ICS type error for {url}: {te}")
+            return []
+        except AttributeError as ae:
+            # Handle missing attribute errors during parsing
+            logger.warning(f"ICS attribute error for {url}: {ae}")
+            return []
+        except ImportError as ime:
+            # Handle missing dependencies or module issues
+            logger.warning(f"ICS import error for {url}: {ime}")
+            return []
+        except MemoryError as me:
+            # Handle cases where ICS file is too large
+            logger.warning(f"ICS memory error for {url}: File too large to process")
+            return []
+        except RecursionError as re:
+            # Handle infinite recursion in malformed ICS files
+            logger.warning(f"ICS recursion error for {url}: Malformed file structure")
+            return []
+        except UnicodeDecodeError as ude:
+            # Handle encoding issues
+            logger.warning(f"ICS encoding error for {url}: {ude}")
+            return []
+        except KeyboardInterrupt:
+            # Allow clean shutdown
+            logger.info("ICS parsing interrupted by user")
+            raise
         except Exception as parser_error:
-            logger.warning(f"ICS parser error for {url}: {parser_error}")
+            # Catch any other parsing errors including TatSu parser exceptions
+            error_msg = str(parser_error)
+            if "ALPHADIGIT_MINUS_PLUS" in error_msg or "contentline" in error_msg:
+                logger.warning(f"ICS datetime format error for {url}: Malformed DTSTART/DTEND field")
+            elif "pop from empty list" in error_msg:
+                logger.warning(f"Parser index error in ICS file from {url}: {parser_error}")
+            elif "'NoneType' object is not iterable" in error_msg:
+                logger.warning(f"ICS parser error for {url}: {parser_error}")
+            else:
+                logger.warning(f"ICS parser error for {url}: {parser_error}")
             return []
             
+        # Safely iterate through events with additional error handling
         events = []
-        for e in cal.events:
-            if start_date <= e.begin.date() <= end_date:
-                id_source = f"{e.name}|{e.begin}|{e.end}|{e.location or ''}"
-                original_title = e.name or ""
-                simplified_title = simplify_event_title(original_title) if original_title else "Event"
-                
-                event = {
-                    "summary": simplified_title,
-                    "original_summary": original_title,  # Preserve original
-                    "start": {"dateTime": e.begin.isoformat()},
-                    "end": {"dateTime": e.end.isoformat()},
-                    "location": e.location or "",
-                    "description": e.description or "",
-                    "id": hashlib.md5(id_source.encode("utf-8")).hexdigest()
-                }
-                events.append(event)
-                logger.debug(f"ICS title simplified: '{original_title}' -> '{simplified_title}'")
+        if not hasattr(cal, 'events') or cal.events is None:
+            logger.warning(f"No events found in ICS calendar from {url}")
+            return []
+            
+        try:
+            # Convert to list first to avoid iterator issues
+            cal_events = list(cal.events) if hasattr(cal.events, '__iter__') else []
+        except (TypeError, ValueError, AttributeError) as e:
+            logger.warning(f"Error accessing events from ICS calendar {url}: {e}")
+            return []
+            
+        try:
+            for i, e in enumerate(cal_events):
+                try:
+                    # Add safety check for maximum number of events to prevent memory issues
+                    if i >= 1000:  # Limit to 1000 events per calendar
+                        logger.warning(f"ICS calendar {url} has too many events (>1000), truncating")
+                        break
+                        
+                    # Validate event has required fields
+                    if not hasattr(e, 'begin') or not hasattr(e, 'end') or e.begin is None or e.end is None:
+                        logger.debug(f"Skipping event with missing start/end time from {url}")
+                        continue
+                        
+                    # Additional safety checks for event properties
+                    try:
+                        # Test if we can access the date property safely
+                        event_date = e.begin.date()
+                        event_end_date = e.end.date()
+                    except (AttributeError, ValueError, TypeError) as date_error:
+                        logger.debug(f"Skipping event with invalid date from {url}: {date_error}")
+                        continue
+                        
+                    # Check if event is in date range
+                    if not (start_date <= event_date <= end_date):
+                        continue
+                        
+                    # Safely extract event data with additional error handling
+                    try:
+                        original_title = getattr(e, 'name', None) or getattr(e, 'summary', None) or ""
+                        location = getattr(e, 'location', None) or ""
+                        description = getattr(e, 'description', None) or ""
+                        
+                        # Ensure string types and handle encoding issues
+                        if original_title and not isinstance(original_title, str):
+                            original_title = str(original_title)
+                        if location and not isinstance(location, str):
+                            location = str(location)
+                        if description and not isinstance(description, str):
+                            description = str(description)
+                            
+                        # Truncate very long fields to prevent memory issues
+                        original_title = original_title[:500] if original_title else ""
+                        location = location[:200] if location else ""
+                        description = description[:1000] if description else ""
+                        
+                    except (UnicodeDecodeError, UnicodeEncodeError) as encoding_error:
+                        logger.debug(f"Encoding error processing event from {url}: {encoding_error}")
+                        original_title = "Event"
+                        location = ""
+                        description = ""
+                    except Exception as field_error:
+                        logger.debug(f"Error extracting event fields from {url}: {field_error}")
+                        original_title = "Event"
+                        location = ""
+                        description = ""
+                        
+                    # Create unique ID for event
+                    id_source = f"{original_title}|{e.begin}|{e.end}|{location}"
+                    
+                    # Safely generate simplified title
+                    try:
+                        simplified_title = simplify_event_title(original_title) if original_title else "Event"
+                    except Exception as title_error:
+                        logger.debug(f"Error simplifying title '{original_title}' from {url}: {title_error}")
+                        simplified_title = original_title or "Event"
+                    
+                    try:
+                        event = {
+                            "summary": simplified_title,
+                            "original_summary": original_title,  # Preserve original
+                            "start": {"dateTime": e.begin.isoformat()},
+                            "end": {"dateTime": e.end.isoformat()},
+                            "location": location,
+                            "description": description,
+                            "id": hashlib.md5(id_source.encode("utf-8")).hexdigest()
+                        }
+                        events.append(event)
+                        logger.debug(f"ICS title simplified: '{original_title}' -> '{simplified_title}'")
+                    except Exception as event_creation_error:
+                        logger.warning(f"Error creating event object from {url}: {event_creation_error}")
+                        continue
+                    
+                except KeyboardInterrupt:
+                    # Allow clean shutdown
+                    logger.info("Event processing interrupted by user")
+                    raise
+                except Exception as event_error:
+                    # Log individual event processing errors but continue with other events
+                    logger.warning(f"Error processing individual event from {url}: {event_error}")
+                    continue
+                    
+        except KeyboardInterrupt:
+            # Allow clean shutdown
+            logger.info("Event iteration interrupted by user")
+            raise
+        except Exception as iteration_error:
+            logger.warning(f"Error iterating through events from {url}: {iteration_error}")
+            return []
 
+        # Deduplicate events with error handling
         seen_fps = set()
         deduped = []
         for e in events:
-            fp = compute_event_fingerprint(e)
-            if fp not in seen_fps:
-                seen_fps.add(fp)
+            try:
+                fp = compute_event_fingerprint(e)
+                if fp and fp not in seen_fps:
+                    seen_fps.add(fp)
+                    deduped.append(e)
+                elif not fp:
+                    # If fingerprinting fails, include the event anyway but log it
+                    logger.debug(f"Could not fingerprint event, including anyway: {e.get('summary', 'Unknown')}")
+                    deduped.append(e)
+            except Exception as fp_error:
+                logger.warning(f"Error computing fingerprint for event from {url}: {fp_error}")
+                # Include the event anyway to avoid losing data
                 deduped.append(e)
-        logger.debug(f"Deduplicated to {len(deduped)} ICS events")
+                continue
+                
+        logger.debug(f"Deduplicated to {len(deduped)} ICS events from {url}")
         return deduped
         
     except ssl.SSLError as e:
@@ -567,12 +733,36 @@ def get_ics_events(start_date, end_date, url):
         return []
 
 def get_events(source_meta, start_date, end_date):
-    logger.debug(f"Getting events from source: {source_meta['name']} ({source_meta['type']})")
-    if source_meta["type"] == "google":
-        return get_google_events(start_date, end_date, source_meta["id"])
-    elif source_meta["type"] == "ics":
-        return get_ics_events(start_date, end_date, source_meta["id"])
-    return []
+    """Fetch events from a calendar source with comprehensive error handling."""
+    try:
+        logger.debug(f"Getting events from source: {source_meta['name']} ({source_meta['type']})")
+        
+        # Validate source metadata
+        if not isinstance(source_meta, dict):
+            logger.error(f"Invalid source metadata: {source_meta}")
+            return []
+            
+        source_type = source_meta.get("type")
+        source_id = source_meta.get("id")
+        source_name = source_meta.get("name", "Unknown")
+        
+        if not source_type or not source_id:
+            logger.error(f"Missing required fields in source metadata: {source_meta}")
+            return []
+        
+        # Route to appropriate fetcher based on source type
+        if source_type == "google":
+            return get_google_events(start_date, end_date, source_id)
+        elif source_type == "ics":
+            return get_ics_events(start_date, end_date, source_id)
+        else:
+            logger.warning(f"Unknown calendar source type '{source_type}' for source '{source_name}'")
+            return []
+            
+    except Exception as e:
+        source_name = source_meta.get("name", "Unknown") if isinstance(source_meta, dict) else "Unknown"
+        logger.exception(f"Unexpected error getting events from source '{source_name}': {e}")
+        return []
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🧬 compute_event_fingerprint                                       ║

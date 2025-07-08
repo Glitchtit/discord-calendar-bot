@@ -182,9 +182,43 @@ def main():
         async def on_heartbeat(sequence):
             bot.last_heartbeat = time.time()
         
-        # Start the bot with reconnect enabled
+        # Start the bot with reconnect enabled and retry logic
         logger.info("Starting Discord bot...")
-        bot.run(DISCORD_BOT_TOKEN, reconnect=True)
+        
+        max_startup_retries = 3
+        startup_retry_count = 0
+        
+        while startup_retry_count < max_startup_retries:
+            try:
+                bot.run(DISCORD_BOT_TOKEN, reconnect=True)
+                break  # If we get here, the bot stopped normally
+                
+            except KeyboardInterrupt:
+                logger.info("Bot shutdown requested by user")
+                break
+                
+            except Exception as bot_error:
+                startup_retry_count += 1
+                
+                # Check if this is a critical error that we shouldn't retry
+                error_str = str(bot_error).lower()
+                critical_errors = [
+                    "improper token", "login failure", "unauthorized", 
+                    "forbidden", "invalid token", "token is invalid"
+                ]
+                
+                if any(critical in error_str for critical in critical_errors):
+                    logger.error(f"Critical bot error - not retrying: {bot_error}")
+                    break
+                    
+                if startup_retry_count < max_startup_retries:
+                    retry_delay = min(30, 5 * (2 ** startup_retry_count))  # Exponential backoff, max 30s
+                    logger.error(f"Bot crashed (attempt {startup_retry_count}/{max_startup_retries}): {bot_error}")
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                else:
+                    logger.error(f"Bot failed after {max_startup_retries} attempts: {bot_error}")
+                    raise
         
     except Exception as e:
         logger.exception(f"Critical error in main: {e}")

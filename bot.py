@@ -359,3 +359,67 @@ async def resolve_tag_mappings():
     except Exception as e:
         logger.exception(f"Error in resolve_tag_mappings: {e}")
         # Don't re-raise, allow initialization to continue
+
+
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ ⚠️ on_error                                                  ║
+# ║ Global error handler for unhandled exceptions               ║
+# ╚═════════════════════════════════════════════════════════════╝
+@bot.event
+async def on_error(event, *args, **kwargs):
+    """Global error handler to log exceptions and prevent crashes."""
+    try:
+        import traceback
+        import sys
+        
+        # Get exception info
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        
+        # Log the full exception with context
+        logger.exception(f"Unhandled exception in event '{event}': {exc_value}")
+        
+        # Also log the event arguments for debugging (safely)
+        try:
+            logger.error(f"Event arguments: {args[:3] if len(args) > 3 else args}")  # Limit to prevent spam
+        except Exception:
+            logger.error("Event arguments could not be logged safely")
+            
+        # Try to continue operation - don't re-raise the exception
+        logger.info("Bot continuing operation despite error")
+        
+    except Exception as handler_error:
+        # Even our error handler failed - log and continue
+        logger.error(f"Error in error handler: {handler_error}")
+
+
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ ⚠️ on_app_command_error                                      ║
+# ║ Handle slash command errors gracefully                      ║
+# ╚═════════════════════════════════════════════════════════════╝
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    """Handle slash command errors gracefully."""
+    try:
+        error_msg = "An error occurred while processing your command."
+        
+        if isinstance(error, app_commands.CommandOnCooldown):
+            error_msg = f"Command is on cooldown. Try again in {error.retry_after:.2f} seconds."
+        elif isinstance(error, app_commands.MissingPermissions):
+            error_msg = "You don't have permission to use this command."
+        elif isinstance(error, app_commands.BotMissingPermissions):
+            error_msg = "I don't have the necessary permissions to execute this command."
+        
+        # Log the full error
+        logger.exception(f"Slash command error in {interaction.command.name if interaction.command else 'unknown'}: {error}")
+        
+        # Respond to user
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(error_msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(error_msg, ephemeral=True)
+        except Exception as response_error:
+            logger.error(f"Failed to send error response to user: {response_error}")
+            
+    except Exception as handler_error:
+        logger.error(f"Error in command error handler: {handler_error}")
