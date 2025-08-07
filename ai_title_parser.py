@@ -210,9 +210,6 @@ Return ONLY the simplified English title, nothing else."""
                         ],
                         max_output_tokens=150,       # Responses API uses max_output_tokens
                         temperature=0.2 if attempt == 0 else 0.05,
-                        top_p=0.8,
-                        frequency_penalty=0.1,
-                        presence_penalty=0.1,
                     )
                     # Responses API helper to get text:
                     simplified = (resp.output_text or "").strip()
