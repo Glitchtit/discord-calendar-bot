@@ -200,28 +200,30 @@ MORE QUALITY EXAMPLES (5 words preferred):
 
 Return ONLY the simplified English title, nothing else."""
 
-            # Try with higher temperature first for creativity, then lower if needed
             for attempt in range(2):
-                response = self.client.chat.completions.create(
-                    model="gpt-5-nano",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"Simplify this calendar event title to English (may contain Swedish/Finnish slang): {title}"}
-                    ],
-                    max_completion_tokens=150,  # Increased for 5-word titles
-                    temperature=0.2 if attempt == 0 else 0.05,
-                    top_p=0.8,
-                    frequency_penalty=0.1,
-                    presence_penalty=0.1
-                )
-                
-                simplified = response.choices[0].message.content.strip()
-                
-                # Validate and clean the response
-                if self._validate_simplified_title(simplified, title):
-                    return self._clean_title(simplified)
-                
-                logger.debug(f"Attempt {attempt + 1} failed validation: '{simplified}', retrying...")
+                try:
+                    resp = self.client.responses.create(
+                        model="gpt-5-nano",
+                        input=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": f"Simplify this calendar event title to English (may contain Swedish/Finnish slang): {title}"}
+                        ],
+                        max_output_tokens=150,       # Responses API uses max_output_tokens
+                        temperature=0.2 if attempt == 0 else 0.05,
+                        top_p=0.8,
+                        frequency_penalty=0.1,
+                        presence_penalty=0.1,
+                    )
+                    # Responses API helper to get text:
+                    simplified = (resp.output_text or "").strip()
+
+                    if self._validate_simplified_title(simplified, title):
+                        return self._clean_title(simplified)
+
+                    logger.debug(f"Attempt {attempt + 1} failed validation: '{simplified}', retrying...")
+                except Exception as e:
+                    logger.warning(f"gpt-5-nano attempt {attempt + 1} errored: {e}")
+
             
             # If both attempts failed, use fallback
             logger.warning(f"OpenAI failed validation after 2 attempts for '{title}', using fallback")
