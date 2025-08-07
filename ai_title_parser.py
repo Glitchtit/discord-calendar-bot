@@ -1,16 +1,14 @@
 import re
-import json
 import os
-from typing import Dict, Optional
-from functools import lru_cache
+from typing import Optional
 
-# ✅ new import style for the modern SDK
+# Modern SDK import (preferred)
 try:
     from openai import OpenAI
 except ImportError:
-    # old SDK fallback
-    import openai
     OpenAI = None
+    # Old SDK fallback
+    import openai  # type: ignore
 
 from log import logger
 
@@ -22,11 +20,9 @@ class AITitleParser:
         self.client = None
         self.model = model
         self._setup_openai()
-
-        # Cache for repeated titles to save API calls
         self._title_cache = {}
 
-        # (unchanged) fallback patterns...
+        # Enhanced fallback patterns with Nordic languages and slang
         self.fallback_patterns = {
             'meeting': r'\b(meeting|meet|call|conference|sync|standup|retrospective|review|möte|mötesdjur|träff|sammankallelse|kokous|tapaaminen|palaveri|neuvottelu|reunión|réunion|besprechung|vergadering)\b',
             'appointment': r'\b(appointment|appt|visit|consultation|checkup|besök|tid|tidsbokning|aika|varaus|käynti|termin|cita|rendez-vous|afspraak)\b',
@@ -56,11 +52,9 @@ class AITitleParser:
                 return
 
             if OpenAI is not None:
-                # new SDK style
-                self.client = OpenAI(api_key=api_key)
+                self.client = OpenAI(api_key=api_key)  # modern SDK
             else:
-                # old SDK fallback
-                openai.api_key = api_key
+                openai.api_key = api_key               # old SDK fallback
                 self.client = openai
 
             logger.info("OpenAI client initialized successfully")
@@ -69,11 +63,15 @@ class AITitleParser:
             self.client = None
 
     def simplify_title(self, original_title: str) -> str:
+        """
+        Simplify an event title to maximum 5 words using OpenAI (gpt-5-nano), with robust fallbacks.
+        """
         if not original_title or not original_title.strip():
             return "Event"
 
         title = original_title.strip()
 
+        # Cache first
         if title in self._title_cache:
             logger.debug(f"Using cached result for: '{title}'")
             return self._title_cache[title]
@@ -92,104 +90,149 @@ class AITitleParser:
             logger.warning(f"Error simplifying title '{original_title}': {e}")
             return self._fallback_simplify(original_title)
 
-    def _extract_emojis(self, text: str) -> list:
-        # unchanged
-        import unicodedata
-        emojis = []
-        for char in text:
-            if unicodedata.category(char) in ['So', 'Sm'] or ord(char) >= 0x1F600:
-                emojis.append(char)
-        return emojis
+    # -------------------- OpenAI calls --------------------
+
+    def _extract_text_from_response(self, resp) -> str:
+        """
+        Robustly extract plain text from both Responses API and chat.completions.
+        """
+        # New Responses API (python SDK >= 1.0)
+        text = getattr(resp, "output_text", None)
+        if text:
+            return text.strip()
+
+        # Fallback: iterate structured output (Responses API)
+        out = []
+        for item in getattr(resp, "output", []) or []:
+            if getattr(item, "type", "") == "message":
+                for c in getattr(item, "content", []) or []:
+                    if getattr(c, "type", "") == "output_text":
+                        t = getattr(c, "text", "")
+                        if t:
+                            out.append(t)
+        if out:
+            return " ".join(out).strip()
+
+        # Old Chat Completions
+        try:
+            return resp["choices"][0]["message"]["content"].strip()
+        except Exception:
+            pass
+
+        return ""
 
     def _simplify_with_openai(self, title: str) -> str:
         """Use OpenAI (Responses API preferred) to intelligently simplify the title."""
-        system_prompt = """You are an expert at simplifying calendar event titles, with special expertise in Swedish and Finnish languages including slang and colloquial expressions. Your task is to convert long, complex event titles into concise, clear English titles that capture the essence of the event.
+        system_prompt = (
+            "You simplify calendar event titles (incl. Swedish/Finnish slang) into concise English.\n"
+            "Rules:\n"
+            "1) Output ONLY the simplified English title.\n"
+            "2) Prefer exactly 5 words (min 3, max 5).\n"
+            "3) Use Title Case.\n"
+            "4) Keep emojis from the original if present.\n"
+            "5) Remove times/rooms/IDs.\n"
+        )
 
-CRITICAL RULES:
-1. ALWAYS output in English, regardless of input language
-2. Use exactly 5 words when possible (minimum 3, maximum 5)
-3. Prefer 5-word titles for better context and clarity
-4. Use title case (First Letter Capitalized)
-5. Focus on the most important information
-6. Remove unnecessary details like times, locations, specific room numbers, recurring indicators
-7. Preserve the core meaning and purpose
-8. If the original title contains emojis, preserve them in the simplified title
-9. Translate Swedish, Finnish, and other languages to English while maintaining meaning
-10. Understand Nordic slang and colloquial expressions
-11. For work events, prefer generic terms over specific company jargon
+        def _call_openai(temp: float, format_only: bool = False) -> str:
+            user_prompt = (
+                f"Simplify this title: {title}"
+                if not format_only else
+                f"Reformat this text into exactly 3–5 Title-Case words (keep emojis, no punctuation): {title}"
+            )
 
-Return ONLY the simplified English title, nothing else."""
-        # Try twice: slightly higher creativity then ultra-low
-        for attempt in range(2):
-            try:
-                # Prefer the new Responses API
-                if hasattr(self.client, "responses"):
-                    resp = self.client.responses.create(
-                        model=self.model,  # <- gpt-5-nano
-                        input=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": f"Simplify this calendar event title to English (may contain Swedish/Finnish slang): {title}"}
-                        ],
-                        max_output_tokens=60,
-                        temperature=0.2 if attempt == 0 else 0.05,
-                        top_p=0.8,
-                        frequency_penalty=0.1,
-                        presence_penalty=0.1,
-                    )
-                    simplified = (getattr(resp, "output_text", None) or "").strip()
-                    if not simplified:
-                        # robust extraction if output_text is missing
-                        if getattr(resp, "output", None):
-                            chunks = []
-                            for item in resp.output:
-                                if getattr(item, "type", "") == "message":
-                                    for c in getattr(item, "content", []):
-                                        if getattr(c, "type", "") == "output_text":
-                                            chunks.append(getattr(c, "text", ""))
-                            simplified = " ".join(chunks).strip()
-                else:
-                    # Old Chat Completions fallback (older SDKs)
-                    resp = self.client.ChatCompletion.create(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": f"Simplify this calendar event title to English (may contain Swedish/Finnish slang): {title}"}
-                        ],
-                        max_tokens=60,
-                        temperature=0.2 if attempt == 0 else 0.05,
-                        top_p=0.8,
-                        frequency_penalty=0.1,
-                        presence_penalty=0.1,
-                    )
-                    simplified = resp["choices"][0]["message"]["content"].strip()
+            if hasattr(self.client, "responses"):
+                # Responses API (modern)
+                resp = self.client.responses.create(
+                    model=self.model,
+                    input=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    max_output_tokens=50,
+                    temperature=temp,
+                    top_p=0.8,
+                    frequency_penalty=0.1,
+                    presence_penalty=0.1,
+                )
+            else:
+                # Old Chat Completions (fallback)
+                resp = self.client.ChatCompletion.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    max_tokens=50,
+                    temperature=temp,
+                    top_p=0.8,
+                    frequency_penalty=0.1,
+                    presence_penalty=0.1,
+                )
+            return self._extract_text_from_response(resp)
 
-                if self._validate_simplified_title(simplified, title):
-                    return self._clean_title(simplified)
+        # Attempt 1: normal simplify (slightly creative)
+        try:
+            simplified = _call_openai(0.2, format_only=False).strip()
+            if self._validate_simplified_title(simplified, title):
+                return self._clean_title(simplified)
+            else:
+                logger.debug(f"Attempt 1 failed validation: '{simplified}'")
+        except Exception as e:
+            logger.debug(f"OpenAI attempt 1 error: {e}")
 
-                logger.debug(f"Attempt {attempt + 1} failed validation: '{simplified}', retrying...")
-            except Exception as e:
-                logger.debug(f"OpenAI attempt {attempt+1} error: {e}")
+        # Attempt 2: deterministic format-only pass
+        try:
+            simplified = _call_openai(0.0, format_only=True).strip()
+            if self._validate_simplified_title(simplified, title):
+                return self._clean_title(simplified)
+            else:
+                logger.debug(f"Attempt 2 failed validation: '{simplified}'")
+        except Exception as e:
+            logger.debug(f"OpenAI attempt 2 error: {e}")
 
         logger.warning(f"OpenAI failed validation after 2 attempts for '{title}', using fallback")
         return self._fallback_simplify(title)
 
+    # -------------------- Validation & Cleaning --------------------
+
+    def _extract_emojis(self, text: str) -> list:
+        """Extract emojis from text using Unicode ranges."""
+        import unicodedata
+        emojis = []
+        for char in text:
+            # treat symbols/emoji as emojis
+            if unicodedata.category(char) in ['So', 'Sm'] or 0x1F300 <= ord(char) <= 0x1FAFF or 0x2600 <= ord(char) <= 0x27BF:
+                emojis.append(char)
+        return emojis
+
     def _validate_simplified_title(self, simplified: str, original: str) -> bool:
+        """Validate that the simplified title meets our requirements."""
         if not simplified:
             return False
 
         cleaned = self._clean_title(simplified)
-        # remove emojis for word count
+
+        # Count words ignoring emojis & symbols
+        tokens = cleaned.split()
         text_words = []
-        for word in cleaned.split():
-            no_emoji = ''.join(ch for ch in word if not (0x1F300 <= ord(ch) <= 0x1FAFF or 0x2600 <= ord(ch) <= 0x27BF))
+        for tok in tokens:
+            no_emoji = ''.join(
+                ch for ch in tok
+                if not (0x1F300 <= ord(ch) <= 0x1FAFF or 0x2600 <= ord(ch) <= 0x27BF)
+            )
+            # strip residual punctuation (keep letters/digits/dash/apostrophe)
+            no_emoji = re.sub(r"[^\w\s\-']", "", no_emoji)
             if no_emoji.strip():
                 text_words.append(no_emoji.strip())
 
         if not (3 <= len(text_words) <= 5):
             return False
 
+        # English-ish heuristic
         if not self._is_mostly_english(cleaned):
-            return False
+            latin_like = sum(bool(re.search(r"[A-Za-z]", w)) for w in text_words)
+            if len(text_words) == 0 or latin_like / max(1, len(text_words)) < 0.5:
+                return False
 
         meaningless = {'event', 'title', 'calendar', 'appointment', 'meeting only'}
         if cleaned.lower().strip() in meaningless:
@@ -198,9 +241,11 @@ Return ONLY the simplified English title, nothing else."""
         return True
 
     def _is_mostly_english(self, text: str) -> bool:
+        """Basic check if text is mostly English."""
         clean_text = ''.join(ch for ch in text if ch.isalpha() or ch.isspace()).strip()
         if not clean_text:
-            return True
+            return True  # emojis-only is fine
+
         non_english_chars = set('àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ'
                                 'ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞŸ'
                                 'ßščřžýáíéóúůňñü')
@@ -209,18 +254,28 @@ Return ONLY the simplified English title, nothing else."""
         return not (total_alpha > 0 and (non_eng / total_alpha) > 0.3)
 
     def _clean_title(self, title: str) -> str:
-        cleaned = title.strip('"\'`[]{}()')
+        """Clean and format the title properly."""
+        cleaned = title.strip('"\'`[]{}() \t\r\n')
+        # Remove common prefixes
         for prefix in ('simplified:', 'title:', 'english:', 'result:'):
             if cleaned.lower().startswith(prefix):
                 cleaned = cleaned[len(prefix):].strip()
+        # Normalize whitespace
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
-        # Normalize whitespace and spacing near emojis (best-effort)
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        # Title Case while preserving emojis/symbols
+        def _tc(word):
+            if re.search(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]", word):
+                return word
+            return word.title()
+
+        cleaned = " ".join(_tc(w) for w in cleaned.split())
         return cleaned
 
-    # --- fallbacks unchanged below ---
+    # -------------------- Fallbacks --------------------
 
     def _fallback_simplify(self, title: str) -> str:
+        """Enhanced fallback pattern-based simplification when OpenAI is unavailable."""
         try:
             emojis = self._extract_emojis(title)
             event_type = self._detect_event_type_fallback(title)
@@ -228,36 +283,48 @@ Return ONLY the simplified English title, nothing else."""
 
             words = []
             if emojis:
-                words.append(''.join(emojis[:1]))
+                words.append(''.join(emojis[:1]))  # keep only one to save space
+
             if event_type and event_type not in ['event', 'work']:
-                words.append(event_type.replace('_', ' ').title())
+                if event_type == 'remote work':
+                    words.append('Work')
+                else:
+                    words.append(event_type.replace('_', ' ').title())
+
             for term in key_terms:
                 if len(words) >= 5:
                     break
                 if term.lower() != event_type and len(term) > 1:
                     words.append(term.title())
+
             if len(words) < 3:
                 additional = self._extract_fallback_words(title)
-                for w in additional:
+                for word in additional:
                     if len(words) >= 5:
                         break
-                    if w.lower() not in [x.lower().replace('_', ' ') for x in words]:
-                        words.append(w.title())
+                    if word.lower() not in [w.lower().replace('_', ' ') for w in words]:
+                        words.append(word.title())
 
-            return self._clean_title(" ".join(words[:5]) or "Event")
+            result = " ".join(words[:5]) if words else "Event"
+            return self._clean_title(result)
         except Exception as e:
             logger.warning(f"Enhanced fallback simplification failed for '{title}': {e}")
             return self._basic_fallback(title)
 
     def _basic_fallback(self, title: str) -> str:
+        """Ultimate basic fallback."""
         try:
             emojis = self._extract_emojis(title)
-            words = [w.strip(".,!?()[]{}") for w in title.split()[:5] if w.strip() and len(w) > 1]
-            return " ".join(([''.join(emojis[:1])] + words[:4]) if emojis else words) or "Event"
-        except:
+            words = title.split()[:5]
+            clean_words = [word.strip(".,!?()[]{}") for word in words if word.strip() and len(word) > 1]
+            if emojis:
+                return " ".join([''.join(emojis[:1])] + clean_words[:4]) or "Event"
+            return " ".join(clean_words) or "Event"
+        except Exception:
             return "Event"
 
     def _detect_event_type_fallback(self, title: str) -> Optional[str]:
+        """Detect event type using fallback patterns."""
         title_lower = title.lower()
         for event_type, pattern in self.fallback_patterns.items():
             if re.search(pattern, title_lower, re.IGNORECASE):
@@ -265,8 +332,10 @@ Return ONLY the simplified English title, nothing else."""
         return None
 
     def _extract_key_terms_fallback(self, title: str) -> list:
+        """Extract key terms using simple pattern matching with Nordic language support."""
         cleaned = re.sub(r'[^\w\s\-åäöÅÄÖ\U0001F300-\U0001FAFF\u2600-\u27BF]', ' ', title)
         words = [w.strip() for w in cleaned.split() if w.strip() and len(w) > 1]
+
         noise_words = {
             'the', 'and', 'with', 'for', 'meeting', 'call', 'at', 'on', 'in',
             'med', 'och', 'för', 'på', 'i', 'av', 'till', 'från', 'det', 'den', 'är', 'att',
@@ -279,24 +348,32 @@ Return ONLY the simplified English title, nothing else."""
             'kokous', 'tapaaminen', 'kahvitauko', 'ruokaostokset', 'lääkäri',
             'hammaslääkäri', 'tandläkare', 'arbetstid', 'etätyö', 'hemarbete'
         }
+
         scored = []
         for w in filtered:
             score = len(w)
-            if w[0].isupper(): score += 5
-            if any(0x1F300 <= ord(c) <= 0x1FAFF or 0x2600 <= ord(c) <= 0x27BF for c in w): score += 10
-            if w.lower() in nordic_bonus_terms: score += 8
-            if w[0].isupper() and len(w) > 3 and w.lower() not in noise_words: score += 3
+            if w[0].isupper():
+                score += 5
+            if any(0x1F300 <= ord(c) <= 0x1FAFF or 0x2600 <= ord(c) <= 0x27BF for c in w):
+                score += 10
+            if w.lower() in nordic_bonus_terms:
+                score += 8
+            if w[0].isupper() and len(w) > 3 and w.lower() not in noise_words:
+                score += 3
             scored.append((w, score))
         scored.sort(key=lambda x: x[1], reverse=True)
-        return [w for w, _ in scored[:5]]
+
+        return [word for word, _ in scored[:5]]
 
     def _extract_fallback_words(self, title: str) -> list:
+        """Extract words as ultimate fallback."""
         caps_words = re.findall(r'\b[A-Z][a-z]+\b', title)
         if caps_words:
             return caps_words[:3]
         return [w for w in title.split() if len(w) > 2][:3]
 
     def clear_cache(self):
+        """Clear the title cache."""
         self._title_cache.clear()
         logger.debug("Title cache cleared")
 
@@ -305,7 +382,9 @@ Return ONLY the simplified English title, nothing else."""
 ai_parser = AITitleParser()
 
 def simplify_event_title(title: str) -> str:
+    """Public function to simplify event titles using OpenAI."""
     return ai_parser.simplify_title(title)
 
 def clear_title_cache():
+    """Public function to clear the title cache."""
     ai_parser.clear_cache()
