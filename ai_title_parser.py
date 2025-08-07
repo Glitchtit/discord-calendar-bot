@@ -208,7 +208,7 @@ Return ONLY the simplified English title, nothing else."""
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": f"Simplify this calendar event title to English (may contain Swedish/Finnish slang): {title}"}
                     ],
-                    max_tokens=150,  # Increased for 5-word titles
+                    max_completion_tokens=150,  # Increased for 5-word titles
                     temperature=0.2 if attempt == 0 else 0.05,
                     top_p=0.8,
                     frequency_penalty=0.1,
