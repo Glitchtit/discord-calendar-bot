@@ -208,8 +208,7 @@ Return ONLY the simplified English title, nothing else."""
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": f"Simplify this calendar event title to English (may contain Swedish/Finnish slang): {title}"}
                         ],
-                        max_output_tokens=150,       # Responses API uses max_output_tokens
-                        temperature=0.2 if attempt == 0 else 0.05,
+                        max_output_tokens=150,
                     )
                     # Responses API helper to get text:
                     simplified = (resp.output_text or "").strip()
