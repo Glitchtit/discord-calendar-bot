@@ -1,5 +1,5 @@
 # Core dependencies
-openai==1.69.0
+openai
 google-api-python-client==2.123.0
 google-auth==2.29.0
 google-auth-oauthlib==1.2.0
