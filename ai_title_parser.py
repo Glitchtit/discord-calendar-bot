@@ -206,13 +206,12 @@ class AITitleParser:
         return emojis
 
     def _validate_simplified_title(self, simplified: str, original: str) -> bool:
-        """Validate that the simplified title meets our requirements."""
         if not simplified:
             return False
 
         cleaned = self._clean_title(simplified)
 
-        # Count words ignoring emojis & symbols
+        # Split words, ignore emojis
         tokens = cleaned.split()
         text_words = []
         for tok in tokens:
@@ -220,18 +219,18 @@ class AITitleParser:
                 ch for ch in tok
                 if not (0x1F300 <= ord(ch) <= 0x1FAFF or 0x2600 <= ord(ch) <= 0x27BF)
             )
-            # strip residual punctuation (keep letters/digits/dash/apostrophe)
             no_emoji = re.sub(r"[^\w\s\-']", "", no_emoji)
             if no_emoji.strip():
                 text_words.append(no_emoji.strip())
 
-        if not (3 <= len(text_words) <= 5):
+        # ✅ Relaxed: 2–6 words instead of strict 3–5
+        if not (2 <= len(text_words) <= 6):
             return False
 
-        # English-ish heuristic
+        # ✅ Softer English check – allow if at least half the words contain A–Z
         if not self._is_mostly_english(cleaned):
             latin_like = sum(bool(re.search(r"[A-Za-z]", w)) for w in text_words)
-            if len(text_words) == 0 or latin_like / max(1, len(text_words)) < 0.5:
+            if latin_like / max(1, len(text_words)) < 0.5:
                 return False
 
         meaningless = {'event', 'title', 'calendar', 'appointment', 'meeting only'}
@@ -239,6 +238,7 @@ class AITitleParser:
             return False
 
         return True
+
 
     def _is_mostly_english(self, text: str) -> bool:
         """Basic check if text is mostly English."""
