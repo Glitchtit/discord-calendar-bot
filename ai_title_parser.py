@@ -203,7 +203,7 @@ Return ONLY the simplified English title, nothing else."""
             # Try with higher temperature first for creativity, then lower if needed
             for attempt in range(2):
                 response = self.client.chat.completions.create(
-                    model="gpt-4.1-nano",
+                    model="gpt-5-nano",
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": f"Simplify this calendar event title to English (may contain Swedish/Finnish slang): {title}"}
