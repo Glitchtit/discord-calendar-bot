@@ -177,8 +177,6 @@ class AITitleParser:
                         },
                     ],
                     max_output_tokens=50,
-                    temperature=temp,
-                    top_p=0.8,
                 )
             else:
                 # Chat Completions fallback (prefer modern path if available)
