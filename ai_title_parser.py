@@ -112,13 +112,27 @@ class AITitleParser:
         for item in getattr(resp, "output", []) or []:
             if getattr(item, "type", "") == "message":
                 for c in getattr(item, "content", []) or []:
-                    # Responses API uses content parts with type "text"
-                    if getattr(c, "type", "") in ("text", "output_text"):
+                    # Responses API content parts can be 'output_text', 'text', 'summary_text', 'refusal'
+                    if getattr(c, "type", "") in ("output_text", "text", "summary_text", "refusal"):
                         t = getattr(c, "text", "")
                         if t:
                             out.append(t)
         if out:
             return " ".join(out).strip()
+
+        # Another Responses API shape: top-level message
+        try:
+            msg = getattr(resp, "message", None)
+            if msg:
+                parts = []
+                for c in getattr(msg, "content", []) or []:
+                    t = getattr(c, "text", "")
+                    if t:
+                        parts.append(t)
+                if parts:
+                    return " ".join(parts).strip()
+        except Exception:
+            pass
 
         # Chat Completions (typed object)
         try:
@@ -159,23 +173,11 @@ class AITitleParser:
             )
 
             if (self.client is not None) and hasattr(self.client, "responses"):
-                # Responses API (modern) — use structured content parts for maximum compatibility
+                # Responses API (modern) — simplest compatible form using instructions + input
                 resp = self.client.responses.create(
                     model=self.model,
-                    input=[
-                        {
-                            "role": "system",
-                            "content": [
-                                {"type": "input_text", "text": system_prompt},
-                            ],
-                        },
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "input_text", "text": user_prompt},
-                            ],
-                        },
-                    ],
+                    instructions=system_prompt,
+                    input=user_prompt,
                     max_output_tokens=50,
                 )
             else:
