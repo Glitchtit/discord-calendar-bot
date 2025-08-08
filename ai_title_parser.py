@@ -185,7 +185,7 @@ class AITitleParser:
                     model=self.model,
                     instructions=system_prompt,
                     input=user_prompt,
-                    max_output_tokens=50,
+                    max_output_tokens=150,
                 )
             else:
                 # Chat Completions fallback (prefer modern path if available)
@@ -196,7 +196,7 @@ class AITitleParser:
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt},
                         ],
-                        max_tokens=50,
+                        max_tokens=150,
                         temperature=temp,
                         top_p=0.8,
                         frequency_penalty=0.1,
@@ -255,7 +255,7 @@ class AITitleParser:
         except Exception as e:
             logger.debug(f"OpenAI attempt 3 error: {e}")
 
-        logger.warning(f"OpenAI failed validation after 2 attempts for '{title}', using fallback")
+        logger.warning(f"OpenAI failed validation after 3 attempts for '{title}', using fallback")
         return self._fallback_simplify(title)
 
     # -------------------- Validation & Cleaning --------------------
@@ -292,11 +292,7 @@ class AITitleParser:
         if not (2 <= len(text_words) <= 6):
             return False
 
-        # ✅ Softer English check – allow if at least half the words contain A–Z
-        if not self._is_mostly_english(cleaned):
-            latin_like = sum(bool(re.search(r"[A-Za-z]", w)) for w in text_words)
-            if latin_like / max(1, len(text_words)) < 0.5:
-                return False
+        # ✅ Drop strict English checks to avoid false negatives for short/nano outputs
 
         meaningless = {'event', 'title', 'calendar', 'appointment', 'meeting only'}
         if cleaned.lower().strip() in meaningless:
@@ -360,21 +356,43 @@ class AITitleParser:
         # Tokenize into words (allow letters/digits/'- and Unicode letters)
         # Remove punctuation around words
         raw = re.sub(r"[\t\r\n]", " ", text)
-        tokens = re.findall(r"[\w\p{L}][\w\p{L}'-]*", raw, flags=re.UNICODE)
-        # Fallback if regex engine doesn't support \p{L}
+        # Tokenize allowing unicode word chars; include apostrophes and dashes
+        tokens = re.findall(r"[\w][\w'’-]*", raw, flags=re.UNICODE)
         if not tokens:
-            tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9'-]*", raw)
+            tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9'’-]*", raw)
 
-        # Take first 5, then trim to at least 3 if possible
         words = tokens[:5]
-        if len(words) > 5:
-            words = words[:5]
+
+        # If too short, backfill from original using key terms/fallback words
+        def ensure_min_words(word_list: list[str]) -> list[str]:
+            if len(word_list) >= 3:
+                return word_list[:5]
+            try:
+                extras = self._extract_key_terms_fallback(original)
+                for w in extras:
+                    if len(word_list) >= 5:
+                        break
+                    if w not in word_list:
+                        word_list.append(w)
+            except Exception:
+                pass
+            if len(word_list) < 3:
+                try:
+                    extras2 = self._extract_fallback_words(original)
+                    for w in extras2:
+                        if len(word_list) >= 5:
+                            break
+                        if w not in word_list:
+                            word_list.append(w)
+                except Exception:
+                    pass
+            return word_list[:5]
+
+        words = ensure_min_words(words)
 
         # Title-case words while preserving emojis via _clean_title
         candidate = (lead_emoji + " " if lead_emoji else "") + " ".join(words)
         candidate = self._clean_title(candidate)
-
-        # If we somehow ended with fewer than 3 non-emoji words, return as is; validation will catch it
         return candidate
 
     # -------------------- Fallbacks --------------------
