@@ -165,11 +165,18 @@ class AITitleParser:
             "5) Remove times/rooms/IDs.\n"
         )
 
-        def _call_openai(temp: float, format_only: bool = False) -> str:
+        def _call_openai(temp: float, format_only: bool = False, force_format: bool = False) -> str:
             user_prompt = (
                 f"Simplify this title: {title}"
-                if not format_only else
-                f"Reformat this text into exactly 3–5 Title-Case words (keep emojis, no punctuation): {title}"
+                if not (format_only or force_format) else
+                (
+                    f"Reformat this text into exactly 3–5 Title-Case words (keep emojis, no punctuation): {title}"
+                    if format_only else
+                    (
+                        "You are a formatter. Output ONLY 3 to 5 words in Title Case, no punctuation, no extra text."
+                        f" Keep any emojis found. Text to format: {title}"
+                    )
+                )
             )
 
             if (self.client is not None) and hasattr(self.client, "responses"):
@@ -215,6 +222,8 @@ class AITitleParser:
         # Attempt 1: normal simplify (slightly creative)
         try:
             simplified = _call_openai(0.2, format_only=False).strip()
+            if simplified:
+                simplified = self._micro_sanitize(simplified, title)
             if self._validate_simplified_title(simplified, title):
                 return self._clean_title(simplified)
             else:
@@ -225,12 +234,26 @@ class AITitleParser:
         # Attempt 2: deterministic format-only pass
         try:
             simplified = _call_openai(0.0, format_only=True).strip()
+            if simplified:
+                simplified = self._micro_sanitize(simplified, title)
             if self._validate_simplified_title(simplified, title):
                 return self._clean_title(simplified)
             else:
                 logger.debug(f"Attempt 2 failed validation: '{simplified}'")
         except Exception as e:
             logger.debug(f"OpenAI attempt 2 error: {e}")
+
+        # Attempt 3: strict force-format pass
+        try:
+            simplified = _call_openai(0.0, format_only=False, force_format=True).strip()
+            if simplified:
+                simplified = self._micro_sanitize(simplified, title)
+            if self._validate_simplified_title(simplified, title):
+                return self._clean_title(simplified)
+            else:
+                logger.debug(f"Attempt 3 failed validation: '{simplified}'")
+        except Exception as e:
+            logger.debug(f"OpenAI attempt 3 error: {e}")
 
         logger.warning(f"OpenAI failed validation after 2 attempts for '{title}', using fallback")
         return self._fallback_simplify(title)
@@ -313,6 +336,46 @@ class AITitleParser:
 
         cleaned = " ".join(_tc(w) for w in cleaned.split())
         return cleaned
+
+    def _micro_sanitize(self, text: str, original: str) -> str:
+        """Convert any non-empty output to 3–5 Title-Case words, preserving a leading emoji.
+
+        - Prefer emojis from model output; if none, borrow one from the original title.
+        - Strip punctuation, keep word characters, dashes and apostrophes inside words.
+        - Enforce 3–5 words window if possible; if fewer words are available, return what we have.
+        """
+        if not text:
+            return text
+
+        # Extract one emoji to keep
+        def extract_first_emoji(s: str) -> str | None:
+            for ch in s:
+                o = ord(ch)
+                if (0x1F300 <= o <= 0x1FAFF) or (0x2600 <= o <= 0x27BF) or (ch in {'\uFE0F'}):
+                    return ch
+            return None
+
+        lead_emoji = extract_first_emoji(text) or extract_first_emoji(original)
+
+        # Tokenize into words (allow letters/digits/'- and Unicode letters)
+        # Remove punctuation around words
+        raw = re.sub(r"[\t\r\n]", " ", text)
+        tokens = re.findall(r"[\w\p{L}][\w\p{L}'-]*", raw, flags=re.UNICODE)
+        # Fallback if regex engine doesn't support \p{L}
+        if not tokens:
+            tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9'-]*", raw)
+
+        # Take first 5, then trim to at least 3 if possible
+        words = tokens[:5]
+        if len(words) > 5:
+            words = words[:5]
+
+        # Title-case words while preserving emojis via _clean_title
+        candidate = (lead_emoji + " " if lead_emoji else "") + " ".join(words)
+        candidate = self._clean_title(candidate)
+
+        # If we somehow ended with fewer than 3 non-emoji words, return as is; validation will catch it
+        return candidate
 
     # -------------------- Fallbacks --------------------
 
