@@ -209,7 +209,7 @@ class AITitleParser:
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt},
                         ],
-                        max_tokens=50,
+                        max_tokens=150,
                         temperature=temp,
                         top_p=0.8,
                         frequency_penalty=0.1,
