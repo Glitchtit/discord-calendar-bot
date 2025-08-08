@@ -2,13 +2,9 @@ import re
 import os
 from typing import Optional
 
-# Modern SDK import (preferred)
-try:
-    from openai import OpenAI
-except ImportError:
-    OpenAI = None
-    # Old SDK fallback
-    import openai  # type: ignore
+# No top-level OpenAI imports; we'll lazy-load in _setup_openai to avoid env issues
+OpenAI = None  # type: ignore
+openai = None  # type: ignore
 
 from log import logger
 
@@ -51,10 +47,20 @@ class AITitleParser:
                 logger.warning("OPENAI_API_KEY not found. Falling back to pattern-based parsing.")
                 return
 
-            if OpenAI is not None:
-                self.client = OpenAI(api_key=api_key)  # modern SDK
-            else:
-                openai.api_key = api_key               # old SDK fallback
+            # Try modern SDK first
+            global OpenAI, openai
+            try:
+                from openai import OpenAI as _OpenAI  # type: ignore
+                OpenAI = _OpenAI
+                self.client = OpenAI(api_key=api_key)
+            except Exception:
+                # Old SDK fallback
+                try:
+                    import openai as _openai  # type: ignore
+                    openai = _openai
+                except Exception as ie:
+                    raise RuntimeError("openai SDK not available") from ie
+                openai.api_key = api_key
                 self.client = openai
 
             logger.info("OpenAI client initialized successfully")
@@ -106,14 +112,26 @@ class AITitleParser:
         for item in getattr(resp, "output", []) or []:
             if getattr(item, "type", "") == "message":
                 for c in getattr(item, "content", []) or []:
-                    if getattr(c, "type", "") == "output_text":
+                    # Responses API uses content parts with type "text"
+                    if getattr(c, "type", "") in ("text", "output_text"):
                         t = getattr(c, "text", "")
                         if t:
                             out.append(t)
         if out:
             return " ".join(out).strip()
 
-        # Old Chat Completions
+        # Chat Completions (typed object)
+        try:
+            choices = getattr(resp, "choices", None)
+            if choices and len(choices) > 0:
+                msg = getattr(choices[0], "message", None)
+                content = getattr(msg, "content", None)
+                if isinstance(content, str):
+                    return content.strip()
+        except Exception:
+            pass
+
+        # Chat Completions (dict-like)
         try:
             return resp["choices"][0]["message"]["content"].strip()
         except Exception:
@@ -140,34 +158,58 @@ class AITitleParser:
                 f"Reformat this text into exactly 3–5 Title-Case words (keep emojis, no punctuation): {title}"
             )
 
-            if hasattr(self.client, "responses"):
-                # Responses API (modern)
+            if (self.client is not None) and hasattr(self.client, "responses"):
+                # Responses API (modern) — use structured content parts for maximum compatibility
                 resp = self.client.responses.create(
                     model=self.model,
                     input=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
+                        {
+                            "role": "system",
+                            "content": [
+                                {"type": "text", "text": system_prompt},
+                            ],
+                        },
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": user_prompt},
+                            ],
+                        },
                     ],
                     max_output_tokens=50,
                     temperature=temp,
                     top_p=0.8,
-                    frequency_penalty=0.1,
-                    presence_penalty=0.1,
                 )
             else:
-                # Old Chat Completions (fallback)
-                resp = self.client.ChatCompletion.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    max_tokens=50,
-                    temperature=temp,
-                    top_p=0.8,
-                    frequency_penalty=0.1,
-                    presence_penalty=0.1,
-                )
+                # Chat Completions fallback (prefer modern path if available)
+                if (self.client is not None) and hasattr(self.client, "chat") and hasattr(self.client.chat, "completions"):
+                    resp = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        max_tokens=50,
+                        temperature=temp,
+                        top_p=0.8,
+                        frequency_penalty=0.1,
+                        presence_penalty=0.1,
+                    )
+                elif (self.client is not None) and hasattr(self.client, "ChatCompletion"):
+                    resp = self.client.ChatCompletion.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        max_tokens=50,
+                        temperature=temp,
+                        top_p=0.8,
+                        frequency_penalty=0.1,
+                        presence_penalty=0.1,
+                    )
+                else:
+                    raise RuntimeError("No compatible chat completions API available in OpenAI client")
             return self._extract_text_from_response(resp)
 
         # Attempt 1: normal simplify (slightly creative)
