@@ -492,6 +492,83 @@ async def log_health_command(interaction: discord.Interaction):
 
 
 # ╔═════════════════════════════════════════════════════════════╗
+# ║ 📋 /calendars                                               ║
+# ║ Shows status of all configured calendar sources            ║
+# ╚═════════════════════════════════════════════════════════════╝
+@bot.tree.command(name="calendars", description="Show status of all configured calendar sources")
+async def calendars_command(interaction: discord.Interaction):
+    try:
+        await interaction.response.defer()
+        
+        # Import here to avoid circular imports
+        from calendar_health import get_calendar_summary
+        
+        summary = get_calendar_summary()
+        
+        if "error" in summary:
+            await interaction.followup.send(f"❌ Error getting calendar summary: {summary['error']}")
+            return
+        
+        # Create embed
+        embed = discord.Embed(
+            title="📋 Calendar Sources Status",
+            description=f"**Total:** {summary['total_calendars']} calendars configured",
+            color=0x00ff00 if summary['failed_calendars'] == 0 else (0xffa500 if summary['failed_calendars'] < summary['total_calendars'] // 2 else 0xff0000),
+            timestamp=datetime.now()
+        )
+        
+        # Add summary field
+        embed.add_field(
+            name="📊 Overview",
+            value=(
+                f"✅ **Healthy:** {summary['healthy_calendars']}\n"
+                f"❌ **Failed:** {summary['failed_calendars']}\n"
+                f"📈 **Success Rate:** {(summary['healthy_calendars']/summary['total_calendars']*100):.1f}%" if summary['total_calendars'] > 0 else "N/A"
+            ),
+            inline=True
+        )
+        
+        # Add details by tag
+        for tag, tag_info in summary['calendars_by_tag'].items():
+            if tag_info['total'] == 0:
+                continue
+                
+            status_emoji = "✅" if tag_info['failed'] == 0 else "⚠️" if tag_info['failed'] < tag_info['total'] else "❌"
+            
+            calendar_lines = []
+            for cal in tag_info['calendars'][:5]:  # Limit to 5 to avoid embed limits
+                cal_emoji = "✅" if cal['status'] == 'healthy' else "❌"
+                error_text = ""
+                if cal['error']:
+                    error_type = cal['error']['type']
+                    if error_type == 'circuit_breaker':
+                        error_text = f" (CB: {cal['error']['failure_count']} fails)"
+                    else:
+                        error_text = f" ({error_type})"
+                
+                calendar_lines.append(f"{cal_emoji} `{cal['name'][:20]}{'...' if len(cal['name']) > 20 else ''}`{error_text}")
+            
+            if len(tag_info['calendars']) > 5:
+                calendar_lines.append(f"... and {len(tag_info['calendars']) - 5} more")
+            
+            embed.add_field(
+                name=f"{status_emoji} Tag {tag} ({tag_info['healthy']}/{tag_info['total']} healthy)",
+                value="\n".join(calendar_lines) if calendar_lines else "No calendars",
+                inline=False
+            )
+        
+        # Add footer with legend
+        embed.set_footer(text="CB = Circuit Breaker active | Use /health for detailed metrics")
+        
+        await interaction.followup.send(embed=embed)
+        logger.info(f"Calendars command executed by {interaction.user}")
+        
+    except Exception as e:
+        logger.exception(f"Error in /calendars command: {e}")
+        await interaction.followup.send("❌ An error occurred while retrieving calendar status.")
+
+
+# ╔═════════════════════════════════════════════════════════════╗
 # ║ 🔗 resolve_tag_mappings                                      ║
 # ║ Assigns display names and colors to tags based on members   ║
 # ╚═════════════════════════════════════════════════════════════╝

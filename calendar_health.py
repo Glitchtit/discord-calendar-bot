@@ -138,6 +138,84 @@ def log_health_status():
     except Exception as e:
         logger.exception(f"Error logging health status: {e}")
 
+def get_calendar_summary() -> dict:
+    """Get a summary of all configured calendars and their status."""
+    try:
+        from events import GROUPED_CALENDARS, _failed_calendars, _calendar_metadata_cache
+        from datetime import datetime
+        
+        summary = {
+            "total_calendars": 0,
+            "healthy_calendars": 0,
+            "failed_calendars": 0,
+            "calendars_by_tag": {},
+            "error_details": {}
+        }
+        
+        for tag, calendars in GROUPED_CALENDARS.items():
+            tag_summary = {
+                "total": len(calendars),
+                "healthy": 0,
+                "failed": 0,
+                "calendars": []
+            }
+            
+            for cal in calendars:
+                summary["total_calendars"] += 1
+                cal_id = cal.get("id", "unknown")
+                cal_name = cal.get("name", "Unknown")
+                
+                is_failed = False
+                error_info = None
+                
+                # Check if calendar has validation errors
+                if cal.get("error"):
+                    is_failed = True
+                    error_info = {
+                        "type": cal.get("error_type", "unknown"),
+                        "cached_at": cal.get("cached_at")
+                    }
+                
+                # Check if calendar has circuit breaker active
+                if cal_id in _failed_calendars:
+                    is_failed = True
+                    failure_info = _failed_calendars[cal_id]
+                    backoff_remaining = 0
+                    if failure_info.get("backoff_until", datetime.min) > datetime.now():
+                        backoff_remaining = (failure_info["backoff_until"] - datetime.now()).total_seconds()
+                    
+                    error_info = {
+                        "type": "circuit_breaker",
+                        "failure_count": failure_info["count"],
+                        "last_failure": failure_info["last_failure"].isoformat(),
+                        "backoff_remaining": max(0, int(backoff_remaining))
+                    }
+                
+                if is_failed:
+                    summary["failed_calendars"] += 1
+                    tag_summary["failed"] += 1
+                    if error_info:
+                        summary["error_details"][cal_id] = error_info
+                else:
+                    summary["healthy_calendars"] += 1
+                    tag_summary["healthy"] += 1
+                
+                tag_summary["calendars"].append({
+                    "id": cal_id[:50] + "..." if len(cal_id) > 50 else cal_id,
+                    "name": cal_name,
+                    "type": cal.get("type", "unknown"),
+                    "status": "failed" if is_failed else "healthy",
+                    "error": error_info
+                })
+            
+            summary["calendars_by_tag"][tag] = tag_summary
+        
+        return summary
+        
+    except Exception as e:
+        logger.exception(f"Error getting calendar summary: {e}")
+        return {"error": str(e)}
+
 if __name__ == "__main__":
     """Run standalone health check."""
     import argparse

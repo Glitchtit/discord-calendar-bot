@@ -590,10 +590,25 @@ def fetch_ics_calendar_metadata(url: str) -> Dict[str, Any]:
     cache_key = f"ics_{url}"
     if cache_key in _calendar_metadata_cache:
         cached_result = _calendar_metadata_cache[cache_key]
-        # Don't use cached errors for too long - retry after 30 minutes
-        if cached_result.get("error") and cached_result.get("cached_at", 0) + 1800 < time.time():
-            logger.debug(f"Cached error expired for {url}, retrying validation")
-            del _calendar_metadata_cache[cache_key]
+        if cached_result.get("error"):
+            # Different cache expiry times based on error type
+            error_type = cached_result.get("error_type", "unknown")
+            if error_type in ["authentication", "forbidden", "not_found"]:
+                # These are likely persistent config issues - cache for 6 hours
+                cache_duration = 6 * 3600  # 6 hours
+            elif error_type in ["method_not_allowed"]:
+                # Server doesn't support HEAD/GET - cache for 24 hours
+                cache_duration = 24 * 3600  # 24 hours
+            else:
+                # Network issues, timeouts - cache for 30 minutes
+                cache_duration = 30 * 60  # 30 minutes
+            
+            if cached_result.get("cached_at", 0) + cache_duration < time.time():
+                logger.debug(f"Cached {error_type} error expired for {url}, retrying validation")
+                del _calendar_metadata_cache[cache_key]
+            else:
+                logger.debug(f"Using cached metadata for ICS calendar {url} (error cached for {cache_duration/3600:.1f}h)")
+                return cached_result
         else:
             logger.debug(f"Using cached metadata for ICS calendar {url}")
             return cached_result
@@ -1288,6 +1303,18 @@ def get_events(source_meta, start_date, end_date):
         if not source_type or not source_id:
             logger.error(f"Missing required fields in source metadata: {source_meta}")
             return []
+        
+        # Check if this source has validation errors and should be skipped
+        if source_meta.get("error"):
+            error_type = source_meta.get("error_type", "unknown")
+            if error_type in ["authentication", "forbidden", "not_found", "method_not_allowed"]:
+                # Only log this occasionally to avoid spam
+                if source_meta.get("cached_at", 0) + 3600 < time.time():  # Log once per hour
+                    logger.info(f"Skipping calendar '{source_name}' - {error_type} error (will retry in {(6 if error_type in ['authentication', 'forbidden', 'not_found'] else 24)}h)")
+                    source_meta["cached_at"] = time.time()  # Update to reduce log frequency
+                return []
+            # For other error types (timeout, connection, etc.), still try to fetch
+            # as they might be temporary issues
         
         # Route to appropriate fetcher based on source type
         if source_type == "google":
