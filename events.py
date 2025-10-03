@@ -71,10 +71,18 @@ def preprocess_ics_content(content: str, url: str) -> str:
     content = re.sub(r'DTEND[^:]*:(\d{8})(?![T\d])', r'DTEND;VALUE=DATE:\1', content)
     
     # Pattern 3: Remove or fix invalid characters in date/time fields
+    def clean_dtstart_value(match):
+        clean_value = re.sub(r"[^\dTZ\-\+]", "", match.group(1))
+        return f'DTSTART:{clean_value}'
+    
+    def clean_dtend_value(match):
+        clean_value = re.sub(r"[^\dTZ\-\+]", "", match.group(1))
+        return f'DTEND:{clean_value}'
+    
     content = re.sub(r'DTSTART[^:]*:([^:\r\n]*[^\dTZ\-\+:\r\n][^:\r\n]*)', 
-                     lambda m: f'DTSTART:{re.sub(r"[^\dTZ\\-\\+]", "", m.group(1))}', content)
+                     clean_dtstart_value, content)
     content = re.sub(r'DTEND[^:]*:([^:\r\n]*[^\dTZ\-\+:\r\n][^:\r\n]*)', 
-                     lambda m: f'DTEND:{re.sub(r"[^\dTZ\\-\\+]", "", m.group(1))}', content)
+                     clean_dtend_value, content)
     
     # Pattern 4: Fix empty DTSTART/DTEND values
     content = re.sub(r'DTSTART[^:]*:\s*[\r\n]', 'DTSTART:19700101T000000Z\r\n', content)
