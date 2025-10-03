@@ -299,6 +299,199 @@ async def clear_pending_command(interaction: discord.Interaction):
 
 
 # ╔═════════════════════════════════════════════════════════════╗
+# ║ 📊 /health                                                  ║
+# ║ Shows calendar system health metrics and status            ║
+# ╚═════════════════════════════════════════════════════════════╝
+@bot.tree.command(name="health", description="Show calendar system health metrics and status")
+@app_commands.describe(detailed="Show detailed breakdown including circuit breaker status")
+async def health_command(interaction: discord.Interaction, detailed: bool = False):
+    try:
+        await interaction.response.defer()
+        
+        # Import here to avoid circular imports
+        from calendar_health import get_health_summary, get_circuit_breaker_status
+        from events import get_metrics_summary
+        
+        health = get_health_summary()
+        metrics = health['metrics']
+        
+        # Determine status emoji and color
+        status_info = {
+            "healthy": {"emoji": "✅", "color": 0x00ff00},
+            "degraded": {"emoji": "⚠️", "color": 0xffa500}, 
+            "unhealthy": {"emoji": "❌", "color": 0xff0000},
+            "unknown": {"emoji": "❓", "color": 0x808080}
+        }
+        
+        current_status = status_info.get(health['status'], status_info['unknown'])
+        
+        # Create embed
+        embed = discord.Embed(
+            title=f"{current_status['emoji']} Calendar System Health",
+            description=f"Status: **{health['status'].title()}**",
+            color=current_status['color'],
+            timestamp=datetime.now()
+        )
+        
+        # Add metrics fields
+        if metrics['requests_total'] > 0:
+            embed.add_field(
+                name="📈 Request Statistics",
+                value=(
+                    f"**Total:** {metrics['requests_total']}\n"
+                    f"**Successful:** {metrics['requests_successful']}\n"
+                    f"**Failed:** {metrics['requests_failed']}\n"
+                    f"**Success Rate:** {metrics['success_rate_percent']}%"
+                ),
+                inline=True
+            )
+            
+            embed.add_field(
+                name="📊 Processing Stats",
+                value=(
+                    f"**Events Processed:** {metrics['events_processed']}\n"
+                    f"**Duration:** {metrics['duration_minutes']:.1f} min\n"
+                    f"**Circuit Breakers:** {metrics['circuit_breakers_active']}"
+                ),
+                inline=True
+            )
+            
+            # Error breakdown
+            if metrics['parsing_errors'] + metrics['network_errors'] + metrics['auth_errors'] > 0:
+                embed.add_field(
+                    name="⚠️ Error Breakdown",
+                    value=(
+                        f"**Parsing Errors:** {metrics['parsing_errors']}\n"
+                        f"**Network Errors:** {metrics['network_errors']}\n"
+                        f"**Auth Errors:** {metrics['auth_errors']}"
+                    ),
+                    inline=True
+                )
+        else:
+            embed.add_field(
+                name="ℹ️ Activity",
+                value="No recent calendar processing activity",
+                inline=False
+            )
+        
+        # Add alerts if any
+        if health['alerts']:
+            alert_text = []
+            for alert in health['alerts'][:5]:  # Limit to 5 alerts to avoid embed limits
+                emoji = {"critical": "🚨", "error": "❌", "warning": "⚠️"}.get(alert['level'], "ℹ️")
+                alert_text.append(f"{emoji} {alert['message']}")
+            
+            embed.add_field(
+                name="🚨 Active Alerts",
+                value="\n".join(alert_text),
+                inline=False
+            )
+        
+        # Add detailed circuit breaker info if requested
+        if detailed and health['circuit_breakers']:
+            breakers = health['circuit_breakers']
+            breaker_text = []
+            
+            for calendar_id, status in list(breakers.items())[:10]:  # Limit to 10 to fit in embed
+                # Truncate long calendar IDs for display
+                display_id = calendar_id[:30] + "..." if len(calendar_id) > 30 else calendar_id
+                backoff_min = status['backoff_remaining_seconds'] / 60
+                breaker_text.append(
+                    f"🔴 `{display_id}`\n"
+                    f"   Failures: {status['failure_count']}, Retry in: {backoff_min:.1f}m"
+                )
+            
+            if breaker_text:
+                embed.add_field(
+                    name=f"🚫 Circuit Breakers ({len(breakers)} total)",
+                    value="\n\n".join(breaker_text),
+                    inline=False
+                )
+        
+        # Add footer
+        embed.set_footer(text="Use /health detailed:True for circuit breaker details")
+        
+        await interaction.followup.send(embed=embed)
+        logger.info(f"Health command executed by {interaction.user}")
+        
+    except Exception as e:
+        logger.exception(f"Error in /health command: {e}")
+        await interaction.followup.send("❌ An error occurred while retrieving health metrics.")
+
+
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ 🔄 /reset_health                                           ║
+# ║ Resets health metrics and circuit breakers (admin)         ║
+# ╚═════════════════════════════════════════════════════════════╝
+@bot.tree.command(name="reset_health", description="Reset calendar health metrics and circuit breakers (admin)")
+@app_commands.describe(
+    component="Which component to reset: 'metrics', 'circuits', or 'all'"
+)
+@app_commands.choices(component=[
+    app_commands.Choice(name="metrics", value="metrics"),
+    app_commands.Choice(name="circuits", value="circuits"), 
+    app_commands.Choice(name="all", value="all")
+])
+async def reset_health_command(interaction: discord.Interaction, component: str = "all"):
+    try:
+        await interaction.response.defer()
+        
+        # Import here to avoid circular imports
+        from events import reset_metrics, _failed_calendars
+        
+        results = []
+        
+        if component in ["metrics", "all"]:
+            reset_metrics()
+            results.append("✅ Health metrics reset")
+            
+        if component in ["circuits", "all"]:
+            circuit_count = len(_failed_calendars)
+            _failed_calendars.clear()
+            results.append(f"✅ {circuit_count} circuit breakers reset")
+        
+        result_message = "\n".join(results)
+        await interaction.followup.send(f"**Health Reset Complete:**\n{result_message}")
+        logger.info(f"Health reset ({component}) executed by {interaction.user}")
+        
+    except Exception as e:
+        logger.exception(f"Error in /reset_health command: {e}")
+        await interaction.followup.send("❌ An error occurred while resetting health metrics.")
+
+
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ 📝 /log_health                                              ║
+# ║ Manually trigger health status logging (debug)             ║
+# ╚═════════════════════════════════════════════════════════════╝
+@bot.tree.command(name="log_health", description="Manually log current health status to system logs")
+async def log_health_command(interaction: discord.Interaction):
+    try:
+        await interaction.response.defer()
+        
+        # Import here to avoid circular imports
+        from calendar_health import log_health_status, get_health_summary
+        
+        # Log to system logs
+        log_health_status()
+        
+        # Get summary for response
+        health = get_health_summary()
+        status_emoji = {"healthy": "✅", "degraded": "⚠️", "unhealthy": "❌", "unknown": "❓"}
+        emoji = status_emoji.get(health['status'], "❓")
+        
+        await interaction.followup.send(
+            f"{emoji} Health status logged to system logs.\n"
+            f"Current status: **{health['status'].title()}**\n"
+            f"Active alerts: **{len(health['alerts'])}**"
+        )
+        logger.info(f"Manual health logging triggered by {interaction.user}")
+        
+    except Exception as e:
+        logger.exception(f"Error in /log_health command: {e}")
+        await interaction.followup.send("❌ An error occurred while logging health status.")
+
+
+# ╔═════════════════════════════════════════════════════════════╗
 # ║ 🔗 resolve_tag_mappings                                      ║
 # ║ Assigns display names and colors to tags based on members   ║
 # ╚═════════════════════════════════════════════════════════════╝

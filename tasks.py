@@ -127,8 +127,9 @@ def start_all_tasks(bot):
         # Start verification watchdog (runs more frequently to catch stuck verifications)
         verification_watchdog.start(bot)
         
-        # Start health monitoring
+        # Start health monitoring tasks
         monitor_task_health.start(bot)
+        calendar_health_monitor.start(bot)
         
         logger.info("All scheduled tasks started successfully")
     except Exception as e:
@@ -139,6 +140,7 @@ def start_all_tasks(bot):
         try_start_task(watch_for_event_changes, bot)
         try_start_task(verification_watchdog, bot)
         try_start_task(monitor_task_health, bot)
+        try_start_task(calendar_health_monitor, bot)
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔄 try_start_task                                                  ║
@@ -987,6 +989,43 @@ async def verification_watchdog(bot):
             if _pending_changes:
                 logger.debug(f"Verification watchdog: checking {len(_pending_changes)} pending changes")
                 await process_pending_verifications(bot)
+            
+            # Update task health status
+            update_task_health(task_name, True)
+            
+        except Exception as e:
+            logger.exception(f"Error in {task_name}: {e}")
+            update_task_health(task_name, False)
+            await asyncio.sleep(5)
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 📊 calendar_health_monitor                                         ║
+# ║ Periodically logs calendar system health metrics                   ║
+# ╚════════════════════════════════════════════════════════════════════╝
+@tasks.loop(minutes=30)  # Log health every 30 minutes
+async def calendar_health_monitor(bot):
+    """Monitor and log calendar system health metrics."""
+    task_name = "calendar_health_monitor"
+    
+    async with TaskLock(task_name) as acquired:
+        if not acquired:
+            return
+            
+        try:
+            # Import here to avoid circular imports
+            from calendar_health import log_health_status, get_health_summary
+            
+            # Log current health status
+            log_health_status()
+            
+            # Get health summary and log critical alerts
+            health = get_health_summary()
+            critical_alerts = [a for a in health['alerts'] if a['level'] == 'critical']
+            
+            if critical_alerts:
+                logger.error(f"Critical calendar health issues detected: {len(critical_alerts)} alerts")
+                for alert in critical_alerts:
+                    logger.error(f"Critical alert: {alert['message']}")
             
             # Update task health status
             update_task_health(task_name, True)

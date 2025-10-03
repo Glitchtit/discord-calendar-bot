@@ -140,12 +140,49 @@ def log_health_status():
 
 if __name__ == "__main__":
     """Run standalone health check."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Calendar Health Monitor")
+    parser.add_argument("--json", action="store_true", help="Output health data as JSON")
+    parser.add_argument("--watch", action="store_true", help="Continuously monitor health (every 60s)")
+    parser.add_argument("--quiet", "-q", action="store_true", help="Only log to system logs, no console output")
+    
+    args = parser.parse_args()
+    
     try:
-        print_health_status()
+        if args.watch:
+            print("Starting continuous health monitoring (press Ctrl+C to stop)...")
+            import time
+            while True:
+                if not args.quiet:
+                    from datetime import datetime
+                    print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]")
+                    if args.json:
+                        import json
+                        health = get_health_summary()
+                        print(json.dumps(health, indent=2, default=str))
+                    else:
+                        print_health_status()
+                
+                log_health_status()
+                time.sleep(60)
         
-        # Also log to system logs
-        log_health_status()
+        elif args.json:
+            import json
+            health = get_health_summary()
+            print(json.dumps(health, indent=2, default=str))
         
+        elif not args.quiet:
+            print_health_status()
+        
+        # Always log to system logs unless specifically requested not to
+        if not args.quiet:
+            log_health_status()
+        
+    except KeyboardInterrupt:
+        if args.watch:
+            print("\nHealth monitoring stopped.")
+        sys.exit(0)
     except Exception as e:
         print(f"Error checking health: {e}")
         sys.exit(1)
