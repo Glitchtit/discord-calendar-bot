@@ -23,12 +23,272 @@ SERVICE_ACCOUNT_FILE = GOOGLE_APPLICATION_CREDENTIALS
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 EVENTS_FILE = "/data/events.json"
 
-# In-memory cache
+# In-memory cache and error tracking
 _calendar_metadata_cache = {}
 _api_last_error_time = None
 _api_error_count = 0
 _API_BACKOFF_RESET = timedelta(minutes=30)
 _MAX_API_ERRORS = 10
+
+# Circuit breaker for failed calendar sources
+_failed_calendars = {}  # url/id -> {"count": int, "last_failure": datetime, "backoff_until": datetime}
+_MAX_FAILURE_COUNT = 5
+_BASE_BACKOFF_SECONDS = 60  # 1 minute base
+_MAX_BACKOFF_SECONDS = 3600  # 1 hour max
+
+# Metrics tracking
+_calendar_metrics = {
+    "requests_total": 0,
+    "requests_successful": 0,
+    "requests_failed": 0,
+    "parsing_errors": 0,
+    "network_errors": 0,
+    "auth_errors": 0,
+    "events_processed": 0,
+    "last_reset": datetime.now()
+}
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🧹 ICS Content Preprocessing                                       ║
+# ║ Cleans up common malformed patterns before parsing                 ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def preprocess_ics_content(content: str, url: str) -> str:
+    """
+    Preprocess ICS content to fix common malformed patterns that cause parser errors.
+    """
+    import re
+    
+    original_length = len(content)
+    logger.debug(f"Preprocessing ICS content from {url} ({original_length} chars)")
+    
+    # Fix common DTSTART/DTEND malformed patterns
+    # Pattern 1: Missing timezone or malformed timezone
+    content = re.sub(r'DTSTART[^:]*:(\d{8}T\d{6})([^ZT\r\n]*)', r'DTSTART:\1Z', content)
+    content = re.sub(r'DTEND[^:]*:(\d{8}T\d{6})([^ZT\r\n]*)', r'DTEND:\1Z', content)
+    
+    # Pattern 2: Fix malformed date-only formats (YYYYMMDD without proper formatting)
+    content = re.sub(r'DTSTART[^:]*:(\d{8})(?![T\d])', r'DTSTART;VALUE=DATE:\1', content)
+    content = re.sub(r'DTEND[^:]*:(\d{8})(?![T\d])', r'DTEND;VALUE=DATE:\1', content)
+    
+    # Pattern 3: Remove or fix invalid characters in date/time fields
+    content = re.sub(r'DTSTART[^:]*:([^:\r\n]*[^\dTZ\-\+:\r\n][^:\r\n]*)', 
+                     lambda m: f'DTSTART:{re.sub(r"[^\dTZ\\-\\+]", "", m.group(1))}', content)
+    content = re.sub(r'DTEND[^:]*:([^:\r\n]*[^\dTZ\-\+:\r\n][^:\r\n]*)', 
+                     lambda m: f'DTEND:{re.sub(r"[^\dTZ\\-\\+]", "", m.group(1))}', content)
+    
+    # Pattern 4: Fix empty DTSTART/DTEND values
+    content = re.sub(r'DTSTART[^:]*:\s*[\r\n]', 'DTSTART:19700101T000000Z\r\n', content)
+    content = re.sub(r'DTEND[^:]*:\s*[\r\n]', 'DTEND:19700101T010000Z\r\n', content)
+    
+    # Pattern 5: Fix duplicate or conflicting parameters
+    content = re.sub(r'DTSTART;[^:]*;VALUE=DATE[^:]*:(\d{8})', r'DTSTART;VALUE=DATE:\1', content)
+    content = re.sub(r'DTEND;[^:]*;VALUE=DATE[^:]*:(\d{8})', r'DTEND;VALUE=DATE:\1', content)
+    
+    # Fix line folding issues that can cause parser errors
+    # Unfold lines that are incorrectly folded in the middle of values
+    content = re.sub(r'(DTSTART[^:\r\n]*:[^:\r\n]*)\r?\n\s+([^\r\n:]*)', r'\1\2', content)
+    content = re.sub(r'(DTEND[^:\r\n]*:[^:\r\n]*)\r?\n\s+([^\r\n:]*)', r'\1\2', content)
+    
+    # Remove invalid characters that can break parsing
+    # Remove null bytes and other control characters except newlines and carriage returns
+    content = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', content)
+    
+    # Fix missing required components
+    if 'BEGIN:VCALENDAR' not in content:
+        logger.warning(f"ICS from {url} missing BEGIN:VCALENDAR, adding")
+        content = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\n' + content
+    
+    if 'VERSION:' not in content:
+        content = content.replace('BEGIN:VCALENDAR', 'BEGIN:VCALENDAR\r\nVERSION:2.0')
+    
+    if 'END:VCALENDAR' not in content:
+        logger.warning(f"ICS from {url} missing END:VCALENDAR, adding")
+        content = content.rstrip() + '\r\nEND:VCALENDAR\r\n'
+    
+    # Fix orphaned event components (VEVENT without proper BEGIN/END)
+    # Remove VEVENT lines that are not properly wrapped
+    lines = content.split('\n')
+    cleaned_lines = []
+    in_event = False
+    
+    for line in lines:
+        line = line.rstrip('\r')
+        if line.startswith('BEGIN:VEVENT'):
+            in_event = True
+            cleaned_lines.append(line)
+        elif line.startswith('END:VEVENT'):
+            if in_event:
+                cleaned_lines.append(line)
+                in_event = False
+            # Skip orphaned END:VEVENT
+        elif in_event or not line.startswith(('DTSTART', 'DTEND', 'SUMMARY', 'DESCRIPTION', 'LOCATION', 'UID')):
+            # Include line if we're in an event or it's not an event property
+            cleaned_lines.append(line)
+        # Skip orphaned event properties outside of VEVENT blocks
+    
+    content = '\n'.join(cleaned_lines)
+    
+    processed_length = len(content)
+    if processed_length != original_length:
+        logger.debug(f"ICS preprocessing for {url}: {original_length} -> {processed_length} chars")
+    
+    return content
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🔄 Circuit Breaker and Retry Logic                                ║
+# ║ Prevents repeated attempts to failing calendar sources            ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def is_calendar_circuit_open(calendar_id: str) -> bool:
+    """Check if circuit breaker is open for a calendar source."""
+    if calendar_id not in _failed_calendars:
+        return False
+    
+    failure_info = _failed_calendars[calendar_id]
+    
+    # Check if we're still in backoff period
+    if failure_info.get("backoff_until", datetime.min) > datetime.now():
+        return True
+    
+    # Reset if enough time has passed since last failure
+    if datetime.now() - failure_info.get("last_failure", datetime.min) > timedelta(hours=1):
+        logger.debug(f"Resetting circuit breaker for calendar {calendar_id}")
+        del _failed_calendars[calendar_id]
+        return False
+    
+    return False
+
+def record_calendar_failure(calendar_id: str) -> None:
+    """Record a failure for circuit breaker logic."""
+    now = datetime.now()
+    
+    if calendar_id not in _failed_calendars:
+        _failed_calendars[calendar_id] = {"count": 0, "last_failure": now}
+    
+    failure_info = _failed_calendars[calendar_id]
+    failure_info["count"] += 1
+    failure_info["last_failure"] = now
+    
+    # Calculate exponential backoff
+    backoff_seconds = min(
+        _BASE_BACKOFF_SECONDS * (2 ** (failure_info["count"] - 1)),
+        _MAX_BACKOFF_SECONDS
+    )
+    failure_info["backoff_until"] = now + timedelta(seconds=backoff_seconds)
+    
+    logger.warning(f"Calendar {calendar_id} failed {failure_info['count']} times, backing off for {backoff_seconds}s")
+
+def record_calendar_success(calendar_id: str) -> None:
+    """Record successful operation to reset circuit breaker."""
+    if calendar_id in _failed_calendars:
+        logger.debug(f"Clearing failure record for calendar {calendar_id}")
+        del _failed_calendars[calendar_id]
+
+def retry_with_backoff(func, max_retries: int = 3, initial_delay: float = 1.0, backoff_factor: float = 2.0):
+    """
+    Retry a function with exponential backoff.
+    
+    Args:
+        func: Function to retry (should raise exception on failure)
+        max_retries: Maximum number of retry attempts
+        initial_delay: Initial delay in seconds
+        backoff_factor: Multiplier for delay between retries
+    """
+    delay = initial_delay
+    last_exception = None
+    
+    for attempt in range(max_retries + 1):
+        try:
+            result = func()
+            return result
+        except KeyboardInterrupt:
+            # Don't retry on user interruption
+            raise
+        except Exception as e:
+            last_exception = e
+            if attempt < max_retries:
+                logger.debug(f"Retry attempt {attempt + 1}/{max_retries} failed: {e}, waiting {delay:.1f}s")
+                time.sleep(delay)
+                delay *= backoff_factor
+            else:
+                logger.warning(f"All {max_retries + 1} retry attempts failed, giving up")
+    
+    # If we get here, all retries failed
+    if last_exception:
+        raise last_exception
+    else:
+        raise RuntimeError("All retries failed with no exception recorded")
+
+def update_metrics(metric_name: str, increment: int = 1):
+    """Update calendar processing metrics."""
+    if metric_name in _calendar_metrics:
+        _calendar_metrics[metric_name] += increment
+    
+def get_metrics_summary() -> Dict[str, Any]:
+    """Get current metrics summary."""
+    now = datetime.now()
+    duration = now - _calendar_metrics["last_reset"]
+    
+    success_rate = 0
+    if _calendar_metrics["requests_total"] > 0:
+        success_rate = (_calendar_metrics["requests_successful"] / _calendar_metrics["requests_total"]) * 100
+    
+    return {
+        "duration_minutes": duration.total_seconds() / 60,
+        "requests_total": _calendar_metrics["requests_total"],
+        "requests_successful": _calendar_metrics["requests_successful"],
+        "requests_failed": _calendar_metrics["requests_failed"],
+        "success_rate_percent": round(success_rate, 1),
+        "parsing_errors": _calendar_metrics["parsing_errors"],
+        "network_errors": _calendar_metrics["network_errors"],
+        "auth_errors": _calendar_metrics["auth_errors"],
+        "events_processed": _calendar_metrics["events_processed"],
+        "circuit_breakers_active": len(_failed_calendars)
+    }
+
+def log_metrics_summary():
+    """Log current metrics for monitoring."""
+    summary = get_metrics_summary()
+    if summary["requests_total"] > 0:  # Only log if there's been activity
+        logger.info(
+            f"Calendar metrics (last {summary['duration_minutes']:.1f}min): "
+            f"{summary['requests_successful']}/{summary['requests_total']} requests successful "
+            f"({summary['success_rate_percent']}%), "
+            f"{summary['events_processed']} events processed, "
+            f"{summary['parsing_errors']} parse errors, "
+            f"{summary['network_errors']} network errors, "
+            f"{summary['auth_errors']} auth errors, "
+            f"{summary['circuit_breakers_active']} circuits open"
+        )
+
+def reset_metrics():
+    """Reset metrics counters."""
+    global _calendar_metrics
+    _calendar_metrics = {
+        "requests_total": 0,
+        "requests_successful": 0,
+        "requests_failed": 0,
+        "parsing_errors": 0,
+        "network_errors": 0,
+        "auth_errors": 0,
+        "events_processed": 0,
+        "last_reset": datetime.now()
+    }
+
+def get_circuit_breaker_status() -> Dict[str, Any]:
+    """Get current status of circuit breakers for monitoring."""
+    active_breakers = {}
+    for calendar_id, failure_info in _failed_calendars.items():
+        backoff_remaining = 0
+        if failure_info.get("backoff_until", datetime.min) > datetime.now():
+            backoff_remaining = (failure_info["backoff_until"] - datetime.now()).total_seconds()
+        
+        active_breakers[calendar_id] = {
+            "failure_count": failure_info["count"],
+            "last_failure": failure_info["last_failure"].isoformat(),
+            "backoff_remaining_seconds": max(0, int(backoff_remaining))
+        }
+    
+    return active_breakers
 
 # Fallback directory for events if primary location is unavailable
 FALLBACK_EVENTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -317,17 +577,55 @@ def fetch_google_calendar_metadata(calendar_id: str) -> Dict[str, Any]:
         return result
     
 def fetch_ics_calendar_metadata(url: str) -> Dict[str, Any]:
-    """Fetch ICS Calendar metadata with basic validation and fallback."""
+    """Fetch ICS Calendar metadata with enhanced validation and error handling."""
     # Check cache first
     cache_key = f"ics_{url}"
     if cache_key in _calendar_metadata_cache:
-        logger.debug(f"Using cached metadata for ICS calendar {url}")
-        return _calendar_metadata_cache[cache_key]
+        cached_result = _calendar_metadata_cache[cache_key]
+        # Don't use cached errors for too long - retry after 30 minutes
+        if cached_result.get("error") and cached_result.get("cached_at", 0) + 1800 < time.time():
+            logger.debug(f"Cached error expired for {url}, retrying validation")
+            del _calendar_metadata_cache[cache_key]
+        else:
+            logger.debug(f"Using cached metadata for ICS calendar {url}")
+            return cached_result
     
     try:
-        # Do a HEAD request to validate URL exists (with timeout)
-        response = requests.head(url, timeout=5)
-        response.raise_for_status()
+        # Try HEAD request first for efficiency
+        try:
+            response = requests.head(url, timeout=10, allow_redirects=True)
+            response.raise_for_status()
+            validation_method = "HEAD"
+        except requests.exceptions.HTTPError as he:
+            # If HEAD fails with 405 Method Not Allowed, try GET with minimal data
+            if he.response and he.response.status_code == 405:
+                logger.debug(f"HEAD method not allowed for {url}, trying GET with range")
+                try:
+                    # Request only first 1KB to validate without downloading full calendar
+                    headers = {'Range': 'bytes=0-1023'}
+                    response = requests.get(url, timeout=10, headers=headers, allow_redirects=True)
+                    # Don't raise for 206 (Partial Content) or 200 (if range not supported)
+                    if response.status_code not in [200, 206]:
+                        response.raise_for_status()
+                    validation_method = "GET-partial"
+                except requests.exceptions.HTTPError as ge:
+                    if ge.response and ge.response.status_code in [401, 403]:
+                        logger.info(f"ICS calendar at {url} requires authentication (HTTP {ge.response.status_code})")
+                        result = {
+                            "type": "ics", 
+                            "id": url, 
+                            "name": "ICS Calendar (Auth Required)", 
+                            "error": True,
+                            "error_type": "authentication",
+                            "status_code": ge.response.status_code,
+                            "cached_at": time.time()
+                        }
+                        _calendar_metadata_cache[cache_key] = result
+                        return result
+                    else:
+                        raise  # Re-raise other HTTP errors
+            else:
+                raise  # Re-raise non-405 errors
         
         # Try to extract a meaningful name from the URL
         if "?" in url:
@@ -345,21 +643,103 @@ def fetch_ics_calendar_metadata(url: str) -> Dict[str, Any]:
             except Exception:
                 pass
                 
-        result = {"type": "ics", "id": url, "name": name}
-        logger.debug(f"Loaded ICS calendar metadata: {name}")
+        result = {
+            "type": "ics", 
+            "id": url, 
+            "name": name, 
+            "validation_method": validation_method,
+            "cached_at": time.time()
+        }
+        logger.debug(f"Loaded ICS calendar metadata: {name} (validated via {validation_method})")
         
         # Cache the result
         _calendar_metadata_cache[cache_key] = result
         return result
         
-    except requests.exceptions.RequestException as e:
-        logger.warning(f"Error validating ICS calendar URL {url}: {e}")
-        result = {"type": "ics", "id": url, "name": "ICS Calendar", "error": True}
+    except requests.exceptions.HTTPError as he:
+        status_code = he.response.status_code if he.response else 0
+        if status_code == 401:
+            logger.info(f"ICS calendar at {url} requires authentication (HTTP 401 Unauthorized)")
+            error_type = "authentication"
+            name = "ICS Calendar (Auth Required)"
+        elif status_code == 403:
+            logger.info(f"ICS calendar at {url} access forbidden (HTTP 403 Forbidden)")
+            error_type = "forbidden"
+            name = "ICS Calendar (Access Denied)"
+        elif status_code == 404:
+            logger.warning(f"ICS calendar not found at {url} (HTTP 404 Not Found)")
+            error_type = "not_found"
+            name = "ICS Calendar (Not Found)"
+        elif status_code == 405:
+            logger.warning(f"ICS calendar at {url} does not support HEAD/GET methods (HTTP 405)")
+            error_type = "method_not_allowed"
+            name = "ICS Calendar (Method Not Allowed)"
+        else:
+            logger.warning(f"HTTP error validating ICS calendar URL {url}: {he}")
+            error_type = "http_error"
+            name = "ICS Calendar (HTTP Error)"
+            
+        result = {
+            "type": "ics", 
+            "id": url, 
+            "name": name, 
+            "error": True,
+            "error_type": error_type,
+            "status_code": status_code,
+            "cached_at": time.time()
+        }
         _calendar_metadata_cache[cache_key] = result
         return result
+        
+    except requests.exceptions.Timeout as te:
+        logger.warning(f"Timeout validating ICS calendar URL {url}: {te}")
+        result = {
+            "type": "ics", 
+            "id": url, 
+            "name": "ICS Calendar (Timeout)", 
+            "error": True,
+            "error_type": "timeout",
+            "cached_at": time.time()
+        }
+        _calendar_metadata_cache[cache_key] = result
+        return result
+        
+    except requests.exceptions.ConnectionError as ce:
+        logger.warning(f"Connection error validating ICS calendar URL {url}: {ce}")
+        result = {
+            "type": "ics", 
+            "id": url, 
+            "name": "ICS Calendar (Connection Error)", 
+            "error": True,
+            "error_type": "connection",
+            "cached_at": time.time()
+        }
+        _calendar_metadata_cache[cache_key] = result
+        return result
+        
+    except requests.exceptions.RequestException as re:
+        logger.warning(f"Request error validating ICS calendar URL {url}: {re}")
+        result = {
+            "type": "ics", 
+            "id": url, 
+            "name": "ICS Calendar (Request Error)", 
+            "error": True,
+            "error_type": "request",
+            "cached_at": time.time()
+        }
+        _calendar_metadata_cache[cache_key] = result
+        return result
+        
     except Exception as e:
-        logger.warning(f"Error getting metadata for ICS calendar {url}: {e}")
-        result = {"type": "ics", "id": url, "name": "ICS Calendar", "error": True}
+        logger.warning(f"Unexpected error getting metadata for ICS calendar {url}: {e}")
+        result = {
+            "type": "ics", 
+            "id": url, 
+            "name": "ICS Calendar (Unknown Error)", 
+            "error": True,
+            "error_type": "unknown",
+            "cached_at": time.time()
+        }
         _calendar_metadata_cache[cache_key] = result
         return result
 
@@ -422,10 +802,16 @@ def get_google_events(start_date, end_date, calendar_id):
         logger.error(f"Google Calendar service not initialized, cannot fetch events for {calendar_id}")
         return []
     
+    # Check circuit breaker
+    if is_calendar_circuit_open(calendar_id):
+        logger.debug(f"Circuit breaker open for Google calendar {calendar_id}, skipping")
+        return []
+    
     try:
         start_utc = start_date.isoformat() + "T00:00:00Z"
         end_utc = end_date.isoformat() + "T23:59:59Z"
         logger.debug(f"Fetching Google events for calendar {calendar_id} from {start_utc} to {end_utc}")
+        update_metrics("requests_total")
         
         # Use retry_api_call to handle transient errors
         def api_call():
@@ -455,41 +841,132 @@ def get_google_events(start_date, end_date, calendar_id):
                 logger.debug(f"Title simplified: '{original_title}' -> '{simplified_title}'")
         
         logger.debug(f"Fetched {len(items)} Google events for {calendar_id}")
+        
+        # Record successful operation and update metrics
+        record_calendar_success(calendar_id)
+        update_metrics("requests_successful")
+        update_metrics("events_processed", len(items))
+        
         return items
         
     except ssl.SSLError as e:
         logger.error(f"SSL error fetching Google events from calendar {calendar_id}: {e}")
         logger.info("This may be a temporary network issue. The calendar will be retried on the next sync.")
+        record_calendar_failure(calendar_id)
+        update_metrics("requests_failed")
+        update_metrics("network_errors")
         return []
     except requests.exceptions.ConnectionError as e:
         logger.error(f"Connection error fetching Google events from calendar {calendar_id}: {e}")
         logger.info("Network connection issue. The calendar will be retried on the next sync.")
+        record_calendar_failure(calendar_id)
+        update_metrics("requests_failed")
+        update_metrics("network_errors")
         return []
     except requests.exceptions.Timeout as e:
         logger.error(f"Timeout error fetching Google events from calendar {calendar_id}: {e}")
         logger.info("Request timed out. The calendar will be retried on the next sync.")
+        record_calendar_failure(calendar_id)
+        update_metrics("requests_failed")
+        update_metrics("network_errors")
         return []
     except HttpError as e:
         if e.resp.status in [403, 404]:
             logger.error(f"Access denied or calendar not found for {calendar_id}: {e}")
             logger.info("Check calendar permissions and ID validity.")
+            record_calendar_failure(calendar_id)  # Permanent-ish failure
+            update_metrics("requests_failed")
+            update_metrics("auth_errors")
         else:
             logger.error(f"Google API error fetching events from calendar {calendar_id}: {e}")
+            update_metrics("requests_failed")
+            # Don't record failure for temporary API issues (rate limits, etc)
         return []
     except Exception as e:
         logger.exception(f"Unexpected error fetching Google events from calendar {calendar_id}: {e}")
+        record_calendar_failure(calendar_id)
+        update_metrics("requests_failed")
         return []
 
 def get_ics_events(start_date, end_date, url):
-    """Fetch events from ICS calendar with robust error handling."""
+    """Fetch events from ICS calendar with robust error handling and circuit breaker."""
+    # Check circuit breaker first
+    if is_calendar_circuit_open(url):
+        logger.debug(f"Circuit breaker open for ICS calendar {url}, skipping")
+        return []
+    
     try:
         logger.debug(f"Fetching ICS events from {url}")
-        response = requests.get(url, timeout=10)
-        response.encoding = 'utf-8'
-        response.raise_for_status()  # Raise an exception for bad status codes
+        update_metrics("requests_total")
+        
+        # Set up request with proper headers and timeout
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (compatible; Calendar-Bot/1.0)',
+            'Accept': 'text/calendar, text/plain, */*',
+            'Accept-Encoding': 'identity'  # Avoid compression issues
+        }
+        
+        def fetch_calendar():
+            response = requests.get(url, timeout=30, headers=headers, allow_redirects=True)
+            
+            # Handle specific HTTP error codes gracefully
+            if response.status_code == 401:
+                logger.warning(f"Authentication required for ICS calendar {url} (HTTP 401)")
+                record_calendar_failure(url)
+                update_metrics("requests_failed")
+                update_metrics("auth_errors")
+                return []
+            elif response.status_code == 403:
+                logger.warning(f"Access forbidden for ICS calendar {url} (HTTP 403)")
+                record_calendar_failure(url)
+                update_metrics("requests_failed")
+                update_metrics("auth_errors")
+                return []
+            elif response.status_code == 404:
+                logger.warning(f"ICS calendar not found at {url} (HTTP 404)")
+                record_calendar_failure(url)
+                update_metrics("requests_failed")
+                return []
+            elif response.status_code == 405:
+                logger.warning(f"Method not allowed for ICS calendar {url} (HTTP 405)")
+                record_calendar_failure(url)
+                update_metrics("requests_failed")
+                return []
+            elif response.status_code == 429:
+                logger.warning(f"Rate limited accessing ICS calendar {url} (HTTP 429)")
+                record_calendar_failure(url)
+                update_metrics("requests_failed")
+                update_metrics("network_errors")
+                return []
+            elif response.status_code >= 500:
+                logger.warning(f"Server error accessing ICS calendar {url} (HTTP {response.status_code})")
+                # Don't record permanent failure for server errors - they might be temporary
+                raise requests.exceptions.HTTPError(f"Server error: {response.status_code}")
+            
+            # Raise for other 4xx errors
+            response.raise_for_status()
+            return response
+        
+        # Use retry with backoff for network requests
+        response = retry_with_backoff(fetch_calendar, max_retries=2, initial_delay=1.0)
+        
+        # If we get here and response is empty list, it's a handled error case
+        if isinstance(response, list):
+            return response
+        
+        # Handle encoding issues
+        try:
+            response.encoding = response.encoding or 'utf-8'
+            content = response.text
+        except UnicodeDecodeError:
+            logger.warning(f"Encoding error in ICS content from {url}, trying latin-1")
+            try:
+                content = response.content.decode('latin-1')
+            except UnicodeDecodeError:
+                logger.warning(f"Failed to decode ICS content from {url}")
+                return []
         
         # Basic validation of ICS content before attempting to parse
-        content = response.text
         if not content or len(content) < 50:  # Minimal valid ICS would be larger
             logger.warning(f"ICS content too small or empty from {url}")
             return []
@@ -518,28 +995,53 @@ def get_ics_events(start_date, end_date, url):
                 logger.warning(f"Suspicious content detected in ICS from {url}")
                 return []
         
+        # Preprocess ICS content to fix common malformed patterns
+        try:
+            content = preprocess_ics_content(content, url)
+        except Exception as preprocess_error:
+            logger.warning(f"Error preprocessing ICS content from {url}: {preprocess_error}")
+            # Continue with original content if preprocessing fails
+            
         # Safely parse the ICS calendar with comprehensive error handling for parser issues    
         try:
             cal = ICS_Calendar(content)
         except IndexError as ie:
             # Handle the specific TatSu parser error we're seeing (pop from empty list)
-            logger.warning(f"Parser index error in ICS file from {url}: {ie}")
+            error_msg = str(ie)
+            if "pop from empty list" in error_msg:
+                logger.warning(f"Parser index error in ICS file from {url}: Empty or malformed content structure")
+            else:
+                logger.warning(f"Parser index error in ICS file from {url}: {ie}")
+            update_metrics("parsing_errors")
             return []
         except ValueError as ve:
             # Handle malformed datetime or other value parsing errors
-            logger.warning(f"ICS value parsing error for {url}: {ve}")
+            error_msg = str(ve)
+            if "time data" in error_msg or "does not match format" in error_msg:
+                logger.warning(f"ICS datetime format error for {url}: Malformed date/time field - {ve}")
+            elif "invalid literal" in error_msg:
+                logger.warning(f"ICS value parsing error for {url}: Invalid data format - {ve}")
+            else:
+                logger.warning(f"ICS value parsing error for {url}: {ve}")
+            update_metrics("parsing_errors")
             return []
         except TypeError as te:
             # Handle 'NoneType' object is not iterable and similar type errors
-            logger.warning(f"ICS type error for {url}: {te}")
+            error_msg = str(te)
+            if "'NoneType' object is not iterable" in error_msg:
+                logger.warning(f"ICS parsing error for {url}: Missing required content structure")
+            elif "expected str" in error_msg or "expected bytes" in error_msg:
+                logger.warning(f"ICS type error for {url}: Content format mismatch - {te}")
+            else:
+                logger.warning(f"ICS type error for {url}: {te}")
             return []
         except AttributeError as ae:
             # Handle missing attribute errors during parsing
-            logger.warning(f"ICS attribute error for {url}: {ae}")
+            logger.warning(f"ICS attribute error for {url}: Missing required calendar structure - {ae}")
             return []
         except ImportError as ime:
             # Handle missing dependencies or module issues
-            logger.warning(f"ICS import error for {url}: {ime}")
+            logger.warning(f"ICS import error for {url}: Missing required modules - {ime}")
             return []
         except MemoryError as me:
             # Handle cases where ICS file is too large
@@ -547,11 +1049,11 @@ def get_ics_events(start_date, end_date, url):
             return []
         except RecursionError as re:
             # Handle infinite recursion in malformed ICS files
-            logger.warning(f"ICS recursion error for {url}: Malformed file structure")
+            logger.warning(f"ICS recursion error for {url}: Malformed file structure with circular references")
             return []
         except UnicodeDecodeError as ude:
             # Handle encoding issues
-            logger.warning(f"ICS encoding error for {url}: {ude}")
+            logger.warning(f"ICS encoding error for {url}: Character encoding issue - {ude}")
             return []
         except KeyboardInterrupt:
             # Allow clean shutdown
@@ -561,11 +1063,13 @@ def get_ics_events(start_date, end_date, url):
             # Catch any other parsing errors including TatSu parser exceptions
             error_msg = str(parser_error)
             if "ALPHADIGIT_MINUS_PLUS" in error_msg or "contentline" in error_msg:
-                logger.warning(f"ICS datetime format error for {url}: Malformed DTSTART/DTEND field")
+                logger.warning(f"ICS datetime format error for {url}: Malformed DTSTART/DTEND field - parser unable to process date format")
             elif "pop from empty list" in error_msg:
-                logger.warning(f"Parser index error in ICS file from {url}: {parser_error}")
+                logger.warning(f"Parser index error in ICS file from {url}: Empty content list - {parser_error}")
             elif "'NoneType' object is not iterable" in error_msg:
-                logger.warning(f"ICS parser error for {url}: {parser_error}")
+                logger.warning(f"ICS parser error for {url}: Null content structure - {parser_error}")
+            elif "TatSu" in error_msg or "grammar" in error_msg:
+                logger.warning(f"ICS grammar parsing error for {url}: Malformed calendar structure - {parser_error}")
             else:
                 logger.warning(f"ICS parser error for {url}: {parser_error}")
             return []
@@ -702,34 +1206,61 @@ def get_ics_events(start_date, end_date, url):
                 continue
                 
         logger.debug(f"Deduplicated to {len(deduped)} ICS events from {url}")
+        
+        # Record successful operation to reset circuit breaker and update metrics
+        record_calendar_success(url)
+        update_metrics("requests_successful")
+        update_metrics("events_processed", len(deduped))
+        
         return deduped
         
     except ssl.SSLError as e:
         logger.error(f"SSL error fetching ICS calendar {url}: {e}")
         logger.info("This may be a temporary network issue. The calendar will be retried on the next sync.")
+        record_calendar_failure(url)
+        update_metrics("requests_failed")
+        update_metrics("network_errors")
         return []
     except requests.exceptions.ConnectionError as e:
         logger.error(f"Connection error fetching ICS calendar {url}: {e}")
         logger.info("Network connection issue. The calendar will be retried on the next sync.")
+        record_calendar_failure(url)
+        update_metrics("requests_failed")
+        update_metrics("network_errors")
         return []
     except requests.exceptions.Timeout as e:
         logger.error(f"Timeout error fetching ICS calendar {url}: {e}")
         logger.info("Request timed out. The calendar will be retried on the next sync.")
+        record_calendar_failure(url)
+        update_metrics("requests_failed")
+        update_metrics("network_errors")
         return []
     except requests.exceptions.HTTPError as e:
         logger.error(f"HTTP error fetching ICS calendar {url}: {e}")
-        if e.response.status_code in [403, 404]:
+        if e.response and e.response.status_code in [401, 403, 404, 405]:
             logger.info("Check calendar URL validity and permissions.")
+            record_calendar_failure(url)  # Permanent-ish failures
+            update_metrics("requests_failed")
+            if e.response.status_code in [401, 403]:
+                update_metrics("auth_errors")
         else:
             logger.info("The calendar will be retried on the next sync.")
+            update_metrics("requests_failed")
+            update_metrics("network_errors")
+            # Don't record failure for temporary server errors
         return []
     except requests.exceptions.RequestException as e:
         logger.error(f"Network error fetching ICS calendar {url}: {e}")
         logger.info("The calendar will be retried on the next sync.")
+        record_calendar_failure(url)
+        update_metrics("requests_failed")
+        update_metrics("network_errors")
         return []
     except Exception as e:
         logger.exception(f"Unexpected error fetching/parsing ICS calendar {url}: {e}")
         logger.info("The calendar will be retried on the next sync.")
+        record_calendar_failure(url)
+        update_metrics("requests_failed")
         return []
 
 def get_events(source_meta, start_date, end_date):
