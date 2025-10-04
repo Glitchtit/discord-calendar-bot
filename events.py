@@ -61,80 +61,31 @@ def preprocess_ics_content(content: str, url: str) -> str:
     original_length = len(content)
     logger.debug(f"Preprocessing ICS content from {url} ({original_length} chars)")
     
-    # Fix common DTSTART/DTEND malformed patterns
-    # Pattern 1: Missing timezone or malformed timezone
-    content = re.sub(r'DTSTART[^:]*:(\d{8}T\d{6})([^ZT\r\n]*)', r'DTSTART:\1Z', content)
-    content = re.sub(r'DTEND[^:]*:(\d{8}T\d{6})([^ZT\r\n]*)', r'DTEND:\1Z', content)
+    # Apply only minimal, safe fixes to avoid breaking valid content
+    # Only fix obviously broken patterns, be very conservative
     
-    # Pattern 2: Fix malformed date-only formats (YYYYMMDD without proper formatting)
-    content = re.sub(r'DTSTART[^:]*:(\d{8})(?![T\d])', r'DTSTART;VALUE=DATE:\1', content)
-    content = re.sub(r'DTEND[^:]*:(\d{8})(?![T\d])', r'DTEND;VALUE=DATE:\1', content)
+    # Pattern 1: Only fix completely missing timezone on datetime formats that clearly need it
+    # Only apply if the datetime is clearly malformed (has T but no timezone)
+    content = re.sub(r'DTSTART:(\d{8}T\d{6})$', r'DTSTART:\1Z', content, flags=re.MULTILINE)
+    content = re.sub(r'DTEND:(\d{8}T\d{6})$', r'DTEND:\1Z', content, flags=re.MULTILINE)
     
-    # Pattern 3: Remove or fix invalid characters in date/time fields
-    def clean_dtstart_value(match):
-        clean_value = re.sub(r"[^\dTZ\-\+]", "", match.group(1))
-        return f'DTSTART:{clean_value}'
+    # Pattern 2: Only fix empty values that would definitely break parsing
+    content = re.sub(r'DTSTART:\s*$', 'DTSTART:19700101T000000Z', content, flags=re.MULTILINE)
+    content = re.sub(r'DTEND:\s*$', 'DTEND:19700101T010000Z', content, flags=re.MULTILINE)
     
-    def clean_dtend_value(match):
-        clean_value = re.sub(r"[^\dTZ\-\+]", "", match.group(1))
-        return f'DTEND:{clean_value}'
+    # Only apply the most essential fixes
     
-    content = re.sub(r'DTSTART[^:]*:([^:\r\n]*[^\dTZ\-\+:\r\n][^:\r\n]*)', 
-                     clean_dtstart_value, content)
-    content = re.sub(r'DTEND[^:]*:([^:\r\n]*[^\dTZ\-\+:\r\n][^:\r\n]*)', 
-                     clean_dtend_value, content)
+    # Remove only null bytes which definitely break parsing
+    content = re.sub(r'[\x00]', '', content)
     
-    # Pattern 4: Fix empty DTSTART/DTEND values
-    content = re.sub(r'DTSTART[^:]*:\s*[\r\n]', 'DTSTART:19700101T000000Z\r\n', content)
-    content = re.sub(r'DTEND[^:]*:\s*[\r\n]', 'DTEND:19700101T010000Z\r\n', content)
+    # Only add missing VCALENDAR wrapper if completely missing
+    if 'BEGIN:VCALENDAR' not in content and 'BEGIN:VEVENT' in content:
+        logger.debug(f"ICS from {url} missing VCALENDAR wrapper, adding minimal wrapper")
+        content = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\n' + content + '\r\nEND:VCALENDAR\r\n'
     
-    # Pattern 5: Fix duplicate or conflicting parameters
-    content = re.sub(r'DTSTART;[^:]*;VALUE=DATE[^:]*:(\d{8})', r'DTSTART;VALUE=DATE:\1', content)
-    content = re.sub(r'DTEND;[^:]*;VALUE=DATE[^:]*:(\d{8})', r'DTEND;VALUE=DATE:\1', content)
-    
-    # Fix line folding issues that can cause parser errors
-    # Unfold lines that are incorrectly folded in the middle of values
-    content = re.sub(r'(DTSTART[^:\r\n]*:[^:\r\n]*)\r?\n\s+([^\r\n:]*)', r'\1\2', content)
-    content = re.sub(r'(DTEND[^:\r\n]*:[^:\r\n]*)\r?\n\s+([^\r\n:]*)', r'\1\2', content)
-    
-    # Remove invalid characters that can break parsing
-    # Remove null bytes and other control characters except newlines and carriage returns
-    content = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', content)
-    
-    # Fix missing required components
-    if 'BEGIN:VCALENDAR' not in content:
-        logger.warning(f"ICS from {url} missing BEGIN:VCALENDAR, adding")
-        content = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\n' + content
-    
-    if 'VERSION:' not in content:
-        content = content.replace('BEGIN:VCALENDAR', 'BEGIN:VCALENDAR\r\nVERSION:2.0')
-    
-    if 'END:VCALENDAR' not in content:
-        logger.warning(f"ICS from {url} missing END:VCALENDAR, adding")
-        content = content.rstrip() + '\r\nEND:VCALENDAR\r\n'
-    
-    # Fix orphaned event components (VEVENT without proper BEGIN/END)
-    # Remove VEVENT lines that are not properly wrapped
-    lines = content.split('\n')
-    cleaned_lines = []
-    in_event = False
-    
-    for line in lines:
-        line = line.rstrip('\r')
-        if line.startswith('BEGIN:VEVENT'):
-            in_event = True
-            cleaned_lines.append(line)
-        elif line.startswith('END:VEVENT'):
-            if in_event:
-                cleaned_lines.append(line)
-                in_event = False
-            # Skip orphaned END:VEVENT
-        elif in_event or not line.startswith(('DTSTART', 'DTEND', 'SUMMARY', 'DESCRIPTION', 'LOCATION', 'UID')):
-            # Include line if we're in an event or it's not an event property
-            cleaned_lines.append(line)
-        # Skip orphaned event properties outside of VEVENT blocks
-    
-    content = '\n'.join(cleaned_lines)
+    # Skip the cleanup section for now - it might be too aggressive
+    # Just ensure proper line endings
+    content = content.replace('\r\n', '\n').replace('\r', '\n')
     
     processed_length = len(content)
     if processed_length != original_length:
@@ -998,9 +949,21 @@ def get_ics_events(start_date, end_date, url):
         if len(content) > 50_000_000:  # 50MB limit to prevent memory issues
             logger.warning(f"ICS content too large (>{len(content)/1_000_000:.1f}MB) from {url}")
             return []
+        
+        # Check if we got HTML instead of ICS (common with auth errors)
+        content_lower = content.lower()
+        if content_lower.startswith('<!doctype') or '<html' in content_lower[:200]:
+            logger.warning(f"Received HTML content instead of ICS from {url} - likely an authentication or access issue")
+            return []
             
         if not content.startswith("BEGIN:VCALENDAR") or "END:VCALENDAR" not in content:
             logger.warning(f"Invalid ICS format (missing BEGIN/END markers) from {url}")
+            logger.debug(f"Content preview: {content[:200]}...")
+            return []
+            
+        # Check if there are any events in the calendar
+        if "BEGIN:VEVENT" not in content:
+            logger.debug(f"No VEVENT blocks found in ICS from {url} - calendar may be empty")
             return []
             
         # Check for potential malicious content patterns
@@ -1019,15 +982,51 @@ def get_ics_events(start_date, end_date, url):
                 return []
         
         # Preprocess ICS content to fix common malformed patterns
-        try:
-            content = preprocess_ics_content(content, url)
-        except Exception as preprocess_error:
-            logger.warning(f"Error preprocessing ICS content from {url}: {preprocess_error}")
-            # Continue with original content if preprocessing fails
+        original_content = content
+        
+        # Check environment variable to disable preprocessing for debugging
+        import os
+        disable_preprocessing = os.getenv("DISABLE_ICS_PREPROCESSING", "false").lower() == "true"
+        
+        if not disable_preprocessing:
+            try:
+                content = preprocess_ics_content(content, url)
+                logger.debug(f"ICS preprocessing completed for {url}")
+            except Exception as preprocess_error:
+                logger.warning(f"Error preprocessing ICS content from {url}: {preprocess_error}")
+                # Continue with original content if preprocessing fails
+                content = original_content
             
         # Safely parse the ICS calendar with comprehensive error handling for parser issues    
         try:
             cal = ICS_Calendar(content)
+        except ValueError as ve:
+            # If preprocessing caused issues, try with original content
+            if "mandatory DTSTART not found" in str(ve) and content != original_content:
+                logger.debug(f"Preprocessing may have caused parsing issue for {url}, trying original content")
+                try:
+                    cal = ICS_Calendar(original_content)
+                    logger.info(f"Successfully parsed {url} with original content after preprocessing failed")
+                except Exception as fallback_error:
+                    logger.warning(f"Both preprocessed and original content failed for {url}: {fallback_error}")
+                    update_metrics("parsing_errors")
+                    return []
+            else:
+                # Handle other value errors normally
+                error_msg = str(ve)
+                if "time data" in error_msg or "does not match format" in error_msg:
+                    logger.warning(f"ICS datetime format error for {url}: Malformed date/time field - {ve}")
+                elif "invalid literal" in error_msg:
+                    logger.warning(f"ICS value parsing error for {url}: Invalid data format - {ve}")
+                elif "mandatory DTSTART not found" in error_msg:
+                    logger.warning(f"ICS value parsing error for {url}: {ve}")
+                    # Log a sample of the content to help debug
+                    sample_lines = content.split('\n')[:10]  # First 10 lines
+                    logger.debug(f"ICS content sample from {url}: {sample_lines}")
+                else:
+                    logger.warning(f"ICS value parsing error for {url}: {ve}")
+                update_metrics("parsing_errors")
+                return []
         except IndexError as ie:
             # Handle the specific TatSu parser error we're seeing (pop from empty list)
             error_msg = str(ie)
@@ -1035,17 +1034,6 @@ def get_ics_events(start_date, end_date, url):
                 logger.warning(f"Parser index error in ICS file from {url}: Empty or malformed content structure")
             else:
                 logger.warning(f"Parser index error in ICS file from {url}: {ie}")
-            update_metrics("parsing_errors")
-            return []
-        except ValueError as ve:
-            # Handle malformed datetime or other value parsing errors
-            error_msg = str(ve)
-            if "time data" in error_msg or "does not match format" in error_msg:
-                logger.warning(f"ICS datetime format error for {url}: Malformed date/time field - {ve}")
-            elif "invalid literal" in error_msg:
-                logger.warning(f"ICS value parsing error for {url}: Invalid data format - {ve}")
-            else:
-                logger.warning(f"ICS value parsing error for {url}: {ve}")
             update_metrics("parsing_errors")
             return []
         except TypeError as te:

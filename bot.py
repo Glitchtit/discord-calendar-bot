@@ -569,6 +569,131 @@ async def calendars_command(interaction: discord.Interaction):
 
 
 # ╔═════════════════════════════════════════════════════════════╗
+# ║ 🔍 /debug_calendar                                         ║
+# ║ Debug a specific calendar source (admin)                   ║
+# ╚═════════════════════════════════════════════════════════════╝
+@bot.tree.command(name="debug_calendar", description="Debug a specific calendar source by URL or partial name (admin)")
+@app_commands.describe(query="URL or partial name of the calendar to debug")
+async def debug_calendar_command(interaction: discord.Interaction, query: str):
+    try:
+        await interaction.response.defer()
+        
+        # Import here to avoid circular imports
+        from events import GROUPED_CALENDARS
+        import requests
+        
+        # Find matching calendars
+        matches = []
+        for tag, calendars in GROUPED_CALENDARS.items():
+            for cal in calendars:
+                cal_id = cal.get("id", "")
+                cal_name = cal.get("name", "")
+                if query.lower() in cal_id.lower() or query.lower() in cal_name.lower():
+                    matches.append((tag, cal))
+        
+        if not matches:
+            await interaction.followup.send(f"❌ No calendar found matching '{query}'")
+            return
+        
+        if len(matches) > 1:
+            match_list = []
+            for tag, cal in matches[:10]:  # Limit to 10
+                match_list.append(f"• **{cal.get('name', 'Unknown')}** (Tag: {tag})")
+            
+            await interaction.followup.send(
+                f"🔍 Multiple calendars found matching '{query}':\n" + 
+                "\n".join(match_list) + 
+                "\nPlease be more specific."
+            )
+            return
+        
+        # Debug the single match
+        tag, cal = matches[0]
+        cal_id = cal.get("id", "")
+        cal_name = cal.get("name", "Unknown")
+        cal_type = cal.get("type", "unknown")
+        
+        embed = discord.Embed(
+            title=f"🔍 Calendar Debug: {cal_name}",
+            color=0x3498db,
+            timestamp=datetime.now()
+        )
+        
+        embed.add_field(
+            name="📋 Basic Info",
+            value=f"**Type:** {cal_type}\n**Tag:** {tag}\n**ID:** `{cal_id[:50]}{'...' if len(cal_id) > 50 else ''}`",
+            inline=False
+        )
+        
+        # Check metadata status
+        error_info = ""
+        if cal.get("error"):
+            error_type = cal.get("error_type", "unknown")
+            error_info = f"❌ **Error:** {error_type}"
+            if cal.get("cached_at"):
+                from datetime import datetime
+                import time
+                cache_age = (time.time() - cal.get("cached_at", 0)) / 3600
+                error_info += f" (cached {cache_age:.1f}h ago)"
+        else:
+            error_info = "✅ **Status:** Metadata OK"
+        
+        embed.add_field(
+            name="🔧 Metadata Status",
+            value=error_info,
+            inline=False
+        )
+        
+        # For ICS calendars, try to fetch and analyze content
+        if cal_type == "ics" and not cal.get("error"):
+            try:
+                logger.info(f"Debug fetch requested for calendar {cal_id} by {interaction.user}")
+                response = requests.get(cal_id, timeout=10)
+                
+                content_info = f"**HTTP Status:** {response.status_code}\n"
+                content_info += f"**Content Length:** {len(response.text)} chars\n"
+                content_info += f"**Content Type:** {response.headers.get('content-type', 'Unknown')}\n"
+                
+                # Analyze content
+                content = response.text
+                if content.startswith('<!doctype') or '<html' in content.lower()[:200]:
+                    content_info += "⚠️ **Issue:** Received HTML instead of ICS"
+                elif not content.startswith("BEGIN:VCALENDAR"):
+                    content_info += "⚠️ **Issue:** Missing VCALENDAR header"
+                elif "BEGIN:VEVENT" not in content:
+                    content_info += "ℹ️ **Note:** No events found in calendar"
+                else:
+                    event_count = content.count("BEGIN:VEVENT")
+                    content_info += f"✅ **Content:** {event_count} events found"
+                
+                # Show first few lines of content
+                lines = content.split('\n')[:5]
+                content_preview = '\n'.join(f"`{line[:60]}{'...' if len(line) > 60 else ''}`" for line in lines)
+                content_info += f"\n**Preview:**\n{content_preview}"
+                
+                embed.add_field(
+                    name="📄 Content Analysis",
+                    value=content_info,
+                    inline=False
+                )
+                
+            except Exception as fetch_error:
+                embed.add_field(
+                    name="📄 Content Analysis",
+                    value=f"❌ **Fetch Error:** {fetch_error}",
+                    inline=False
+                )
+        
+        embed.set_footer(text="This command fetches live data for ICS calendars")
+        
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        logger.exception(f"Error in /debug_calendar command: {e}")
+        await interaction.followup.send("❌ An error occurred while debugging the calendar.")
+
+
+# ╔═════════════════════════════════════════════════════════════╗
 # ║ 🔗 resolve_tag_mappings                                      ║
 # ║ Assigns display names and colors to tags based on members   ║
 # ╚═════════════════════════════════════════════════════════════╝
