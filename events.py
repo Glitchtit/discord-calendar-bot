@@ -649,11 +649,11 @@ def fetch_ics_calendar_metadata(url: str) -> Dict[str, Any]:
             error_type = "forbidden"
             name = "ICS Calendar (Access Denied)"
         elif status_code == 404:
-            logger.warning(f"ICS calendar not found at {url} (HTTP 404 Not Found)")
+            logger.info(f"ICS calendar not found at {url} (HTTP 404 Not Found)")
             error_type = "not_found"
             name = "ICS Calendar (Not Found)"
         elif status_code == 405:
-            logger.warning(f"ICS calendar at {url} does not support HEAD/GET methods (HTTP 405)")
+            logger.info(f"ICS calendar at {url} does not support HEAD/GET methods (HTTP 405)")
             error_type = "method_not_allowed"
             name = "ICS Calendar (Method Not Allowed)"
         else:
