@@ -459,6 +459,14 @@ def retry_api_call(func, *args, max_retries=3, **kwargs):
             time.sleep(backoff)
             last_exception = e
             
+        except (ValueError, AttributeError) as e:
+            # HTTP protocol errors (corrupted chunked encoding, etc.) are retryable
+            # These can occur when the server sends malformed response data
+            backoff = (2 ** attempt) + random.uniform(0, 1)
+            logger.warning(f"HTTP protocol error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
+            time.sleep(backoff)
+            last_exception = e
+            
         except Exception as e:
             # Other errors are not retried
             logger.exception(f"Unexpected error in API call: {e}")
