@@ -266,12 +266,12 @@ Return ONLY the simplified title in the ORIGINAL language, nothing else."""
             if clean_word.strip():
                 text_words.append(clean_word.strip())
         
-        # Check word count (max 5 words of actual text, prefer 3-5 but allow shorter for naturally short titles)
+        # Check word count (max 5 words of actual text, prefer 3-5 but allow 2+ for naturally short titles)
         if len(text_words) > 5:
             logger.debug(f"Title too long: {len(text_words)} words")
             return False
         
-        if len(text_words) < 1:
+        if len(text_words) < 2:
             logger.debug(f"Title too short: {len(text_words)} words")
             return False
         
@@ -333,22 +333,27 @@ Return ONLY the simplified title in the ORIGINAL language, nothing else."""
             # Aim for at least 3 words for better context
             if len(words) < 3:
                 additional = self._extract_fallback_words(title)
+                words_lower = {w.lower() for w in words}  # Create set once for O(1) lookups
                 for word in additional:
                     if len(words) >= 5:
                         break
                     # Avoid duplicates
-                    if word.lower() not in [w.lower() for w in words]:
+                    if word.lower() not in words_lower:
                         words.append(word.title())
+                        words_lower.add(word.lower())
             
             # Final check: if still less than 3 words, add more from original
             if len(words) < 3:
                 # Split original and take first meaningful words not already included
-                original_words = [w.strip(".,!?()[]{}") for w in title.split() if len(w.strip(".,!?()[]{}")) > 1]
+                punctuation = ".,!?()[]{}"
+                original_words = [w.strip(punctuation) for w in title.split() if len(w.strip(punctuation)) > 1]
+                words_lower = {w.lower() for w in words}  # Create set once for O(1) lookups
                 for word in original_words:
                     if len(words) >= 5:
                         break
-                    if word.lower() not in [w.lower() for w in words]:
+                    if word.lower() not in words_lower:
                         words.append(word.title())
+                        words_lower.add(word.lower())
             
             # Ensure we have at least one word
             if not words:
