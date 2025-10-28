@@ -266,12 +266,13 @@ Return ONLY the simplified title in the ORIGINAL language, nothing else."""
             if clean_word.strip():
                 text_words.append(clean_word.strip())
         
-        # Check word count (max 5 words of actual text, prefer 3-5 but allow 2+ for naturally short titles)
+        # Check word count (max 5 words of actual text)
+        # For naturally short titles (1 word), keep as-is if not meaningless
         if len(text_words) > 5:
             logger.debug(f"Title too long: {len(text_words)} words")
             return False
         
-        if len(text_words) < 2:
+        if len(text_words) < 1:
             logger.debug(f"Title too short: {len(text_words)} words")
             return False
         
