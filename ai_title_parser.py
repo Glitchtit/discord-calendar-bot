@@ -119,6 +119,10 @@ CRITICAL RULES:
 9. If the original title contains emojis, preserve them in the simplified title
 10. Understand Nordic slang and colloquial expressions
 11. For work events, prefer generic terms over specific company jargon
+12. PRIORITIZE meaningful descriptive words over codes, numbers, and technical identifiers
+13. IGNORE course codes (like "2526H", "AM25H/EM25H"), room numbers in parentheses (like "(230.1)"), and similar technical identifiers unless they are the main subject
+14. FOCUS on the core topic/activity description rather than administrative details
+15. For educational events, prioritize the subject matter over the course code
 
 SWEDISH LANGUAGE & SLANG EXAMPLES (5 words preferred, OUTPUT IN SWEDISH):
 "Möte med utvecklingsteam klockan 10" → "Möte Med Utvecklingsteam"
@@ -142,6 +146,10 @@ SWEDISH LANGUAGE & SLANG EXAMPLES (5 words preferred, OUTPUT IN SWEDISH):
 "Föreläsning om AI teknologi" → "Föreläsning Om AI"
 "Tandvård - rengöring" → "Tandvård Rengöring"
 "Bilbesiktning Volvo" → "Bilbesiktning Volvo"
+"2526H.Arbete inom el- och automationsbranschen Elgrunder (230.1) (AM25H/EM25H)" → "Arbete El Automation Elgrunder"
+"GRU101-Grundläggande svenska (Rum 3.14)" → "Grundläggande Svenska"
+"MAT205.Avancerad matematik för ingenjörer (A1234/B5678)" → "Avancerad Matematik För Ingenjörer"
+"FYS301 - Kvantmekanik (Sal B205) Föreläsning 5" → "Kvantmekanik Föreläsning"
 
 FINNISH LANGUAGE & SLANG EXAMPLES (5 words preferred, OUTPUT IN FINNISH):
 "Kokous kehitystiimin kanssa klo 10" → "Kokous Kehitystiimin Kanssa"
@@ -167,6 +175,9 @@ FINNISH LANGUAGE & SLANG EXAMPLES (5 words preferred, OUTPUT IN FINNISH):
 "Auton katsastus huolto" → "Auton Katsastus"
 "Bileet Pekan luona" → "Bileet Pekan Luona"
 "Synttärikahvit toimistolla" → "Synttärikahvit Toimistolla"
+"FYS201-Kvanttimekaniikka perusteet (sali H305)" → "Kvanttimekaniikka Perusteet"
+"MAT301.Tilastotiede jatkokurssi (K123/K456)" → "Tilastotiede Jatkokurssi"
+"OHJ101 - Ohjelmoinnin alkeet Luento 3" → "Ohjelmoinnin Alkeet Luento"
 
 ENGLISH LANGUAGE EXAMPLES (5 words preferred, OUTPUT IN ENGLISH):
 "Weekly Team Standup Meeting - Project Alpha Q4" → "Project Alpha Team Standup"
@@ -183,6 +194,10 @@ ENGLISH LANGUAGE EXAMPLES (5 words preferred, OUTPUT IN ENGLISH):
 "🏥 Doctor Appointment at 2pm" → "🏥 Doctor Appointment"
 "✈️ Flight to Paris - Air France" → "✈️ Flight To Paris"
 "🍽️ Dinner with Friends at Italian Restaurant" → "🍽️ Dinner With Friends"
+"CS101-Introduction to Computer Science (Room 301)" → "Introduction To Computer Science"
+"MATH205.Advanced Calculus for Engineers (A1234/B5678)" → "Advanced Calculus For Engineers"
+"PHY301 - Quantum Mechanics (Hall B205) Lecture 5" → "Quantum Mechanics Lecture"
+"ENG102-Creative Writing Workshop Section 3A" → "Creative Writing Workshop"
 
 COLLOQUIAL & SLANG RECOGNITION:
 "Plugga" = Study
@@ -395,46 +410,83 @@ Return ONLY the simplified title in the ORIGINAL language, nothing else."""
 
     def _extract_key_terms_fallback(self, title: str) -> list:
         """Extract key terms using simple pattern matching with Nordic language support."""
+        # First, remove content in parentheses as they often contain codes/room numbers
+        title_no_parens = re.sub(r'\([^)]*\)', '', title)
+        
+        # Remove course codes at the start (e.g., "CS101-", "MATH205.", "2526H.")
+        # This pattern matches codes followed by hyphen, period, or space
+        title_no_parens = re.sub(r'^\s*[A-Z]{2,}\d+[A-Z]*[\.\-\s]+', '', title_no_parens, flags=re.IGNORECASE)
+        title_no_parens = re.sub(r'^\s*\d+[A-Z]+[\.\-\s]+', '', title_no_parens, flags=re.IGNORECASE)
+        
         # Clean and tokenize, but preserve emojis
         # Remove punctuation but keep emojis and alphanumeric characters including Nordic characters
-        cleaned = re.sub(r'[^\w\s\-åäöÅÄÖ\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002600-\U000027BF\U0001f900-\U0001f9ff\U0001f600-\U0001f64f]', ' ', title)
+        cleaned = re.sub(r'[^\w\s\-åäöÅÄÖ\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002600-\U000027BF\U0001f900-\U0001f9ff\U0001f600-\U0001f64f]', ' ', title_no_parens)
         words = [w.strip() for w in cleaned.split() if w.strip() and len(w) > 1]
         
         # Enhanced noise words with Swedish and Finnish common words
         noise_words = {
             'the', 'and', 'with', 'for', 'meeting', 'call', 'at', 'on', 'in',
             'med', 'och', 'för', 'på', 'i', 'av', 'till', 'från', 'det', 'den', 'är', 'att',
-            'ja', 'kanssa', 'että', 'on', 'se', 'tai', 'kun', 'klo', 'kl', 'time', 'tid'
+            'ja', 'kanssa', 'että', 'on', 'se', 'tai', 'kun', 'klo', 'kl', 'time', 'tid',
+            'rum', 'room', 'sal', 'hall', 'sali', 'el', 'och'  # el/och are often parts of longer phrases
         }
         filtered = [w for w in words if w.lower() not in noise_words]
         
         # Prioritize capitalized words, words with emojis, and longer words
         # Also give bonus to Nordic-specific terms
+        # PENALIZE codes and numbers (course codes, room numbers, etc.)
         nordic_bonus_terms = {
             'fika', 'träff', 'möte', 'plugga', 'treenit', 'bileet', 'synttärit',
             'kokous', 'tapaaminen', 'kahvitauko', 'ruokaostokset', 'lääkäri',
-            'hammaslääkäri', 'tandläkare', 'arbetstid', 'etätyö', 'hemarbete'
+            'hammaslääkäri', 'tandläkare', 'arbetstid', 'etätyö', 'hemarbete',
+            'arbete', 'inom', 'elgrunder', 'automation', 'automationsbranschen',
+            'elbranschen', 'grundläggande', 'avancerad', 'matematik', 'svenska', 
+            'kvanttimekaniikka', 'kvantmekanik', 'ohjelmoinnin', 'tilastotiede', 
+            'föreläsning', 'luento', 'lecture', 'ingenjörer', 'engineers',
+            'introduction', 'computer', 'science', 'calculus', 'advanced'
         }
+        
+        # Pattern to identify course/room codes
+        code_pattern = re.compile(r'^[A-Z]{2,}\d+[A-Z]*$|^\d+[A-Z]+\d*$|^\d+\.?\d*$|^[A-Z]\d{3,}$', re.IGNORECASE)
         
         scored = []
         for w in filtered:
             score = len(w)
-            if w[0].isupper():
+            
+            # PENALTY for course/room codes
+            if code_pattern.match(w):
+                score -= 20  # Heavy penalty for codes
+                
+            # PENALTY for mostly numeric content
+            digit_count = sum(1 for c in w if c.isdigit())
+            if digit_count > len(w) * 0.4:  # More than 40% digits
+                score -= 12
+            
+            # BONUS for capitalized words (likely proper nouns or important terms)
+            if w[0].isupper() and not code_pattern.match(w):
                 score += 5
+                
             # Bonus for words with emojis
             if any(ord(char) > 0x1F600 for char in w):
                 score += 10
-            # Bonus for Nordic terms
+                
+            # Bonus for Nordic terms and subject matter words
             if w.lower() in nordic_bonus_terms:
-                score += 8
+                score += 15  # Higher bonus for meaningful subject terms
+                
             # Bonus for names (capitalized non-common words)
-            if w[0].isupper() and len(w) > 3 and w.lower() not in noise_words:
-                score += 3
+            if w[0].isupper() and len(w) > 3 and w.lower() not in noise_words and not code_pattern.match(w):
+                score += 4
+                
+            # Additional bonus for longer meaningful words (but not codes)
+            if len(w) > 6 and not code_pattern.match(w):
+                score += 5
+            
             scored.append((w, score))
         
         scored.sort(key=lambda x: x[1], reverse=True)
         
-        return [word for word, score in scored[:5]]  # Updated to return up to 5 terms
+        return [word for word, score in scored[:5]]  # Return up to 5 terms
 
     def _extract_fallback_words(self, title: str) -> list:
         """Extract words as ultimate fallback."""
