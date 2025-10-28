@@ -1,2 +1,8 @@
 .env
 .comment_system.md
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+logs/
+data/

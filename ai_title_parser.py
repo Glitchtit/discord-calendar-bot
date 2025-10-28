@@ -105,68 +105,84 @@ class AITitleParser:
     def _simplify_with_openai(self, title: str) -> str:
         """Use OpenAI API to intelligently simplify the title."""
         try:
-            system_prompt = """You are an expert at simplifying calendar event titles, with special expertise in Swedish and Finnish languages including slang and colloquial expressions. Your task is to convert long, complex event titles into concise, clear English titles that capture the essence of the event.
+            system_prompt = """You are an expert at simplifying calendar event titles, with special expertise in Swedish and Finnish languages including slang and colloquial expressions. Your task is to identify the language of the input title and create a concise summary in that SAME language.
 
 CRITICAL RULES:
-1. ALWAYS output in English, regardless of input language
-2. Use exactly 5 words when possible (minimum 3, maximum 5)
-3. Prefer 5-word titles for better context and clarity
-4. Use title case (First Letter Capitalized)
-5. Focus on the most important information
-6. Remove unnecessary details like times, locations, specific room numbers, recurring indicators
-7. Preserve the core meaning and purpose
-8. If the original title contains emojis, preserve them in the simplified title
-9. Translate Swedish, Finnish, and other languages to English while maintaining meaning
+1. FIRST identify the language: English, Swedish, or Finnish (including slang and dialects)
+2. ALWAYS output in the SAME language as the input
+3. Use exactly 5 words when possible (minimum 3, maximum 5)
+4. Prefer 5-word summaries for better context and clarity
+5. Use title case (First Letter Capitalized)
+6. Focus on the most important information
+7. Remove unnecessary details like times, locations, specific room numbers, recurring indicators
+8. Preserve the core meaning and purpose
+9. If the original title contains emojis, preserve them in the simplified title
 10. Understand Nordic slang and colloquial expressions
 11. For work events, prefer generic terms over specific company jargon
 
-SWEDISH LANGUAGE & SLANG EXAMPLES (5 words preferred):
-"Möte med utvecklingsteam" → "Development Team Meeting Today"
-"Fika med kollegorna" → "Coffee Break With Colleagues"
-"Träff med chefen" → "Meeting With The Boss"
-"Tandläkartid kl 14" → "Dentist Appointment This Afternoon"
-"Mamma födelsedag" → "Mom's Birthday Party Celebration"
-"Plugga inför tentan" → "Study Session For Exam"
-"Handla mat efter jobbet" → "Grocery Shopping After Work"
-"Träning på gymmet" → "Gym Workout Training Session"
-"Läkarbesök för hälsokontroll" → "Doctor Visit Health Checkup"
-"Jobbintervju på Microsoft" → "Job Interview At Microsoft"
-"Middag med familjen" → "Family Dinner At Home"
-"Ansvarsarbetstid hemma" → "Remote Work From Home"
-"Undervisning i matematik" → "Mathematics Teaching Class Session"
-"Ringa mormor" → "Call Grandma This Evening"
-"Städa lägenheten" → "Clean Apartment This Weekend"
-"Veckomöte projektgrupp Alpha" → "Project Alpha Weekly Meeting"
-"Kvartalsmöte försäljning" → "Quarterly Sales Team Meeting"
-"Personalfest på kontoret" → "Office Staff Party Event"
-"Föreläsning om AI" → "AI Technology Lecture Session"
-"Tandvård - rengöring" → "Dental Cleaning Appointment Today"
-"Bilbesiktning Volvo" → "Volvo Car Inspection Service"
+SWEDISH LANGUAGE & SLANG EXAMPLES (5 words preferred, OUTPUT IN SWEDISH):
+"Möte med utvecklingsteam klockan 10" → "Möte Med Utvecklingsteam"
+"Fika med kollegorna på kontoret" → "Fika Med Kollegorna"
+"Träff med chefen angående projekt" → "Träff Med Chefen"
+"Tandläkartid kl 14 i City" → "Tandläkartid Klockan 14"
+"Mamma födelsedag hemma" → "Mamma Födelsedag"
+"Plugga inför tentan i matematik" → "Plugga Inför Tentan"
+"Handla mat efter jobbet Ica" → "Handla Mat Efter Jobbet"
+"Träning på gymmet kl 18" → "Träning På Gymmet"
+"Läkarbesök för hälsokontroll" → "Läkarbesök Hälsokontroll"
+"Jobbintervju på Microsoft Stockholm" → "Jobbintervju På Microsoft"
+"Middag med familjen hemma" → "Middag Med Familjen"
+"Ansvarsarbetstid hemma distans" → "Ansvarsarbetstid Hemma"
+"Undervisning i matematik kl 13" → "Undervisning I Matematik"
+"Ringa mormor på kvällen" → "Ringa Mormor"
+"Städa lägenheten helgen" → "Städa Lägenheten"
+"Veckomöte projektgrupp Alpha" → "Veckomöte Projektgrupp Alpha"
+"Kvartalsmöte försäljning Q4" → "Kvartalsmöte Försäljning"
+"Personalfest på kontoret" → "Personalfest På Kontoret"
+"Föreläsning om AI teknologi" → "Föreläsning Om AI"
+"Tandvård - rengöring" → "Tandvård Rengöring"
+"Bilbesiktning Volvo" → "Bilbesiktning Volvo"
 
-FINNISH LANGUAGE & SLANG EXAMPLES (5 words preferred):
-"Kokous kehitystiimin kanssa" → "Development Team Meeting Session"
-"Kahvitauko toimistolla" → "Office Coffee Break Time"
-"Tapaaminen pomojen kanssa" → "Meeting With Boss Today"
-"Hammaslääkäri klo 15" → "Dentist Appointment This Afternoon"
-"Äidin syntymäpäivä" → "Mom's Birthday Party Celebration"
-"Lukemista tenttiin" → "Study Session For Exam"
-"Ruokaostokset töiden jälkeen" → "Grocery Shopping After Work"
-"Treenit salilla" → "Gym Workout Training Session"
-"Lääkärikäynti terveystarkastus" → "Doctor Visit Health Checkup"
-"Työhaastattelu Nokialla" → "Job Interview At Nokia"
-"Illallinen perheen kanssa" → "Family Dinner At Home"
-"Etätyö kotoa" → "Remote Work From Home"
-"Matematiikan opetus" → "Mathematics Teaching Class Session"
-"Soitto mummille" → "Call Grandma This Evening"
-"Asunnon siivous" → "Clean Apartment This Weekend"
-"Viikkokokous projektiryhmä Beta" → "Project Beta Weekly Meeting"
-"Kvartaalitapaaminen myynti" → "Quarterly Sales Team Meeting"
-"Henkilöstöjuhlat toimistossa" → "Office Staff Party Event"
-"Luento tekoälystä" → "AI Technology Lecture Session"
-"Hammashoito - puhdistus" → "Dental Cleaning Appointment Today"
-"Auton katsastus" → "Car Inspection Service Today"
-"Bileet Pekan luona" → "Party At Pekka's House"
-"Synttärikahvit" → "Birthday Coffee Celebration Event"
+FINNISH LANGUAGE & SLANG EXAMPLES (5 words preferred, OUTPUT IN FINNISH):
+"Kokous kehitystiimin kanssa klo 10" → "Kokous Kehitystiimin Kanssa"
+"Kahvitauko toimistolla aamulla" → "Kahvitauko Toimistolla"
+"Tapaaminen pomojen kanssa" → "Tapaaminen Pomojen Kanssa"
+"Hammaslääkäri klo 15 keskustassa" → "Hammaslääkäri Klo 15"
+"Äidin syntymäpäivä kotona" → "Äidin Syntymäpäivä"
+"Lukemista tenttiin matematiikka" → "Lukemista Tenttiin"
+"Ruokaostokset töiden jälkeen" → "Ruokaostokset Töiden Jälkeen"
+"Treenit salilla klo 18" → "Treenit Salilla"
+"Lääkärikäynti terveystarkastus" → "Lääkärikäynti Terveystarkastus"
+"Työhaastattelu Nokialla Espoossa" → "Työhaastattelu Nokialla"
+"Illallinen perheen kanssa" → "Illallinen Perheen Kanssa"
+"Etätyö kotoa tänään" → "Etätyö Kotoa"
+"Matematiikan opetus luokka 5" → "Matematiikan Opetus"
+"Soitto mummille illalla" → "Soitto Mummille"
+"Asunnon siivous viikonloppuna" → "Asunnon Siivous"
+"Viikkokokous projektiryhmä Beta" → "Viikkokokous Projektiryhmä Beta"
+"Kvartaalitapaaminen myynti Q4" → "Kvartaalitapaaminen Myynti"
+"Henkilöstöjuhlat toimistossa" → "Henkilöstöjuhlat Toimistossa"
+"Luento tekoälystä" → "Luento Tekoälystä"
+"Hammashoito - puhdistus" → "Hammashoito Puhdistus"
+"Auton katsastus huolto" → "Auton Katsastus"
+"Bileet Pekan luona" → "Bileet Pekan Luona"
+"Synttärikahvit toimistolla" → "Synttärikahvit Toimistolla"
+
+ENGLISH LANGUAGE EXAMPLES (5 words preferred, OUTPUT IN ENGLISH):
+"Weekly Team Standup Meeting - Project Alpha Q4" → "Project Alpha Team Standup"
+"Dentist Appointment - Dr. Smith at 3pm Room 205" → "Dentist Appointment With Dr Smith"
+"Sarah's Birthday Party Celebration at Restaurant" → "Sarah's Birthday Party"
+"Q4 Sales Review Meeting with Leadership Team" → "Q4 Sales Leadership Meeting"
+"Flight to New York - Delta Airlines AA1234" → "Flight To New York"
+"Coffee with John to discuss project updates" → "Coffee With John"
+"Annual Performance Review - HR Department" → "Annual Performance Review"
+"Python Programming Workshop - Advanced Level" → "Advanced Python Programming Workshop"
+"Client Presentation - Final Project Deliverable" → "Final Client Project Presentation"
+"🎂 Birthday Party for Emma at home" → "🎂 Emma's Birthday Party"
+"📊 Monthly Sales Meeting with Team" → "📊 Monthly Sales Meeting"
+"🏥 Doctor Appointment at 2pm" → "🏥 Doctor Appointment"
+"✈️ Flight to Paris - Air France" → "✈️ Flight To Paris"
+"🍽️ Dinner with Friends at Italian Restaurant" → "🍽️ Dinner With Friends"
 
 COLLOQUIAL & SLANG RECOGNITION:
 "Plugga" = Study
@@ -182,23 +198,25 @@ COLLOQUIAL & SLANG RECOGNITION:
 "Henkkareita" = ID/Documents
 "Kämpän siivous" = Apartment cleaning
 
-MORE QUALITY EXAMPLES (5 words preferred):
-"Weekly Team Standup Meeting - Project Alpha Q4" → "Project Alpha Team Standup Meeting"
-"Dentist Appointment - Dr. Smith at 3pm Room 205" → "Dentist Appointment With Dr Smith"
-"Sarah's Birthday Party Celebration at Restaurant" → "Sarah's Birthday Party At Restaurant"
-"Q4 Sales Review Meeting with Leadership Team" → "Q4 Sales Leadership Team Meeting"
-"Flight to New York - Delta Airlines AA1234" → "Flight To New York City"
-"Coffee with John to discuss project updates" → "Coffee Meeting With John Today"
-"Annual Performance Review - HR Department" → "Annual Performance Review With HR"
-"Python Programming Workshop - Advanced Level" → "Advanced Python Programming Workshop Session"
-"Client Presentation - Final Project Deliverable" → "Final Client Project Presentation Meeting"
-"🎂 Birthday Party for Emma at home" → "🎂 Emma's Birthday Party At Home"
-"📊 Monthly Sales Meeting with Team" → "📊 Monthly Sales Team Meeting"
-"🏥 Doctor Appointment at 2pm" → "🏥 Doctor Appointment This Afternoon"
-"✈️ Flight to Paris - Air France" → "✈️ Flight To Paris France"
-"🍽️ Dinner with Friends at Italian Restaurant" → "🍽️ Dinner With Friends Italian Restaurant"
+MORE QUALITY EXAMPLES (5 words preferred, MAINTAIN ORIGINAL LANGUAGE):
+ENGLISH: "Weekly Team Standup Meeting - Project Alpha Q4" → "Project Alpha Team Standup"
+ENGLISH: "Dentist Appointment - Dr. Smith at 3pm Room 205" → "Dentist Appointment With Dr Smith"
+ENGLISH: "Sarah's Birthday Party Celebration at Restaurant" → "Sarah's Birthday Party"
+ENGLISH: "Q4 Sales Review Meeting with Leadership Team" → "Q4 Sales Leadership Meeting"
+ENGLISH: "Flight to New York - Delta Airlines AA1234" → "Flight To New York"
+ENGLISH: "Coffee with John to discuss project updates" → "Coffee Meeting With John"
+ENGLISH: "Annual Performance Review - HR Department" → "Annual Performance Review"
+ENGLISH: "Python Programming Workshop - Advanced Level" → "Advanced Python Programming Workshop"
+ENGLISH: "Client Presentation - Final Project Deliverable" → "Final Client Project Presentation"
+ENGLISH: "🎂 Birthday Party for Emma at home" → "🎂 Emma's Birthday Party"
+ENGLISH: "📊 Monthly Sales Meeting with Team" → "📊 Monthly Sales Meeting"
+ENGLISH: "🏥 Doctor Appointment at 2pm" → "🏥 Doctor Appointment"
+ENGLISH: "✈️ Flight to Paris - Air France" → "✈️ Flight To Paris"
+ENGLISH: "🍽️ Dinner with Friends at Italian Restaurant" → "🍽️ Dinner With Friends"
+SWEDISH: "Veckomöte med projektgrupp Alpha kvartal 4" → "Veckomöte Projektgrupp Alpha"
+FINNISH: "Viikkokokous projektiryhmä Beta neljännes 4" → "Viikkokokous Projektiryhmä Beta"
 
-Return ONLY the simplified English title, nothing else."""
+Return ONLY the simplified title in the ORIGINAL language, nothing else."""
 
             # Try with higher temperature first for creativity, then lower if needed
             for attempt in range(2):
@@ -206,7 +224,7 @@ Return ONLY the simplified English title, nothing else."""
                     model="gpt-4.1-nano",
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"Simplify this calendar event title to English (may contain Swedish/Finnish slang): {title}"}
+                        {"role": "user", "content": f"Simplify this calendar event title (keep it in its original language - English, Swedish, or Finnish): {title}"}
                     ],
                     max_tokens=150,  # Increased for 5-word titles
                     temperature=0.2 if attempt == 0 else 0.05,
@@ -248,47 +266,22 @@ Return ONLY the simplified English title, nothing else."""
             if clean_word.strip():
                 text_words.append(clean_word.strip())
         
-        # Check word count (max 5 words of actual text, min 3)
+        # Check word count (max 5 words of actual text)
+        # For naturally short titles (1 word), keep as-is if not meaningless
         if len(text_words) > 5:
             logger.debug(f"Title too long: {len(text_words)} words")
             return False
         
-        if len(text_words) < 3:
+        if len(text_words) < 1:
             logger.debug(f"Title too short: {len(text_words)} words")
             return False
         
-        # Check if it's mostly English (basic check)
-        if not self._is_mostly_english(cleaned):
-            logger.debug(f"Title not in English: '{cleaned}'")
-            return False
-        
-        # Check for meaningless responses
-        meaningless = ['event', 'title', 'calendar', 'appointment', 'meeting only']
+        # Check for meaningless responses (in any language)
+        meaningless = ['event', 'title', 'calendar', 'appointment', 'meeting only', 
+                      'evenemang', 'titel', 'kalender', 'möte',
+                      'tapahtuma', 'otsikko', 'kalenteri', 'kokous']
         if cleaned.lower().strip() in meaningless:
             logger.debug(f"Meaningless title: '{cleaned}'")
-            return False
-        
-        return True
-
-    def _is_mostly_english(self, text: str) -> bool:
-        """Basic check if text is mostly English."""
-        # Remove emojis and punctuation for language detection
-        clean_text = ''.join(char for char in text if char.isalpha() or char.isspace())
-        clean_text = clean_text.strip()
-        
-        if not clean_text:
-            return True  # If only emojis, consider valid
-        
-        # Check for common non-English characters
-        non_english_chars = set('àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ' + 
-                               'ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞŸ' +
-                               'ßščřžýáíéóúůň' + 'ñáéíóúü')
-        
-        # If more than 30% non-English chars, likely not English
-        total_alpha = sum(1 for c in clean_text if c.isalpha())
-        non_english_count = sum(1 for c in clean_text if c in non_english_chars)
-        
-        if total_alpha > 0 and (non_english_count / total_alpha) > 0.3:
             return False
         
         return True
@@ -319,13 +312,10 @@ Return ONLY the simplified English title, nothing else."""
             # Extract emojis first to preserve them
             emojis = self._extract_emojis(title)
             
-            # Detect event type using enhanced patterns
-            event_type = self._detect_event_type_fallback(title)
-            
             # Extract key terms with better international support
             key_terms = self._extract_key_terms_fallback(title)
             
-            # Build simplified title
+            # Build simplified title in original language
             words = []
             
             # Start with emojis if present
@@ -333,28 +323,38 @@ Return ONLY the simplified English title, nothing else."""
                 emoji_str = ''.join(emojis[:1])  # Limit to 1 emoji to save space
                 words.append(emoji_str)
             
-            # Add event type if detected and meaningful
-            if event_type and event_type not in ['event', 'work']:
-                if event_type == 'remote work':
-                    words.append('Work')
-                else:
-                    words.append(event_type.replace('_', ' ').title())
-            
-            # Add key terms
+            # Add key terms from the original title (preserving original language)
             for term in key_terms:
                 if len(words) >= 5:  # Updated to 5 words
                     break
-                if term.lower() != event_type and len(term) > 1:
+                if len(term) > 1:
                     words.append(term.title())
             
             # If we don't have enough words, use first few words from title
-            if len(words) < 3:  # Aim for at least 3 words
+            # Aim for at least 3 words for better context
+            if len(words) < 3:
                 additional = self._extract_fallback_words(title)
+                words_lower = {w.lower() for w in words}  # Create set once for O(1) lookups
                 for word in additional:
                     if len(words) >= 5:
                         break
-                    if word.lower() not in [w.lower().replace('_', ' ') for w in words]:
+                    # Avoid duplicates
+                    if word.lower() not in words_lower:
                         words.append(word.title())
+                        words_lower.add(word.lower())
+            
+            # Final check: if still less than 3 words, add more from original
+            if len(words) < 3:
+                # Split original and take first meaningful words not already included
+                punctuation = ".,!?()[]{}"
+                original_words = [w.strip(punctuation) for w in title.split() if len(w.strip(punctuation)) > 1]
+                words_lower = {w.lower() for w in words}  # Create set once for O(1) lookups
+                for word in original_words:
+                    if len(words) >= 5:
+                        break
+                    if word.lower() not in words_lower:
+                        words.append(word.title())
+                        words_lower.add(word.lower())
             
             # Ensure we have at least one word
             if not words:
