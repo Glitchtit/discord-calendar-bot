@@ -3,6 +3,7 @@ openai==1.69.0
 google-api-python-client==2.123.0
 google-auth==2.29.0
 google-auth-oauthlib==1.2.0
+packaging>=24.0          # Required by google-api-core
 python-dateutil==2.9.0.post0
 ics==0.7.2
 requests==2.31.0
