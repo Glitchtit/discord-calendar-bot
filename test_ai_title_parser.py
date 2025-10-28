@@ -17,8 +17,8 @@ def test_swedish_course_with_codes():
     result = simplify_event_title(title)
     
     # Should prioritize meaningful words, not codes
-    assert "Am25H" not in result.lower(), f"Code AM25H should not appear in result: {result}"
-    assert "Em25H" not in result.lower(), f"Code EM25H should not appear in result: {result}"
+    assert "am25h" not in result.lower(), f"Code AM25H should not appear in result: {result}"
+    assert "em25h" not in result.lower(), f"Code EM25H should not appear in result: {result}"
     assert "2526" not in result, f"Code 2526H should not appear in result: {result}"
     assert "230" not in result, f"Code 230.1 should not appear in result: {result}"
     
@@ -50,16 +50,18 @@ def test_swedish_math_course():
     title = "MAT205.Avancerad matematik för ingenjörer (A1234/B5678)"
     result = simplify_event_title(title)
     
-    # Codes should be removed or deprioritized
-    assert "a1234" not in result.lower() or result.lower().endswith("a1234"), \
-        f"Code A1234 should not be prominent: {result}"
+    # Codes should be removed or appear at the end if present at all
+    result_words = result.split()
+    # Check that codes are not in the first 2 words (they're deprioritized)
+    first_two_words = ' '.join(result_words[:2]).lower()
+    assert "a1234" not in first_two_words, f"Code A1234 should be deprioritized: {result}"
     assert "b5678" not in result.lower(), f"Code B5678 should not appear: {result}"
-    assert "mat205" not in result.lower() or len(result.split()) > 3, \
-        f"Course code should be removed or deprioritized: {result}"
+    assert "mat205" not in first_two_words, f"Course code MAT205 should be deprioritized: {result}"
     
-    # Should contain meaningful words
-    assert any(word in result.lower() for word in ["avancerad", "matematik", "ingenjörer"]), \
-        f"Result should contain subject words: {result}"
+    # Should contain meaningful words in prominent positions (first 3 words)
+    first_three_words = ' '.join(result_words[:3]).lower()
+    assert any(word in first_three_words for word in ["avancerad", "matematik", "ingenjörer"]), \
+        f"Result should prioritize subject words: {result}"
     
     print(f"✓ Swedish math course test passed: '{title}' → '{result}'")
 
@@ -69,15 +71,16 @@ def test_swedish_physics_lecture():
     title = "FYS301 - Kvantmekanik (Sal B205) Föreläsning 5"
     result = simplify_event_title(title)
     
-    # Course code should be removed
-    assert "fys301" not in result.lower() or len(result.split()) > 3, \
-        f"Course code should be removed or deprioritized: {result}"
-    assert "b205" not in result.lower() or result.lower().endswith("b205"), \
-        f"Room code should not be prominent: {result}"
+    # Course code should be removed or deprioritized (not in first 2 words)
+    result_words = result.split()
+    first_two_words = ' '.join(result_words[:2]).lower()
+    assert "fys301" not in first_two_words, f"Course code should be deprioritized: {result}"
+    assert "b205" not in first_two_words, f"Room code should be deprioritized: {result}"
     
-    # Should contain meaningful words
-    assert "kvantmekanik" in result.lower() or "föreläsning" in result.lower(), \
-        f"Result should contain lecture subject: {result}"
+    # Should contain meaningful words in prominent positions
+    first_three_words = ' '.join(result_words[:3]).lower()
+    assert "kvantmekanik" in first_three_words or "föreläsning" in first_three_words, \
+        f"Result should prioritize lecture subject: {result}"
     
     print(f"✓ Swedish physics lecture test passed: '{title}' → '{result}'")
 
@@ -87,15 +90,16 @@ def test_english_cs_course():
     title = "CS101-Introduction to Computer Science (Room 301)"
     result = simplify_event_title(title)
     
-    # Course code should be removed
-    assert "cs101" not in result.lower() or len(result.split()) > 3, \
-        f"Course code should be removed or deprioritized: {result}"
-    assert "301" not in result or result.endswith("301"), \
-        f"Room number should not be prominent: {result}"
+    # Course code should be removed or deprioritized (not in first 2 words)
+    result_words = result.split()
+    first_two_words = ' '.join(result_words[:2]).lower()
+    assert "cs101" not in first_two_words, f"Course code should be deprioritized: {result}"
+    assert "301" not in first_two_words, f"Room number should be deprioritized: {result}"
     
-    # Should contain meaningful words
-    assert any(word in result.lower() for word in ["introduction", "computer", "science"]), \
-        f"Result should contain course subject: {result}"
+    # Should contain meaningful words in prominent positions
+    first_three_words = ' '.join(result_words[:3]).lower()
+    assert any(word in first_three_words for word in ["introduction", "computer", "science"]), \
+        f"Result should prioritize course subject: {result}"
     
     print(f"✓ English CS course test passed: '{title}' → '{result}'")
 
@@ -105,16 +109,17 @@ def test_english_math_course():
     title = "MATH205.Advanced Calculus for Engineers (A1234/B5678)"
     result = simplify_event_title(title)
     
-    # Codes should be removed or deprioritized
-    assert "a1234" not in result.lower() or result.lower().endswith("a1234"), \
-        f"Code A1234 should not be prominent: {result}"
+    # Codes should be removed or deprioritized (not in first 2 words)
+    result_words = result.split()
+    first_two_words = ' '.join(result_words[:2]).lower()
+    assert "a1234" not in first_two_words, f"Code A1234 should be deprioritized: {result}"
     assert "b5678" not in result.lower(), f"Code B5678 should not appear: {result}"
-    assert "math205" not in result.lower() or len(result.split()) > 3, \
-        f"Course code should be removed or deprioritized: {result}"
+    assert "math205" not in first_two_words, f"Course code should be deprioritized: {result}"
     
-    # Should contain meaningful words
-    assert any(word in result.lower() for word in ["advanced", "calculus", "engineers"]), \
-        f"Result should contain course subject: {result}"
+    # Should contain meaningful words in prominent positions
+    first_three_words = ' '.join(result_words[:3]).lower()
+    assert any(word in first_three_words for word in ["advanced", "calculus", "engineers"]), \
+        f"Result should prioritize course subject: {result}"
     
     print(f"✓ English math course test passed: '{title}' → '{result}'")
 
