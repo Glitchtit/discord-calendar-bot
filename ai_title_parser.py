@@ -266,12 +266,12 @@ Return ONLY the simplified title in the ORIGINAL language, nothing else."""
             if clean_word.strip():
                 text_words.append(clean_word.strip())
         
-        # Check word count (max 5 words of actual text, min 3)
+        # Check word count (max 5 words of actual text, prefer 3-5 but allow shorter for naturally short titles)
         if len(text_words) > 5:
             logger.debug(f"Title too long: {len(text_words)} words")
             return False
         
-        if len(text_words) < 3:
+        if len(text_words) < 1:
             logger.debug(f"Title too short: {len(text_words)} words")
             return False
         
@@ -330,12 +330,24 @@ Return ONLY the simplified title in the ORIGINAL language, nothing else."""
                     words.append(term.title())
             
             # If we don't have enough words, use first few words from title
-            if len(words) < 3:  # Aim for at least 3 words
+            # Aim for at least 3 words for better context
+            if len(words) < 3:
                 additional = self._extract_fallback_words(title)
                 for word in additional:
                     if len(words) >= 5:
                         break
-                    if word.lower() not in [w.lower().replace('_', ' ') for w in words]:
+                    # Avoid duplicates
+                    if word.lower() not in [w.lower() for w in words]:
+                        words.append(word.title())
+            
+            # Final check: if still less than 3 words, add more from original
+            if len(words) < 3:
+                # Split original and take first meaningful words not already included
+                original_words = [w.strip(".,!?()[]{}") for w in title.split() if len(w.strip(".,!?()[]{}")) > 1]
+                for word in original_words:
+                    if len(words) >= 5:
+                        break
+                    if word.lower() not in [w.lower() for w in words]:
                         words.append(word.title())
             
             # Ensure we have at least one word
