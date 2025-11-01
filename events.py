@@ -15,6 +15,21 @@ from environ import GOOGLE_APPLICATION_CREDENTIALS, CALENDAR_SOURCES, USER_TAG_M
 from log import logger
 from ai_title_parser import simplify_event_title
 
+# Import TatSu exceptions for proper ICS parsing error handling
+try:
+    from tatsu.exceptions import ParseException, FailedParse # type: ignore[import-untyped]
+    TATSU_AVAILABLE = True
+except ImportError:
+    # If TatSu is not available, define placeholder classes
+    class ParseException(Exception):
+        """Placeholder for TatSu ParseException when TatSu is not available."""
+        pass
+    class FailedParse(Exception):
+        """Placeholder for TatSu FailedParse when TatSu is not available."""
+        pass
+    TATSU_AVAILABLE = False
+    logger.warning("TatSu parser exceptions not available - some ICS parsing errors may not be caught optimally")
+
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔐 Google Calendar API Initialization                             ║
 # ║ Sets up credentials and API client for accessing Google Calendar ║
@@ -1053,26 +1068,52 @@ def get_ics_events(start_date, end_date, url):
                 logger.warning(f"ICS type error for {url}: Content format mismatch - {te}")
             else:
                 logger.warning(f"ICS type error for {url}: {te}")
+            update_metrics("parsing_errors")
             return []
         except AttributeError as ae:
             # Handle missing attribute errors during parsing
             logger.warning(f"ICS attribute error for {url}: Missing required calendar structure - {ae}")
+            update_metrics("parsing_errors")
             return []
         except ImportError as ime:
             # Handle missing dependencies or module issues
             logger.warning(f"ICS import error for {url}: Missing required modules - {ime}")
+            update_metrics("parsing_errors")
             return []
         except MemoryError as me:
             # Handle cases where ICS file is too large
             logger.warning(f"ICS memory error for {url}: File too large to process")
+            update_metrics("parsing_errors")
             return []
         except RecursionError as re:
             # Handle infinite recursion in malformed ICS files
             logger.warning(f"ICS recursion error for {url}: Malformed file structure with circular references")
+            update_metrics("parsing_errors")
             return []
         except UnicodeDecodeError as ude:
             # Handle encoding issues
             logger.warning(f"ICS encoding error for {url}: Character encoding issue - {ude}")
+            update_metrics("parsing_errors")
+            return []
+        except ParseException as pe:
+            # Handle TatSu parser exceptions specifically (e.g., infinite left recursion, grammar errors)
+            # Note: Error message parsing is used as a fallback since TatSu exceptions don't always
+            # provide specific attributes. Known patterns include:
+            # - "infinite left recursion" for recursive grammar issues
+            # - "expected X" for grammar mismatch errors
+            error_msg = str(pe)
+            if "infinite left recursion" in error_msg.lower():
+                logger.warning(f"ICS parser error for {url}: Infinite recursion in grammar - likely malformed DTSTART/DTEND field")
+            elif "expected" in error_msg.lower():
+                logger.warning(f"ICS parser error for {url}: Grammar parsing error - unexpected content structure")
+            else:
+                logger.warning(f"ICS parser error for {url}: {pe}")
+            update_metrics("parsing_errors")
+            return []
+        except FailedParse as fp:
+            # Handle TatSu failed parse exceptions
+            logger.warning(f"ICS parser error for {url}: Failed to parse calendar structure - {fp}")
+            update_metrics("parsing_errors")
             return []
         except KeyboardInterrupt:
             # Allow clean shutdown
@@ -1091,6 +1132,7 @@ def get_ics_events(start_date, end_date, url):
                 logger.warning(f"ICS grammar parsing error for {url}: Malformed calendar structure - {parser_error}")
             else:
                 logger.warning(f"ICS parser error for {url}: {parser_error}")
+            update_metrics("parsing_errors")
             return []
             
         # Safely iterate through events with additional error handling
