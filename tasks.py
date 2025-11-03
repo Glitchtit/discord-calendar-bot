@@ -553,7 +553,8 @@ async def post_todays_happenings(bot, include_greeting: bool = False):
                             asyncio.to_thread(get_events, meta, today, today),
                             timeout=120
                         )
-                        if events:  # Additional safety check
+                        # Ensure events is a list before extending (get_events should always return list, but this guards against None)
+                        if events:
                             all_events_for_greeting += events
                     except asyncio.TimeoutError:
                         logger.warning(f"Timeout fetching greeting events for {meta.get('name', 'Unknown')}")

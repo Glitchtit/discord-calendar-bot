@@ -166,7 +166,7 @@ def retry_with_backoff(func, max_retries: int = 3, initial_delay: float = 1.0, b
         max_retries: Maximum number of retry attempts
         initial_delay: Initial delay in seconds
         backoff_factor: Multiplier for delay between retries
-        max_delay: Maximum delay in seconds (default 30s to prevent excessive blocking)
+        max_delay: Maximum delay cap in seconds (default 30s to prevent excessive blocking)
     """
     delay = initial_delay
     last_exception = None
