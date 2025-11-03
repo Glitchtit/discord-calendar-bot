@@ -157,7 +157,7 @@ def record_calendar_success(calendar_id: str) -> None:
         logger.debug(f"Clearing failure record for calendar {calendar_id}")
         del _failed_calendars[calendar_id]
 
-def retry_with_backoff(func, max_retries: int = 3, initial_delay: float = 1.0, backoff_factor: float = 2.0):
+def retry_with_backoff(func, max_retries: int = 3, initial_delay: float = 1.0, backoff_factor: float = 2.0, max_delay: float = 30.0):
     """
     Retry a function with exponential backoff.
     
@@ -166,6 +166,7 @@ def retry_with_backoff(func, max_retries: int = 3, initial_delay: float = 1.0, b
         max_retries: Maximum number of retry attempts
         initial_delay: Initial delay in seconds
         backoff_factor: Multiplier for delay between retries
+        max_delay: Maximum delay in seconds (default 30s to prevent excessive blocking)
     """
     delay = initial_delay
     last_exception = None
@@ -180,8 +181,10 @@ def retry_with_backoff(func, max_retries: int = 3, initial_delay: float = 1.0, b
         except Exception as e:
             last_exception = e
             if attempt < max_retries:
-                logger.debug(f"Retry attempt {attempt + 1}/{max_retries} failed: {e}, waiting {delay:.1f}s")
-                time.sleep(delay)
+                # Cap delay to max_delay to prevent excessive blocking
+                capped_delay = min(delay, max_delay)
+                logger.debug(f"Retry attempt {attempt + 1}/{max_retries} failed: {e}, waiting {capped_delay:.1f}s")
+                time.sleep(capped_delay)
                 delay *= backoff_factor
             else:
                 logger.warning(f"All {max_retries + 1} retry attempts failed, giving up")
@@ -454,22 +457,23 @@ def retry_api_call(func, *args, max_retries=3, **kwargs):
                 _api_last_error_time = datetime.now()
                 raise
                 
-            # For rate limits and server errors, retry with backoff
-            backoff = (2 ** attempt) + random.uniform(0, 1)
+            # For rate limits and server errors, retry with backoff (max 30 seconds)
+            backoff = min((2 ** attempt) + random.uniform(0, 1), 30.0)
             logger.warning(f"Retryable Google API error ({status_code}), attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
             time.sleep(backoff)
             last_exception = e
             
         except ssl.SSLError as e:
             # SSL errors are retryable as they're often temporary network issues
-            backoff = (2 ** attempt) + random.uniform(0, 1)
+            # Cap backoff to 30 seconds to prevent excessive blocking
+            backoff = min((2 ** attempt) + random.uniform(0, 1), 30.0)
             logger.warning(f"SSL error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
             time.sleep(backoff)
             last_exception = e
             
         except requests.exceptions.RequestException as e:
             # Network errors are retryable
-            backoff = (2 ** attempt) + random.uniform(0, 1)
+            backoff = min((2 ** attempt) + random.uniform(0, 1), 30.0)
             logger.warning(f"Network error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
             time.sleep(backoff)
             last_exception = e
@@ -477,13 +481,13 @@ def retry_api_call(func, *args, max_retries=3, **kwargs):
         except (ValueError, AttributeError) as e:
             # HTTP protocol errors (corrupted chunked encoding, etc.) are retryable
             # These can occur when the server sends malformed response data
-            backoff = (2 ** attempt) + random.uniform(0, 1)
+            backoff = min((2 ** attempt) + random.uniform(0, 1), 30.0)
             logger.warning(f"HTTP protocol error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
             time.sleep(backoff)
             last_exception = e
             
         except Exception as e:
-            # Other errors are not retried
+            # Other errors are not retried - log with full traceback for debugging
             logger.exception(f"Unexpected error in API call: {e}")
             _api_error_count += 1
             _api_last_error_time = datetime.now()

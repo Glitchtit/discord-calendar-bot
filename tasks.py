@@ -317,9 +317,13 @@ async def watch_for_event_changes(bot):
                 for meta in calendars:
                     try:
                         # Rate limit ourselves to avoid overloading APIs
-                        # Wrap calendar fetching in additional error handling
+                        # Wrap calendar fetching in additional error handling with timeout
                         try:
-                            events = await asyncio.to_thread(get_events, meta, earliest, latest)
+                            # Add timeout to prevent hanging indefinitely (5 minutes max per calendar)
+                            events = await asyncio.wait_for(
+                                asyncio.to_thread(get_events, meta, earliest, latest),
+                                timeout=300
+                            )
                             if events:
                                 all_events += events
                             else:
@@ -331,6 +335,8 @@ async def watch_for_event_changes(bot):
                             raise  # Re-raise cancellation
                         except MemoryError:
                             logger.error(f"Memory error fetching events from calendar {meta.get('name', 'Unknown')} - calendar may be too large")
+                        except (TypeError, AttributeError, KeyError) as type_error:
+                            logger.error(f"Data type error fetching events from calendar {meta.get('name', 'Unknown')}: {type_error}")
                         except Exception as calendar_error:
                             logger.exception(f"Error fetching events for calendar {meta.get('name', 'Unknown')}: {calendar_error}")
                             # Continue with other calendars
@@ -542,10 +548,17 @@ async def post_todays_happenings(bot, include_greeting: bool = False):
                 # Get events for greeting generation
                 for meta in GROUPED_CALENDARS[tag]:
                     try:
-                        events = await asyncio.to_thread(get_events, meta, today, today)
-                        all_events_for_greeting += events
+                        # Add timeout to prevent hanging (2 minutes max per calendar for daily events)
+                        events = await asyncio.wait_for(
+                            asyncio.to_thread(get_events, meta, today, today),
+                            timeout=120
+                        )
+                        if events:  # Additional safety check
+                            all_events_for_greeting += events
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Timeout fetching greeting events for {meta.get('name', 'Unknown')}")
                     except Exception as e:
-                        logger.warning(f"Error fetching greeting events for {meta['name']}: {e}")
+                        logger.warning(f"Error fetching greeting events for {meta.get('name', 'Unknown')}: {e}")
             except Exception as e:
                 error_count += 1
                 logger.exception(f"Error posting events for tag {tag}: {e}")
@@ -656,7 +669,11 @@ async def initialize_event_snapshots():
                     try:
                         # Wrap event fetching with comprehensive error handling
                         try:
-                            events = await asyncio.to_thread(get_events, meta, earliest, latest)
+                            # Add timeout to prevent hanging during initialization (5 minutes max)
+                            events = await asyncio.wait_for(
+                                asyncio.to_thread(get_events, meta, earliest, latest),
+                                timeout=300
+                            )
                             if events:
                                 all_events += events
                                 processed += 1
@@ -671,6 +688,9 @@ async def initialize_event_snapshots():
                             raise  # Re-raise cancellation
                         except MemoryError:
                             logger.error(f"Memory error during initialization for calendar {meta.get('name', 'Unknown')} - calendar may be too large")
+                            failed += 1
+                        except (TypeError, AttributeError, KeyError) as type_error:
+                            logger.error(f"Data type error during initialization for calendar {meta.get('name', 'Unknown')}: {type_error}")
                             failed += 1
                         except Exception as calendar_error:
                             failed += 1
@@ -728,7 +748,11 @@ async def verify_changes(tag: str, calendars: list, original_added: list, origin
             try:
                 # Wrap verification event fetching with comprehensive error handling
                 try:
-                    events = await asyncio.to_thread(get_events, meta, earliest, latest)
+                    # Add timeout to prevent hanging during verification (5 minutes max)
+                    events = await asyncio.wait_for(
+                        asyncio.to_thread(get_events, meta, earliest, latest),
+                        timeout=300
+                    )
                     if events:
                         current_events += events
                     else:
@@ -740,6 +764,8 @@ async def verify_changes(tag: str, calendars: list, original_added: list, origin
                     raise  # Re-raise cancellation
                 except MemoryError:
                     logger.error(f"Memory error during verification for calendar {meta.get('name', 'Unknown')} - calendar may be too large")
+                except (TypeError, AttributeError, KeyError) as type_error:
+                    logger.error(f"Data type error during verification for calendar {meta.get('name', 'Unknown')}: {type_error}")
                 except Exception as calendar_error:
                     logger.warning(f"Error re-fetching events for verification from {meta.get('name', 'Unknown')}: {calendar_error}")
                     continue
@@ -937,7 +963,11 @@ async def update_snapshot_after_verification(tag: str, calendars: list):
             try:
                 # Wrap snapshot update event fetching with comprehensive error handling
                 try:
-                    events = await asyncio.to_thread(get_events, meta, earliest, latest)
+                    # Add timeout to prevent hanging during snapshot update (5 minutes max)
+                    events = await asyncio.wait_for(
+                        asyncio.to_thread(get_events, meta, earliest, latest),
+                        timeout=300
+                    )
                     if events:
                         all_events += events
                     else:
@@ -949,6 +979,8 @@ async def update_snapshot_after_verification(tag: str, calendars: list):
                     raise  # Re-raise cancellation
                 except MemoryError:
                     logger.error(f"Memory error during snapshot update for calendar {meta.get('name', 'Unknown')} - calendar may be too large")
+                except (TypeError, AttributeError, KeyError) as type_error:
+                    logger.error(f"Data type error during snapshot update for calendar {meta.get('name', 'Unknown')}: {type_error}")
                 except Exception as calendar_error:
                     logger.warning(f"Error fetching events for snapshot update from {meta.get('name', 'Unknown')}: {calendar_error}")
                     
