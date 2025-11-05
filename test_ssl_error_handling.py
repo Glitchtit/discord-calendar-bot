@@ -50,11 +50,34 @@ os.environ['CALENDAR_SOURCES'] = 'google:test@test.com:TEST'
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '/tmp/test_creds.json'
 os.environ['USER_TAG_MAPPING'] = '123:TEST'
 
-# Now define retry_api_call inline since we can't import it easily
+# Now define helper and retry_api_call inline since we can't import them easily
 _api_last_error_time = None
 _api_error_count = 0
 _API_BACKOFF_RESET = timedelta(minutes=30)
 _MAX_API_ERRORS = 10
+
+def is_ssl_error(exception: Exception) -> bool:
+    """
+    Check if an exception is an SSL-related error.
+    
+    Args:
+        exception: The exception to check
+        
+    Returns:
+        True if the exception is SSL-related, False otherwise
+    """
+    # Direct SSL error type check
+    if isinstance(exception, ssl.SSLError):
+        return True
+    
+    # Check OSError for SSL-related messages
+    if isinstance(exception, OSError):
+        error_msg = str(exception).lower()
+        # Look for common SSL error patterns
+        ssl_patterns = ['[ssl]', 'ssl error', 'ssl:', '_ssl.', 'record layer']
+        return any(pattern in error_msg for pattern in ssl_patterns)
+    
+    return False
 
 def retry_api_call(func, *args, max_retries=3, **kwargs):
     """Retry a Google API call with exponential backoff on transient errors."""
@@ -94,10 +117,9 @@ def retry_api_call(func, *args, max_retries=3, **kwargs):
             # SSL errors and OS-level socket errors are retryable as they're often temporary network issues
             # OSError catches SSL errors that manifest as socket errors (e.g., [SSL] record layer failure)
             # Cap backoff to 30 seconds to prevent excessive blocking
-            error_msg = str(e)
-            if 'SSL' in error_msg or 'ssl' in error_msg or isinstance(e, ssl.SSLError):
+            if is_ssl_error(e):
                 backoff = min((2 ** attempt) + random.uniform(0, 1), 30.0)
-                logger.warning(f"SSL error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {error_msg}")
+                logger.warning(f"SSL error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
                 # Skip sleep in test
                 # time.sleep(backoff)
                 last_exception = e
@@ -188,6 +210,29 @@ def test_successful_after_ssl_error():
     print(f"✓ Recovery test passed: succeeded after {len(attempts)} attempts")
 
 
+def test_is_ssl_error_helper():
+    """Test the is_ssl_error helper function."""
+    # Direct SSL error
+    assert is_ssl_error(ssl.SSLError("[SSL] record layer failure")), "Should detect ssl.SSLError"
+    
+    # OSError with SSL patterns
+    assert is_ssl_error(OSError("[SSL] record layer failure (_ssl.c:2590)")), "Should detect [SSL] pattern"
+    assert is_ssl_error(OSError("SSL error occurred")), "Should detect 'SSL error' pattern"
+    assert is_ssl_error(OSError("ssl: bad handshake")), "Should detect 'ssl:' pattern"
+    assert is_ssl_error(OSError("Error from _ssl.c:2590")), "Should detect '_ssl.' pattern"
+    assert is_ssl_error(OSError("TLS record layer failure")), "Should detect 'record layer' pattern"
+    
+    # Case insensitivity
+    assert is_ssl_error(OSError("[ssl] RECORD LAYER failure")), "Should be case-insensitive"
+    
+    # Non-SSL errors
+    assert not is_ssl_error(OSError("Connection refused")), "Should not detect non-SSL OSError"
+    assert not is_ssl_error(OSError("File not found")), "Should not detect non-SSL OSError"
+    assert not is_ssl_error(ValueError("Invalid value")), "Should not detect non-OSError exceptions"
+    
+    print(f"✓ is_ssl_error helper test passed: correctly identifies SSL errors")
+
+
 def test_http_error_non_retryable():
     """Test that non-retryable HTTP errors are raised immediately."""
     attempts = []
@@ -222,6 +267,7 @@ def run_all_tests():
     test_oserror_ssl_caught()
     test_oserror_non_ssl_raised()
     test_successful_after_ssl_error()
+    test_is_ssl_error_helper()
     test_http_error_non_retryable()
     
     print("\n✅ All SSL error handling tests passed!")
