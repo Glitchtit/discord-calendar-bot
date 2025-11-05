@@ -463,13 +463,19 @@ def retry_api_call(func, *args, max_retries=3, **kwargs):
             time.sleep(backoff)
             last_exception = e
             
-        except ssl.SSLError as e:
-            # SSL errors are retryable as they're often temporary network issues
+        except (ssl.SSLError, OSError) as e:
+            # SSL errors and OS-level socket errors are retryable as they're often temporary network issues
+            # OSError catches SSL errors that manifest as socket errors (e.g., [SSL] record layer failure)
             # Cap backoff to 30 seconds to prevent excessive blocking
-            backoff = min((2 ** attempt) + random.uniform(0, 1), 30.0)
-            logger.warning(f"SSL error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
-            time.sleep(backoff)
-            last_exception = e
+            error_msg = str(e)
+            if 'SSL' in error_msg or 'ssl' in error_msg or isinstance(e, ssl.SSLError):
+                backoff = min((2 ** attempt) + random.uniform(0, 1), 30.0)
+                logger.warning(f"SSL error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {error_msg}")
+                time.sleep(backoff)
+                last_exception = e
+            else:
+                # Not an SSL error, re-raise to be handled by other exception handlers
+                raise
             
         except requests.exceptions.RequestException as e:
             # Network errors are retryable
@@ -850,13 +856,19 @@ def get_google_events(start_date, end_date, calendar_id):
         
         return items
         
-    except ssl.SSLError as e:
-        logger.error(f"SSL error fetching Google events from calendar {calendar_id}: {e}")
-        logger.info("This may be a temporary network issue. The calendar will be retried on the next sync.")
-        record_calendar_failure(calendar_id)
-        update_metrics("requests_failed")
-        update_metrics("network_errors")
-        return []
+    except (ssl.SSLError, OSError) as e:
+        # Catch both ssl.SSLError and OSError for SSL-related socket errors
+        error_msg = str(e)
+        if 'SSL' in error_msg or 'ssl' in error_msg or isinstance(e, ssl.SSLError):
+            logger.error(f"SSL error fetching Google events from calendar {calendar_id}: {e}")
+            logger.info("This may be a temporary network issue. The calendar will be retried on the next sync.")
+            record_calendar_failure(calendar_id)
+            update_metrics("requests_failed")
+            update_metrics("network_errors")
+            return []
+        else:
+            # Not an SSL error, re-raise to be handled by the general exception handler
+            raise
     except requests.exceptions.ConnectionError as e:
         logger.error(f"Connection error fetching Google events from calendar {calendar_id}: {e}")
         logger.info("Network connection issue. The calendar will be retried on the next sync.")
@@ -1279,13 +1291,19 @@ def get_ics_events(start_date, end_date, url):
         
         return deduped
         
-    except ssl.SSLError as e:
-        logger.error(f"SSL error fetching ICS calendar {url}: {e}")
-        logger.info("This may be a temporary network issue. The calendar will be retried on the next sync.")
-        record_calendar_failure(url)
-        update_metrics("requests_failed")
-        update_metrics("network_errors")
-        return []
+    except (ssl.SSLError, OSError) as e:
+        # Catch both ssl.SSLError and OSError for SSL-related socket errors
+        error_msg = str(e)
+        if 'SSL' in error_msg or 'ssl' in error_msg or isinstance(e, ssl.SSLError):
+            logger.error(f"SSL error fetching ICS calendar {url}: {e}")
+            logger.info("This may be a temporary network issue. The calendar will be retried on the next sync.")
+            record_calendar_failure(url)
+            update_metrics("requests_failed")
+            update_metrics("network_errors")
+            return []
+        else:
+            # Not an SSL error, re-raise to be handled by the general exception handler
+            raise
     except requests.exceptions.ConnectionError as e:
         logger.error(f"Connection error fetching ICS calendar {url}: {e}")
         logger.info("Network connection issue. The calendar will be retried on the next sync.")
