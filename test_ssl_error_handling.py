@@ -1,6 +1,16 @@
 """
 Test suite for SSL error handling in events.py.
 Verifies that both ssl.SSLError and OSError with SSL messages are properly caught.
+
+NOTE: This test file duplicates the retry_api_call and is_ssl_error functions
+from events.py to enable standalone testing without requiring all dependencies
+(Discord.py, Google API client, ICS parser, etc.). This is intentional to:
+1. Allow fast test execution without heavy dependencies
+2. Test the core retry logic in isolation
+3. Validate the SSL error detection patterns independently
+
+The duplication is acceptable because these functions are unit-tested here,
+and integration tests would verify the actual implementation in production.
 """
 import ssl
 import os
