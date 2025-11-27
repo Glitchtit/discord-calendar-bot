@@ -1315,7 +1315,8 @@ def get_ics_events(start_date, end_date, url):
     # Note: requests exceptions inherit from OSError in Python 3, so they must be
     # caught BEFORE the (ssl.SSLError, OSError) handler to avoid being mishandled
     except requests.exceptions.HTTPError as e:
-        # Log at warning level since server errors (5xx) are expected/temporary
+        # Log HTTP errors at warning level - these are handled gracefully and will retry
+        # Includes both temporary server errors (5xx) and permanent client errors (4xx)
         logger.warning(f"HTTP error fetching ICS calendar {url}: {e}")
         if e.response and e.response.status_code in [401, 403, 404, 405]:
             logger.info("Check calendar URL validity and permissions.")
