@@ -1311,35 +1311,12 @@ def get_ics_events(start_date, end_date, url):
         update_metrics("events_processed", len(deduped))
         
         return deduped
-        
-    except (ssl.SSLError, OSError) as e:
-        # Catch both ssl.SSLError and OSError for SSL-related socket errors
-        if is_ssl_error(e):
-            logger.error(f"SSL error fetching ICS calendar {url}: {e}")
-            logger.info("This may be a temporary network issue. The calendar will be retried on the next sync.")
-            record_calendar_failure(url)
-            update_metrics("requests_failed")
-            update_metrics("network_errors")
-            return []
-        else:
-            # Not an SSL error, re-raise to be handled by the general exception handler
-            raise
-    except requests.exceptions.ConnectionError as e:
-        logger.error(f"Connection error fetching ICS calendar {url}: {e}")
-        logger.info("Network connection issue. The calendar will be retried on the next sync.")
-        record_calendar_failure(url)
-        update_metrics("requests_failed")
-        update_metrics("network_errors")
-        return []
-    except requests.exceptions.Timeout as e:
-        logger.error(f"Timeout error fetching ICS calendar {url}: {e}")
-        logger.info("Request timed out. The calendar will be retried on the next sync.")
-        record_calendar_failure(url)
-        update_metrics("requests_failed")
-        update_metrics("network_errors")
-        return []
+    
+    # Note: requests exceptions inherit from OSError in Python 3, so they must be
+    # caught BEFORE the (ssl.SSLError, OSError) handler to avoid being mishandled
     except requests.exceptions.HTTPError as e:
-        logger.error(f"HTTP error fetching ICS calendar {url}: {e}")
+        # Log at warning level since server errors (5xx) are expected/temporary
+        logger.warning(f"HTTP error fetching ICS calendar {url}: {e}")
         if e.response and e.response.status_code in [401, 403, 404, 405]:
             logger.info("Check calendar URL validity and permissions.")
             record_calendar_failure(url)  # Permanent-ish failures
@@ -1352,13 +1329,41 @@ def get_ics_events(start_date, end_date, url):
             update_metrics("network_errors")
             # Don't record failure for temporary server errors
         return []
+    except requests.exceptions.ConnectionError as e:
+        logger.warning(f"Connection error fetching ICS calendar {url}: {e}")
+        logger.info("Network connection issue. The calendar will be retried on the next sync.")
+        record_calendar_failure(url)
+        update_metrics("requests_failed")
+        update_metrics("network_errors")
+        return []
+    except requests.exceptions.Timeout as e:
+        logger.warning(f"Timeout error fetching ICS calendar {url}: {e}")
+        logger.info("Request timed out. The calendar will be retried on the next sync.")
+        record_calendar_failure(url)
+        update_metrics("requests_failed")
+        update_metrics("network_errors")
+        return []
     except requests.exceptions.RequestException as e:
-        logger.error(f"Network error fetching ICS calendar {url}: {e}")
+        logger.warning(f"Network error fetching ICS calendar {url}: {e}")
         logger.info("The calendar will be retried on the next sync.")
         record_calendar_failure(url)
         update_metrics("requests_failed")
         update_metrics("network_errors")
         return []
+    except (ssl.SSLError, OSError) as e:
+        # Catch both ssl.SSLError and OSError for SSL-related socket errors
+        # This handler comes after requests exceptions because requests exceptions
+        # inherit from OSError in Python 3
+        if is_ssl_error(e):
+            logger.warning(f"SSL error fetching ICS calendar {url}: {e}")
+            logger.info("This may be a temporary network issue. The calendar will be retried on the next sync.")
+            record_calendar_failure(url)
+            update_metrics("requests_failed")
+            update_metrics("network_errors")
+            return []
+        else:
+            # Not an SSL error, re-raise to be handled by the general exception handler
+            raise
     except Exception as e:
         logger.exception(f"Unexpected error fetching/parsing ICS calendar {url}: {e}")
         logger.info("The calendar will be retried on the next sync.")
