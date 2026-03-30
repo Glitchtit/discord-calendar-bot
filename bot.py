@@ -437,7 +437,7 @@ async def reset_health_command(interaction: discord.Interaction, component: str 
         await interaction.response.defer()
         
         # Import here to avoid circular imports
-        from events import reset_metrics, _failed_calendars
+        from events import reset_metrics, _calendar_breakers
         
         results = []
         
@@ -446,8 +446,7 @@ async def reset_health_command(interaction: discord.Interaction, component: str 
             results.append("✅ Health metrics reset")
             
         if component in ["circuits", "all"]:
-            circuit_count = len(_failed_calendars)
-            _failed_calendars.clear()
+            circuit_count = _calendar_breakers.clear_all()
             results.append(f"✅ {circuit_count} circuit breakers reset")
         
         result_message = "\n".join(results)

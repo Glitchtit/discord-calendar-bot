@@ -141,7 +141,7 @@ def log_health_status():
 def get_calendar_summary() -> dict:
     """Get a summary of all configured calendars and their status."""
     try:
-        from events import GROUPED_CALENDARS, _failed_calendars, _calendar_metadata_cache
+        from events import GROUPED_CALENDARS, _calendar_breakers, _calendar_metadata_cache
         from datetime import datetime
         
         summary = {
@@ -177,17 +177,17 @@ def get_calendar_summary() -> dict:
                     }
                 
                 # Check if calendar has circuit breaker active
-                if cal_id in _failed_calendars:
+                if cal_id in _calendar_breakers:
                     is_failed = True
-                    failure_info = _failed_calendars[cal_id]
+                    failure_info = _calendar_breakers.get_failure_info(cal_id)
                     backoff_remaining = 0
-                    if failure_info.get("backoff_until", datetime.min) > datetime.now():
+                    if failure_info and failure_info.get("backoff_until", datetime.min) > datetime.now():
                         backoff_remaining = (failure_info["backoff_until"] - datetime.now()).total_seconds()
                     
                     error_info = {
                         "type": "circuit_breaker",
-                        "failure_count": failure_info["count"],
-                        "last_failure": failure_info["last_failure"].isoformat(),
+                        "failure_count": failure_info["count"] if failure_info else 0,
+                        "last_failure": failure_info["last_failure"].isoformat() if failure_info else "",
                         "backoff_remaining": max(0, int(backoff_remaining))
                     }
                 

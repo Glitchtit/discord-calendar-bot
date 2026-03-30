@@ -44,6 +44,36 @@ _pending_changes = {}  # tag -> {timestamp, added_events, removed_events, change
 _VERIFICATION_DELAY = timedelta(minutes=6)  # Wait 6 minutes before re-checking (avoid exact minute boundary issues)
 _MAX_VERIFICATION_ATTEMPTS = 3  # Maximum number of verification attempts
 
+
+async def _fetch_calendar_events_safe(meta: dict, start, end, context: str = "", timeout: int = 300) -> list:
+    """Fetch events from a single calendar with timeout and comprehensive error handling.
+
+    Returns a list of events (empty on failure). Never raises except for
+    CancelledError and KeyboardInterrupt.
+    """
+    cal_name = meta.get("name", "Unknown")
+    try:
+        events = await asyncio.wait_for(
+            asyncio.to_thread(get_events, meta, start, end),
+            timeout=timeout,
+        )
+        return events or []
+    except asyncio.CancelledError:
+        logger.info(f"Event fetching was cancelled{' during ' + context if context else ''}")
+        raise
+    except KeyboardInterrupt:
+        logger.info(f"Calendar processing interrupted by user{' during ' + context if context else ''}")
+        raise
+    except asyncio.TimeoutError:
+        logger.warning(f"Timeout fetching events from calendar {cal_name}{' during ' + context if context else ''}")
+    except MemoryError:
+        logger.error(f"Memory error fetching events from calendar {cal_name} - calendar may be too large")
+    except (TypeError, AttributeError, KeyError) as e:
+        logger.error(f"Data type error fetching events from calendar {cal_name}: {e}")
+    except Exception as e:
+        logger.exception(f"Error fetching events from calendar {cal_name}{' during ' + context if context else ''}: {e}")
+    return []
+
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔒 TaskLock                                                        ║
 # ║ Context manager for safely acquiring and releasing task locks     ║
@@ -315,38 +345,7 @@ async def watch_for_event_changes(bot):
                 # Fetch and fingerprint all events in the date window
                 all_events = []
                 for meta in calendars:
-                    try:
-                        # Rate limit ourselves to avoid overloading APIs
-                        # Wrap calendar fetching in additional error handling with timeout
-                        try:
-                            # Add timeout to prevent hanging indefinitely (5 minutes max per calendar)
-                            events = await asyncio.wait_for(
-                                asyncio.to_thread(get_events, meta, earliest, latest),
-                                timeout=300
-                            )
-                            if events:
-                                all_events += events
-                            else:
-                                logger.debug(f"No events returned from calendar {meta.get('name', 'Unknown')}")
-                        except asyncio.TimeoutError:
-                            logger.warning(f"Timeout fetching events from calendar {meta.get('name', 'Unknown')}")
-                        except asyncio.CancelledError:
-                            logger.info("Event fetching was cancelled")
-                            raise  # Re-raise cancellation
-                        except MemoryError:
-                            logger.error(f"Memory error fetching events from calendar {meta.get('name', 'Unknown')} - calendar may be too large")
-                        except (TypeError, AttributeError, KeyError) as type_error:
-                            logger.error(f"Data type error fetching events from calendar {meta.get('name', 'Unknown')}: {type_error}")
-                        except Exception as calendar_error:
-                            logger.exception(f"Error fetching events for calendar {meta.get('name', 'Unknown')}: {calendar_error}")
-                            # Continue with other calendars
-                            
-                    except KeyboardInterrupt:
-                        logger.info("Calendar processing interrupted by user")
-                        raise
-                    except Exception as outer_error:
-                        logger.exception(f"Outer error processing calendar {meta.get('name', 'Unknown')}: {outer_error}")
-                        # Continue with other calendars
+                    all_events += await _fetch_calendar_events_safe(meta, earliest, latest, context="change detection")
                         
                 # Skip further processing if we couldn't fetch any events
                 if not all_events:
@@ -404,8 +403,6 @@ async def watch_for_event_changes(bot):
                         change_summary += ", "
                     if changed_week:
                         change_summary += f"~{len(changed_week)} changed"
-                    if removed_week:
-                        change_summary += f"-{len(removed_week)} removed"
                     
                     if tag not in _pending_changes or _pending_changes[tag]['timestamp'] == current_timestamp:
                         logger.info(f"Detected potential changes for '{tag}' ({change_summary}) - queued for verification in {_VERIFICATION_DELAY.total_seconds():.1f} seconds")
@@ -746,37 +743,7 @@ async def verify_changes(tag: str, calendars: list, original_added: list, origin
         # Re-fetch current events
         current_events = []
         for meta in calendars:
-            try:
-                # Wrap verification event fetching with comprehensive error handling
-                try:
-                    # Add timeout to prevent hanging during verification (5 minutes max)
-                    events = await asyncio.wait_for(
-                        asyncio.to_thread(get_events, meta, earliest, latest),
-                        timeout=300
-                    )
-                    if events:
-                        current_events += events
-                    else:
-                        logger.debug(f"No events returned from calendar {meta.get('name', 'Unknown')} during verification")
-                except asyncio.TimeoutError:
-                    logger.warning(f"Timeout during verification for calendar {meta.get('name', 'Unknown')}")
-                except asyncio.CancelledError:
-                    logger.info("Event fetching was cancelled during verification")
-                    raise  # Re-raise cancellation
-                except MemoryError:
-                    logger.error(f"Memory error during verification for calendar {meta.get('name', 'Unknown')} - calendar may be too large")
-                except (TypeError, AttributeError, KeyError) as type_error:
-                    logger.error(f"Data type error during verification for calendar {meta.get('name', 'Unknown')}: {type_error}")
-                except Exception as calendar_error:
-                    logger.warning(f"Error re-fetching events for verification from {meta.get('name', 'Unknown')}: {calendar_error}")
-                    continue
-                    
-            except KeyboardInterrupt:
-                logger.info("Calendar verification interrupted by user")
-                raise
-            except Exception as outer_error:
-                logger.warning(f"Outer error during verification for calendar {meta.get('name', 'Unknown')}: {outer_error}")
-                continue
+            current_events += await _fetch_calendar_events_safe(meta, earliest, latest, context="verification")
         
         if not current_events:
             logger.warning(f"No events found during verification for tag '{tag}'")
@@ -961,35 +928,7 @@ async def update_snapshot_after_verification(tag: str, calendars: list):
         all_events = []
         
         for meta in calendars:
-            try:
-                # Wrap snapshot update event fetching with comprehensive error handling
-                try:
-                    # Add timeout to prevent hanging during snapshot update (5 minutes max)
-                    events = await asyncio.wait_for(
-                        asyncio.to_thread(get_events, meta, earliest, latest),
-                        timeout=300
-                    )
-                    if events:
-                        all_events += events
-                    else:
-                        logger.debug(f"No events returned from calendar {meta.get('name', 'Unknown')} during snapshot update")
-                except asyncio.TimeoutError:
-                    logger.warning(f"Timeout during snapshot update for calendar {meta.get('name', 'Unknown')}")
-                except asyncio.CancelledError:
-                    logger.info("Event fetching was cancelled during snapshot update")
-                    raise  # Re-raise cancellation
-                except MemoryError:
-                    logger.error(f"Memory error during snapshot update for calendar {meta.get('name', 'Unknown')} - calendar may be too large")
-                except (TypeError, AttributeError, KeyError) as type_error:
-                    logger.error(f"Data type error during snapshot update for calendar {meta.get('name', 'Unknown')}: {type_error}")
-                except Exception as calendar_error:
-                    logger.warning(f"Error fetching events for snapshot update from {meta.get('name', 'Unknown')}: {calendar_error}")
-                    
-            except KeyboardInterrupt:
-                logger.info("Calendar snapshot update interrupted by user")
-                raise
-            except Exception as outer_error:
-                logger.warning(f"Outer error during snapshot update for calendar {meta.get('name', 'Unknown')}: {outer_error}")
+            all_events += await _fetch_calendar_events_safe(meta, earliest, latest, context="snapshot update")
         
         if all_events:
             all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))

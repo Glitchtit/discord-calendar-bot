@@ -16,6 +16,7 @@ from events import (
 )
 from log import logger
 from utils import format_event, resolve_input_to_tags
+from resilience import async_retry_with_backoff
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -23,25 +24,11 @@ from utils import format_event, resolve_input_to_tags
 # ║ Helper function to retry Discord API operations with backoff      ║
 # ╚════════════════════════════════════════════════════════════════════╝
 async def _retry_discord_operation(operation, max_retries=3):
-    last_error = None
-    
-    for attempt in range(max_retries):
-        try:
-            return await operation()
-        except discord_errors.Forbidden as e:
-            # Permission errors should not be retried
-            logger.error(f"Permission error during Discord operation: {e}")
-            raise
-        except (discord_errors.HTTPException, discord_errors.GatewayNotFound) as e:
-            backoff = (2 ** attempt) + random.random()
-            logger.warning(f"Discord API error (attempt {attempt+1}/{max_retries}): {e}")
-            logger.info(f"Retrying in {backoff:.2f} seconds...")
-            last_error = e
-            await asyncio.sleep(backoff)
-    
-    # If we've exhausted all retries, raise the last error
-    if last_error:
-        raise last_error
+    return await async_retry_with_backoff(
+        operation,
+        max_retries=max_retries,
+        non_retryable=(discord_errors.Forbidden,),
+    )
 
 
 # ╔════════════════════════════════════════════════════════════════════╗

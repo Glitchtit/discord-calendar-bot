@@ -8,13 +8,10 @@ from datetime import datetime, timedelta
 from openai import OpenAI, APIError, RateLimitError, APITimeoutError, APIConnectionError
 from log import logger
 from environ import OPENAI_API_KEY, AI_TOGGLE
+from resilience import CircuitBreaker
 
-# Global circuit breaker state
-_circuit_open = False
-_last_error_time = None
-_error_count = 0
-_reset_after = timedelta(minutes=5)
-_error_threshold = 3
+# Shared circuit breaker for all OpenAI API calls
+_openai_breaker = CircuitBreaker("openai", threshold=3, reset_after=300.0)
 
 # Initialize OpenAI client with API key from environment
 # Use safer initialization with error handling
@@ -29,20 +26,10 @@ except Exception as e:
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔌 check_api_availability                                          ║
-# ║ Implements circuit breaker pattern to prevent API hammering       ║
+# ║ Checks circuit breaker to prevent API hammering                   ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def check_api_availability():
-    global _circuit_open, _last_error_time, _error_count
-    
-    # If circuit is open, check if enough time has passed to try again
-    if _circuit_open:
-        if _last_error_time and datetime.now() - _last_error_time > _reset_after:
-            logger.info("Circuit breaker reset - attempting to reconnect to OpenAI API")
-            _circuit_open = False
-            _error_count = 0
-            return True
-        return False
-    return True
+    return not _openai_breaker.is_open
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -50,17 +37,8 @@ def check_api_availability():
 # ║ Centralized error handling for OpenAI API errors                  ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def handle_api_error(error, context="API call"):
-    global _circuit_open, _last_error_time, _error_count
-    
-    _error_count += 1
-    _last_error_time = datetime.now()
-    
-    # Open the circuit if we've hit the threshold
-    if (_error_count >= _error_threshold):
-        _circuit_open = True
-        logger.error(f"Circuit breaker opened after {_error_count} errors. Will retry after {_reset_after}")
-    
-    # Handle specific error types
+    _openai_breaker.record_failure()
+
     if isinstance(error, RateLimitError):
         logger.warning(f"OpenAI API rate limit reached during {context}: {error}")
         return "rate_limit"

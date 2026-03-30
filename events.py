@@ -14,6 +14,7 @@ from googleapiclient.errors import HttpError # type: ignore
 from environ import GOOGLE_APPLICATION_CREDENTIALS, CALENDAR_SOURCES, USER_TAG_MAPPING
 from log import logger
 from ai_title_parser import simplify_event_title
+from resilience import CalendarCircuitBreakers, retry_with_backoff
 
 # Import TatSu exceptions for proper ICS parsing error handling
 try:
@@ -45,11 +46,10 @@ _api_error_count = 0
 _API_BACKOFF_RESET = timedelta(minutes=30)
 _MAX_API_ERRORS = 10
 
-# Circuit breaker for failed calendar sources
-_failed_calendars = {}  # url/id -> {"count": int, "last_failure": datetime, "backoff_until": datetime}
-_MAX_FAILURE_COUNT = 5
-_BASE_BACKOFF_SECONDS = 60  # 1 minute base
-_MAX_BACKOFF_SECONDS = 3600  # 1 hour max
+# Per-calendar circuit breakers (replaces manual _failed_calendars dict)
+_calendar_breakers = CalendarCircuitBreakers(
+    threshold=5, base_backoff=60, max_backoff=3600, auto_reset_after=3600
+)
 
 # Metrics tracking
 _calendar_metrics = {
@@ -137,86 +137,15 @@ def is_ssl_error(exception: Exception) -> bool:
 
 def is_calendar_circuit_open(calendar_id: str) -> bool:
     """Check if circuit breaker is open for a calendar source."""
-    if calendar_id not in _failed_calendars:
-        return False
-    
-    failure_info = _failed_calendars[calendar_id]
-    
-    # Check if we're still in backoff period
-    if failure_info.get("backoff_until", datetime.min) > datetime.now():
-        return True
-    
-    # Reset if enough time has passed since last failure
-    if datetime.now() - failure_info.get("last_failure", datetime.min) > timedelta(hours=1):
-        logger.debug(f"Resetting circuit breaker for calendar {calendar_id}")
-        del _failed_calendars[calendar_id]
-        return False
-    
-    return False
+    return _calendar_breakers.is_open(calendar_id)
 
 def record_calendar_failure(calendar_id: str) -> None:
     """Record a failure for circuit breaker logic."""
-    now = datetime.now()
-    
-    if calendar_id not in _failed_calendars:
-        _failed_calendars[calendar_id] = {"count": 0, "last_failure": now}
-    
-    failure_info = _failed_calendars[calendar_id]
-    failure_info["count"] += 1
-    failure_info["last_failure"] = now
-    
-    # Calculate exponential backoff
-    backoff_seconds = min(
-        _BASE_BACKOFF_SECONDS * (2 ** (failure_info["count"] - 1)),
-        _MAX_BACKOFF_SECONDS
-    )
-    failure_info["backoff_until"] = now + timedelta(seconds=backoff_seconds)
-    
-    logger.warning(f"Calendar {calendar_id} failed {failure_info['count']} times, backing off for {backoff_seconds}s")
+    _calendar_breakers.record_failure(calendar_id)
 
 def record_calendar_success(calendar_id: str) -> None:
     """Record successful operation to reset circuit breaker."""
-    if calendar_id in _failed_calendars:
-        logger.debug(f"Clearing failure record for calendar {calendar_id}")
-        del _failed_calendars[calendar_id]
-
-def retry_with_backoff(func, max_retries: int = 3, initial_delay: float = 1.0, backoff_factor: float = 2.0, max_delay: float = 30.0):
-    """
-    Retry a function with exponential backoff.
-    
-    Args:
-        func: Function to retry (should raise exception on failure)
-        max_retries: Maximum number of retry attempts
-        initial_delay: Initial delay in seconds
-        backoff_factor: Multiplier for delay between retries
-        max_delay: Maximum delay cap in seconds (default 30s to prevent excessive blocking)
-    """
-    delay = initial_delay
-    last_exception = None
-    
-    for attempt in range(max_retries + 1):
-        try:
-            result = func()
-            return result
-        except KeyboardInterrupt:
-            # Don't retry on user interruption
-            raise
-        except Exception as e:
-            last_exception = e
-            if attempt < max_retries:
-                # Cap delay to max_delay to prevent excessive blocking
-                capped_delay = min(delay, max_delay)
-                logger.debug(f"Retry attempt {attempt + 1}/{max_retries} failed: {e}, waiting {capped_delay:.1f}s")
-                time.sleep(capped_delay)
-                delay *= backoff_factor
-            else:
-                logger.warning(f"All {max_retries + 1} retry attempts failed, giving up")
-    
-    # If we get here, all retries failed
-    if last_exception:
-        raise last_exception
-    else:
-        raise RuntimeError("All retries failed with no exception recorded")
+    _calendar_breakers.record_success(calendar_id)
 
 def update_metrics(metric_name: str, increment: int = 1):
     """Update calendar processing metrics."""
@@ -242,7 +171,7 @@ def get_metrics_summary() -> Dict[str, Any]:
         "network_errors": _calendar_metrics["network_errors"],
         "auth_errors": _calendar_metrics["auth_errors"],
         "events_processed": _calendar_metrics["events_processed"],
-        "circuit_breakers_active": len(_failed_calendars)
+        "circuit_breakers_active": len(_calendar_breakers)
     }
 
 def log_metrics_summary():
@@ -276,19 +205,7 @@ def reset_metrics():
 
 def get_circuit_breaker_status() -> Dict[str, Any]:
     """Get current status of circuit breakers for monitoring."""
-    active_breakers = {}
-    for calendar_id, failure_info in _failed_calendars.items():
-        backoff_remaining = 0
-        if failure_info.get("backoff_until", datetime.min) > datetime.now():
-            backoff_remaining = (failure_info["backoff_until"] - datetime.now()).total_seconds()
-        
-        active_breakers[calendar_id] = {
-            "failure_count": failure_info["count"],
-            "last_failure": failure_info["last_failure"].isoformat(),
-            "backoff_remaining_seconds": max(0, int(backoff_remaining))
-        }
-    
-    return active_breakers
+    return _calendar_breakers.get_status()
 
 # Fallback directory for events if primary location is unavailable
 FALLBACK_EVENTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -922,452 +839,303 @@ def get_google_events(start_date, end_date, calendar_id):
         update_metrics("requests_failed")
         return []
 
+def _fetch_ics_content(url: str) -> str | None:
+    """Fetch raw ICS content from a URL with retry logic and HTTP error handling.
+
+    Returns the response text on success, or None on failure.
+    Records circuit breaker state and metrics.
+    """
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (compatible; Calendar-Bot/1.0)',
+        'Accept': 'text/calendar, text/plain, */*',
+        'Accept-Encoding': 'identity',
+    }
+
+    def fetch_calendar():
+        response = requests.get(url, timeout=30, headers=headers, allow_redirects=True)
+
+        http_error_handlers = {
+            401: ("auth_errors", "Authentication required"),
+            403: ("auth_errors", "Access forbidden"),
+            404: (None, "Calendar not found"),
+            405: (None, "Method not allowed"),
+            429: ("network_errors", "Rate limited"),
+        }
+        if response.status_code in http_error_handlers:
+            extra_metric, msg = http_error_handlers[response.status_code]
+            logger.warning(f"{msg} for ICS calendar {url} (HTTP {response.status_code})")
+            record_calendar_failure(url)
+            update_metrics("requests_failed")
+            if extra_metric:
+                update_metrics(extra_metric)
+            return []
+        if response.status_code >= 500:
+            logger.warning(f"Server error accessing ICS calendar {url} (HTTP {response.status_code})")
+            raise requests.exceptions.HTTPError(f"Server error: {response.status_code}")
+
+        response.raise_for_status()
+        return response
+
+    response = retry_with_backoff(fetch_calendar, max_retries=2, initial_delay=1.0)
+
+    if isinstance(response, list):
+        return None
+
+    # Handle encoding issues
+    try:
+        response.encoding = response.encoding or 'utf-8'
+        return response.text
+    except UnicodeDecodeError:
+        logger.warning(f"Encoding error in ICS content from {url}, trying latin-1")
+        try:
+            return response.content.decode('latin-1')
+        except UnicodeDecodeError:
+            logger.warning(f"Failed to decode ICS content from {url}")
+            return None
+
+
+def _validate_ics_content(content: str, url: str) -> str | None:
+    """Validate and preprocess ICS content. Returns cleaned content or None."""
+    if not content or len(content) < 50:
+        logger.warning(f"ICS content too small or empty from {url}")
+        return None
+    if len(content) > 50_000_000:
+        logger.warning(f"ICS content too large (>{len(content)/1_000_000:.1f}MB) from {url}")
+        return None
+
+    content_lower = content.lower()
+    if content_lower.startswith('<!doctype') or '<html' in content_lower[:200]:
+        logger.warning(f"Received HTML content instead of ICS from {url} - likely an authentication or access issue")
+        return None
+    if not content.startswith("BEGIN:VCALENDAR") or "END:VCALENDAR" not in content:
+        logger.warning(f"Invalid ICS format (missing BEGIN/END markers) from {url}")
+        logger.debug(f"Content preview: {content[:200]}...")
+        return None
+    if "BEGIN:VEVENT" not in content:
+        logger.debug(f"No VEVENT blocks found in ICS from {url} - calendar may be empty")
+        return None
+
+    content_bytes = content.encode('utf-8', errors='ignore')
+    if b'\x00' in content_bytes or '\x00' in content:
+        logger.warning(f"Suspicious content detected in ICS from {url}")
+        return None
+
+    # Preprocess unless explicitly disabled
+    import os
+    if os.getenv("DISABLE_ICS_PREPROCESSING", "false").lower() != "true":
+        original = content
+        try:
+            content = preprocess_ics_content(content, url)
+            logger.debug(f"ICS preprocessing completed for {url}")
+        except Exception as e:
+            logger.warning(f"Error preprocessing ICS content from {url}: {e}")
+            content = original
+
+    return content
+
+
+def _parse_ics_calendar(content: str, url: str):
+    """Parse ICS content into a Calendar object. Returns the calendar or None."""
+    original_content = content
+    try:
+        return ICS_Calendar(content)
+    except ValueError as ve:
+        if "mandatory DTSTART not found" in str(ve) and content != original_content:
+            logger.debug(f"Preprocessing may have caused parsing issue for {url}, trying original content")
+            try:
+                cal = ICS_Calendar(original_content)
+                logger.info(f"Successfully parsed {url} with original content after preprocessing failed")
+                return cal
+            except Exception as e:
+                logger.warning(f"Both preprocessed and original content failed for {url}: {e}")
+        else:
+            error_msg = str(ve)
+            if "time data" in error_msg or "does not match format" in error_msg:
+                logger.warning(f"ICS datetime format error for {url}: Malformed date/time field - {ve}")
+            elif "mandatory DTSTART not found" in error_msg:
+                logger.warning(f"ICS value parsing error for {url}: {ve}")
+                logger.debug(f"ICS content sample from {url}: {content.split(chr(10))[:10]}")
+            else:
+                logger.warning(f"ICS value parsing error for {url}: {ve}")
+    except (IndexError, TypeError, AttributeError, ImportError, MemoryError, RecursionError, UnicodeDecodeError) as e:
+        logger.warning(f"ICS parsing error for {url}: {type(e).__name__} - {e}")
+    except ParseException as pe:
+        error_msg = str(pe)
+        if "infinite left recursion" in error_msg.lower():
+            logger.warning(f"ICS parser error for {url}: Infinite recursion in grammar")
+        else:
+            logger.warning(f"ICS parser error for {url}: {pe}")
+    except FailedParse as fp:
+        logger.warning(f"ICS parser error for {url}: Failed to parse - {fp}")
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        if any(p in error_msg for p in ["ALPHADIGIT_MINUS_PLUS", "contentline", "TatSu", "grammar"]):
+            logger.warning(f"ICS grammar/format error for {url}: {e}")
+        else:
+            logger.warning(f"ICS parser error for {url}: {e}")
+
+    update_metrics("parsing_errors")
+    return None
+
+
+def _extract_ics_events(cal, url: str, start_date, end_date) -> list:
+    """Extract and normalize events from a parsed ICS calendar."""
+    if not hasattr(cal, 'events') or cal.events is None:
+        logger.warning(f"No events found in ICS calendar from {url}")
+        return []
+
+    try:
+        cal_events = list(cal.events) if hasattr(cal.events, '__iter__') else []
+    except (TypeError, ValueError, AttributeError) as e:
+        logger.warning(f"Error accessing events from ICS calendar {url}: {e}")
+        return []
+
+    events = []
+    try:
+        for i, e in enumerate(cal_events):
+            try:
+                if i >= 1000:
+                    logger.warning(f"ICS calendar {url} has too many events (>1000), truncating")
+                    break
+
+                if not hasattr(e, 'begin') or not hasattr(e, 'end') or e.begin is None or e.end is None:
+                    continue
+
+                try:
+                    event_date = e.begin.date()
+                except (AttributeError, ValueError, TypeError):
+                    continue
+
+                if not (start_date <= event_date <= end_date):
+                    continue
+
+                try:
+                    original_title = (getattr(e, 'name', None) or getattr(e, 'summary', None) or "")
+                    location = getattr(e, 'location', None) or ""
+                    description = getattr(e, 'description', None) or ""
+                    for attr in [original_title, location, description]:
+                        if attr and not isinstance(attr, str):
+                            attr = str(attr)
+                    original_title = original_title[:500] if original_title else ""
+                    location = location[:200] if location else ""
+                    description = description[:1000] if description else ""
+                except (UnicodeDecodeError, UnicodeEncodeError, Exception):
+                    original_title, location, description = "Event", "", ""
+
+                id_source = f"{original_title}|{e.begin}|{e.end}|{location}"
+
+                try:
+                    simplified_title = simplify_event_title(original_title) if original_title else "Event"
+                except Exception:
+                    simplified_title = original_title or "Event"
+
+                try:
+                    event = {
+                        "summary": simplified_title,
+                        "original_summary": original_title,
+                        "start": {"dateTime": e.begin.isoformat()},
+                        "end": {"dateTime": e.end.isoformat()},
+                        "location": location,
+                        "description": description,
+                        "id": hashlib.md5(id_source.encode("utf-8")).hexdigest(),
+                    }
+                    events.append(event)
+                    logger.debug(f"ICS title simplified: '{original_title}' -> '{simplified_title}'")
+                except Exception as err:
+                    logger.warning(f"Error creating event object from {url}: {err}")
+
+            except KeyboardInterrupt:
+                raise
+            except Exception as event_error:
+                logger.warning(f"Error processing individual event from {url}: {event_error}")
+                continue
+    except KeyboardInterrupt:
+        raise
+    except Exception as iteration_error:
+        logger.warning(f"Error iterating through events from {url}: {iteration_error}")
+        return []
+
+    return events
+
+
+def _deduplicate_events(events: list, url: str) -> list:
+    """Deduplicate events by fingerprint."""
+    seen_fps: set = set()
+    deduped = []
+    for e in events:
+        try:
+            fp = compute_event_fingerprint(e)
+            if fp and fp not in seen_fps:
+                seen_fps.add(fp)
+                deduped.append(e)
+            elif not fp:
+                logger.debug(f"Could not fingerprint event, including anyway: {e.get('summary', 'Unknown')}")
+                deduped.append(e)
+        except Exception:
+            deduped.append(e)
+    logger.debug(f"Deduplicated to {len(deduped)} ICS events from {url}")
+    return deduped
+
+
 def get_ics_events(start_date, end_date, url):
     """Fetch events from ICS calendar with robust error handling and circuit breaker."""
-    # Check circuit breaker first
     if is_calendar_circuit_open(url):
         logger.debug(f"Circuit breaker open for ICS calendar {url}, skipping")
         return []
-    
+
     try:
         logger.debug(f"Fetching ICS events from {url}")
         update_metrics("requests_total")
-        
-        # Set up request with proper headers and timeout
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (compatible; Calendar-Bot/1.0)',
-            'Accept': 'text/calendar, text/plain, */*',
-            'Accept-Encoding': 'identity'  # Avoid compression issues
-        }
-        
-        def fetch_calendar():
-            response = requests.get(url, timeout=30, headers=headers, allow_redirects=True)
-            
-            # Handle specific HTTP error codes gracefully
-            if response.status_code == 401:
-                logger.warning(f"Authentication required for ICS calendar {url} (HTTP 401)")
-                record_calendar_failure(url)
-                update_metrics("requests_failed")
-                update_metrics("auth_errors")
-                return []
-            elif response.status_code == 403:
-                logger.warning(f"Access forbidden for ICS calendar {url} (HTTP 403)")
-                record_calendar_failure(url)
-                update_metrics("requests_failed")
-                update_metrics("auth_errors")
-                return []
-            elif response.status_code == 404:
-                logger.warning(f"ICS calendar not found at {url} (HTTP 404)")
-                record_calendar_failure(url)
-                update_metrics("requests_failed")
-                return []
-            elif response.status_code == 405:
-                logger.warning(f"Method not allowed for ICS calendar {url} (HTTP 405)")
-                record_calendar_failure(url)
-                update_metrics("requests_failed")
-                return []
-            elif response.status_code == 429:
-                logger.warning(f"Rate limited accessing ICS calendar {url} (HTTP 429)")
-                record_calendar_failure(url)
-                update_metrics("requests_failed")
-                update_metrics("network_errors")
-                return []
-            elif response.status_code >= 500:
-                logger.warning(f"Server error accessing ICS calendar {url} (HTTP {response.status_code})")
-                # Don't record permanent failure for server errors - they might be temporary
-                raise requests.exceptions.HTTPError(f"Server error: {response.status_code}")
-            
-            # Raise for other 4xx errors
-            response.raise_for_status()
-            return response
-        
-        # Use retry with backoff for network requests
-        response = retry_with_backoff(fetch_calendar, max_retries=2, initial_delay=1.0)
-        
-        # If we get here and response is empty list, it's a handled error case
-        if isinstance(response, list):
-            return response
-        
-        # Handle encoding issues
-        try:
-            response.encoding = response.encoding or 'utf-8'
-            content = response.text
-        except UnicodeDecodeError:
-            logger.warning(f"Encoding error in ICS content from {url}, trying latin-1")
-            try:
-                content = response.content.decode('latin-1')
-            except UnicodeDecodeError:
-                logger.warning(f"Failed to decode ICS content from {url}")
-                return []
-        
-        # Basic validation of ICS content before attempting to parse
-        if not content or len(content) < 50:  # Minimal valid ICS would be larger
-            logger.warning(f"ICS content too small or empty from {url}")
-            return []
-            
-        # Additional content validation
-        if len(content) > 50_000_000:  # 50MB limit to prevent memory issues
-            logger.warning(f"ICS content too large (>{len(content)/1_000_000:.1f}MB) from {url}")
-            return []
-        
-        # Check if we got HTML instead of ICS (common with auth errors)
-        content_lower = content.lower()
-        if content_lower.startswith('<!doctype') or '<html' in content_lower[:200]:
-            logger.warning(f"Received HTML content instead of ICS from {url} - likely an authentication or access issue")
-            return []
-            
-        if not content.startswith("BEGIN:VCALENDAR") or "END:VCALENDAR" not in content:
-            logger.warning(f"Invalid ICS format (missing BEGIN/END markers) from {url}")
-            logger.debug(f"Content preview: {content[:200]}...")
-            return []
-            
-        # Check if there are any events in the calendar
-        if "BEGIN:VEVENT" not in content:
-            logger.debug(f"No VEVENT blocks found in ICS from {url} - calendar may be empty")
-            return []
-            
-        # Check for potential malicious content patterns
-        suspicious_patterns = [
-            b'\x00',  # Null bytes
-            '\x00',   # Null bytes in text
-        ]
-        
-        content_bytes = content.encode('utf-8', errors='ignore')
-        for pattern in suspicious_patterns:
-            if isinstance(pattern, bytes) and pattern in content_bytes:
-                logger.warning(f"Suspicious content detected in ICS from {url}")
-                return []
-            elif isinstance(pattern, str) and pattern in content:
-                logger.warning(f"Suspicious content detected in ICS from {url}")
-                return []
-        
-        # Preprocess ICS content to fix common malformed patterns
-        original_content = content
-        
-        # Check environment variable to disable preprocessing for debugging
-        import os
-        disable_preprocessing = os.getenv("DISABLE_ICS_PREPROCESSING", "false").lower() == "true"
-        
-        if not disable_preprocessing:
-            try:
-                content = preprocess_ics_content(content, url)
-                logger.debug(f"ICS preprocessing completed for {url}")
-            except Exception as preprocess_error:
-                logger.warning(f"Error preprocessing ICS content from {url}: {preprocess_error}")
-                # Continue with original content if preprocessing fails
-                content = original_content
-            
-        # Safely parse the ICS calendar with comprehensive error handling for parser issues    
-        try:
-            cal = ICS_Calendar(content)
-        except ValueError as ve:
-            # If preprocessing caused issues, try with original content
-            if "mandatory DTSTART not found" in str(ve) and content != original_content:
-                logger.debug(f"Preprocessing may have caused parsing issue for {url}, trying original content")
-                try:
-                    cal = ICS_Calendar(original_content)
-                    logger.info(f"Successfully parsed {url} with original content after preprocessing failed")
-                except Exception as fallback_error:
-                    logger.warning(f"Both preprocessed and original content failed for {url}: {fallback_error}")
-                    update_metrics("parsing_errors")
-                    return []
-            else:
-                # Handle other value errors normally
-                error_msg = str(ve)
-                if "time data" in error_msg or "does not match format" in error_msg:
-                    logger.warning(f"ICS datetime format error for {url}: Malformed date/time field - {ve}")
-                elif "invalid literal" in error_msg:
-                    logger.warning(f"ICS value parsing error for {url}: Invalid data format - {ve}")
-                elif "mandatory DTSTART not found" in error_msg:
-                    logger.warning(f"ICS value parsing error for {url}: {ve}")
-                    # Log a sample of the content to help debug
-                    sample_lines = content.split('\n')[:10]  # First 10 lines
-                    logger.debug(f"ICS content sample from {url}: {sample_lines}")
-                else:
-                    logger.warning(f"ICS value parsing error for {url}: {ve}")
-                update_metrics("parsing_errors")
-                return []
-        except IndexError as ie:
-            # Handle the specific TatSu parser error we're seeing (pop from empty list)
-            error_msg = str(ie)
-            if "pop from empty list" in error_msg:
-                logger.warning(f"Parser index error in ICS file from {url}: Empty or malformed content structure")
-            else:
-                logger.warning(f"Parser index error in ICS file from {url}: {ie}")
-            update_metrics("parsing_errors")
-            return []
-        except TypeError as te:
-            # Handle 'NoneType' object is not iterable and similar type errors
-            error_msg = str(te)
-            if "'NoneType' object is not iterable" in error_msg:
-                logger.warning(f"ICS parsing error for {url}: Missing required content structure")
-            elif "expected str" in error_msg or "expected bytes" in error_msg:
-                logger.warning(f"ICS type error for {url}: Content format mismatch - {te}")
-            else:
-                logger.warning(f"ICS type error for {url}: {te}")
-            update_metrics("parsing_errors")
-            return []
-        except AttributeError as ae:
-            # Handle missing attribute errors during parsing
-            logger.warning(f"ICS attribute error for {url}: Missing required calendar structure - {ae}")
-            update_metrics("parsing_errors")
-            return []
-        except ImportError as ime:
-            # Handle missing dependencies or module issues
-            logger.warning(f"ICS import error for {url}: Missing required modules - {ime}")
-            update_metrics("parsing_errors")
-            return []
-        except MemoryError as me:
-            # Handle cases where ICS file is too large
-            logger.warning(f"ICS memory error for {url}: File too large to process")
-            update_metrics("parsing_errors")
-            return []
-        except RecursionError as re:
-            # Handle infinite recursion in malformed ICS files
-            logger.warning(f"ICS recursion error for {url}: Malformed file structure with circular references")
-            update_metrics("parsing_errors")
-            return []
-        except UnicodeDecodeError as ude:
-            # Handle encoding issues
-            logger.warning(f"ICS encoding error for {url}: Character encoding issue - {ude}")
-            update_metrics("parsing_errors")
-            return []
-        except ParseException as pe:
-            # Handle TatSu parser exceptions specifically (e.g., infinite left recursion, grammar errors)
-            # Note: Error message parsing is used as a fallback since TatSu exceptions don't always
-            # provide specific attributes. Known patterns include:
-            # - "infinite left recursion" for recursive grammar issues
-            # - "expected X" for grammar mismatch errors
-            error_msg = str(pe)
-            if "infinite left recursion" in error_msg.lower():
-                logger.warning(f"ICS parser error for {url}: Infinite recursion in grammar - likely malformed DTSTART/DTEND field")
-            elif "expected" in error_msg.lower():
-                logger.warning(f"ICS parser error for {url}: Grammar parsing error - unexpected content structure")
-            else:
-                logger.warning(f"ICS parser error for {url}: {pe}")
-            update_metrics("parsing_errors")
-            return []
-        except FailedParse as fp:
-            # Handle TatSu failed parse exceptions
-            logger.warning(f"ICS parser error for {url}: Failed to parse calendar structure - {fp}")
-            update_metrics("parsing_errors")
-            return []
-        except KeyboardInterrupt:
-            # Allow clean shutdown
-            logger.info("ICS parsing interrupted by user")
-            raise
-        except Exception as parser_error:
-            # Catch any other parsing errors including TatSu parser exceptions
-            error_msg = str(parser_error)
-            if "ALPHADIGIT_MINUS_PLUS" in error_msg or "contentline" in error_msg:
-                logger.warning(f"ICS datetime format error for {url}: Malformed DTSTART/DTEND field - parser unable to process date format")
-            elif "pop from empty list" in error_msg:
-                logger.warning(f"Parser index error in ICS file from {url}: Empty content list - {parser_error}")
-            elif "'NoneType' object is not iterable" in error_msg:
-                logger.warning(f"ICS parser error for {url}: Null content structure - {parser_error}")
-            elif "TatSu" in error_msg or "grammar" in error_msg:
-                logger.warning(f"ICS grammar parsing error for {url}: Malformed calendar structure - {parser_error}")
-            else:
-                logger.warning(f"ICS parser error for {url}: {parser_error}")
-            update_metrics("parsing_errors")
-            return []
-            
-        # Safely iterate through events with additional error handling
-        events = []
-        if not hasattr(cal, 'events') or cal.events is None:
-            logger.warning(f"No events found in ICS calendar from {url}")
-            return []
-            
-        try:
-            # Convert to list first to avoid iterator issues
-            cal_events = list(cal.events) if hasattr(cal.events, '__iter__') else []
-        except (TypeError, ValueError, AttributeError) as e:
-            logger.warning(f"Error accessing events from ICS calendar {url}: {e}")
-            return []
-            
-        try:
-            for i, e in enumerate(cal_events):
-                try:
-                    # Add safety check for maximum number of events to prevent memory issues
-                    if i >= 1000:  # Limit to 1000 events per calendar
-                        logger.warning(f"ICS calendar {url} has too many events (>1000), truncating")
-                        break
-                        
-                    # Validate event has required fields
-                    if not hasattr(e, 'begin') or not hasattr(e, 'end') or e.begin is None or e.end is None:
-                        logger.debug(f"Skipping event with missing start/end time from {url}")
-                        continue
-                        
-                    # Additional safety checks for event properties
-                    try:
-                        # Test if we can access the date property safely
-                        event_date = e.begin.date()
-                        event_end_date = e.end.date()
-                    except (AttributeError, ValueError, TypeError) as date_error:
-                        logger.debug(f"Skipping event with invalid date from {url}: {date_error}")
-                        continue
-                        
-                    # Check if event is in date range
-                    if not (start_date <= event_date <= end_date):
-                        continue
-                        
-                    # Safely extract event data with additional error handling
-                    try:
-                        original_title = getattr(e, 'name', None) or getattr(e, 'summary', None) or ""
-                        location = getattr(e, 'location', None) or ""
-                        description = getattr(e, 'description', None) or ""
-                        
-                        # Ensure string types and handle encoding issues
-                        if original_title and not isinstance(original_title, str):
-                            original_title = str(original_title)
-                        if location and not isinstance(location, str):
-                            location = str(location)
-                        if description and not isinstance(description, str):
-                            description = str(description)
-                            
-                        # Truncate very long fields to prevent memory issues
-                        original_title = original_title[:500] if original_title else ""
-                        location = location[:200] if location else ""
-                        description = description[:1000] if description else ""
-                        
-                    except (UnicodeDecodeError, UnicodeEncodeError) as encoding_error:
-                        logger.debug(f"Encoding error processing event from {url}: {encoding_error}")
-                        original_title = "Event"
-                        location = ""
-                        description = ""
-                    except Exception as field_error:
-                        logger.debug(f"Error extracting event fields from {url}: {field_error}")
-                        original_title = "Event"
-                        location = ""
-                        description = ""
-                        
-                    # Create unique ID for event
-                    id_source = f"{original_title}|{e.begin}|{e.end}|{location}"
-                    
-                    # Safely generate simplified title
-                    try:
-                        simplified_title = simplify_event_title(original_title) if original_title else "Event"
-                    except Exception as title_error:
-                        logger.debug(f"Error simplifying title '{original_title}' from {url}: {title_error}")
-                        simplified_title = original_title or "Event"
-                    
-                    try:
-                        event = {
-                            "summary": simplified_title,
-                            "original_summary": original_title,  # Preserve original
-                            "start": {"dateTime": e.begin.isoformat()},
-                            "end": {"dateTime": e.end.isoformat()},
-                            "location": location,
-                            "description": description,
-                            "id": hashlib.md5(id_source.encode("utf-8")).hexdigest()
-                        }
-                        events.append(event)
-                        logger.debug(f"ICS title simplified: '{original_title}' -> '{simplified_title}'")
-                    except Exception as event_creation_error:
-                        logger.warning(f"Error creating event object from {url}: {event_creation_error}")
-                        continue
-                    
-                except KeyboardInterrupt:
-                    # Allow clean shutdown
-                    logger.info("Event processing interrupted by user")
-                    raise
-                except Exception as event_error:
-                    # Log individual event processing errors but continue with other events
-                    logger.warning(f"Error processing individual event from {url}: {event_error}")
-                    continue
-                    
-        except KeyboardInterrupt:
-            # Allow clean shutdown
-            logger.info("Event iteration interrupted by user")
-            raise
-        except Exception as iteration_error:
-            logger.warning(f"Error iterating through events from {url}: {iteration_error}")
+
+        content = _fetch_ics_content(url)
+        if content is None:
             return []
 
-        # Deduplicate events with error handling
-        seen_fps = set()
-        deduped = []
-        for e in events:
-            try:
-                fp = compute_event_fingerprint(e)
-                if fp and fp not in seen_fps:
-                    seen_fps.add(fp)
-                    deduped.append(e)
-                elif not fp:
-                    # If fingerprinting fails, include the event anyway but log it
-                    logger.debug(f"Could not fingerprint event, including anyway: {e.get('summary', 'Unknown')}")
-                    deduped.append(e)
-            except Exception as fp_error:
-                logger.warning(f"Error computing fingerprint for event from {url}: {fp_error}")
-                # Include the event anyway to avoid losing data
-                deduped.append(e)
-                continue
-                
-        logger.debug(f"Deduplicated to {len(deduped)} ICS events from {url}")
-        
-        # Record successful operation to reset circuit breaker and update metrics
+        content = _validate_ics_content(content, url)
+        if content is None:
+            return []
+
+        cal = _parse_ics_calendar(content, url)
+        if cal is None:
+            return []
+
+        events = _extract_ics_events(cal, url, start_date, end_date)
+        deduped = _deduplicate_events(events, url)
+
         record_calendar_success(url)
         update_metrics("requests_successful")
         update_metrics("events_processed", len(deduped))
-        
         return deduped
-    
-    # Note: requests exceptions inherit from OSError in Python 3, so they must be
-    # caught BEFORE the (ssl.SSLError, OSError) handler to avoid being mishandled
+
     except requests.exceptions.HTTPError as e:
-        # Log HTTP errors at warning level - these are handled gracefully and will retry
-        # Includes both temporary server errors (5xx) and permanent client errors (4xx)
         logger.warning(f"HTTP error fetching ICS calendar {url}: {e}")
         if e.response and e.response.status_code in [401, 403, 404, 405]:
-            logger.info("Check calendar URL validity and permissions.")
-            record_calendar_failure(url)  # Permanent-ish failures
+            record_calendar_failure(url)
             update_metrics("requests_failed")
             if e.response.status_code in [401, 403]:
                 update_metrics("auth_errors")
         else:
-            logger.info("The calendar will be retried on the next sync.")
             update_metrics("requests_failed")
             update_metrics("network_errors")
-            # Don't record failure for temporary server errors
-        return []
-    except requests.exceptions.ConnectionError as e:
-        logger.warning(f"Connection error fetching ICS calendar {url}: {e}")
-        logger.info("Network connection issue. The calendar will be retried on the next sync.")
-        record_calendar_failure(url)
-        update_metrics("requests_failed")
-        update_metrics("network_errors")
-        return []
-    except requests.exceptions.Timeout as e:
-        logger.warning(f"Timeout error fetching ICS calendar {url}: {e}")
-        logger.info("Request timed out. The calendar will be retried on the next sync.")
-        record_calendar_failure(url)
-        update_metrics("requests_failed")
-        update_metrics("network_errors")
         return []
     except requests.exceptions.RequestException as e:
         logger.warning(f"Network error fetching ICS calendar {url}: {e}")
-        logger.info("The calendar will be retried on the next sync.")
         record_calendar_failure(url)
         update_metrics("requests_failed")
         update_metrics("network_errors")
         return []
     except (ssl.SSLError, OSError) as e:
-        # Catch both ssl.SSLError and OSError for SSL-related socket errors
-        # This handler comes after requests exceptions because requests exceptions
-        # inherit from OSError in Python 3
         if is_ssl_error(e):
             logger.warning(f"SSL error fetching ICS calendar {url}: {e}")
-            logger.info("This may be a temporary network issue. The calendar will be retried on the next sync.")
             record_calendar_failure(url)
             update_metrics("requests_failed")
             update_metrics("network_errors")
             return []
-        else:
-            # Not an SSL error, re-raise to be handled by the general exception handler
-            raise
+        raise
     except Exception as e:
         logger.exception(f"Unexpected error fetching/parsing ICS calendar {url}: {e}")
-        logger.info("The calendar will be retried on the next sync.")
         record_calendar_failure(url)
         update_metrics("requests_failed")
         return []
