@@ -38,9 +38,9 @@ This is a Discord bot (discord.py 2.3.2) that turns Google Calendar and ICS feed
 - **ai.py** — OpenAI integration (GPT-4o for greetings, DALL·E-3 for images). Has its own circuit breaker (opens after 3 errors, resets after 5 min). Falls back to `generate_fallback_greeting()` when unavailable.
 - **ai_title_parser.py** — Simplifies event titles to ≤5 words using OpenAI with regex fallback. Handles Swedish/English course codes, room numbers, group IDs. Uses `@lru_cache`.
 - **calendar_health.py** — Unified health reporting. Status levels: healthy (≥90%), degraded (70–89%), unhealthy (<70%).
-- **log.py** — Queue-based thread-safe logging. `TimedRotatingFileHandler` (daily rotation, 7-day retention, 10MB limit). Falls back: `/data/logs/` → `./logs/` → temp dir → console only.
+- **log.py** — Queue-based thread-safe logging with `SizedTimedRotatingFileHandler` (daily + 10 MB rotation, 7-day retention, gzip compression of rotated files). Falls back: `/data/logs/` → `./logs/` → temp dir → console only. Set `LOG_FORMAT=json` for JSON-lines file output (requires `python-json-logger`); console always stays colored text.
 - **utils.py** — Date helpers, emoji assignment by event title pattern, event formatting for Discord embeds, tag resolution.
-- **environ.py** — Centralized `os.getenv()` calls with defaults.
+- **environ.py** — Centralized `os.getenv()` calls with defaults. Key vars: `DEBUG`, `AI_TOGGLE`, `LOG_FORMAT` (`text`|`json`), `DISCORD_BOT_TOKEN`, `CALENDAR_SOURCES`.
 
 ### Data Flow
 
@@ -103,7 +103,7 @@ Changes detected every 5 minutes are queued with a 6-minute verification delay a
 
 ### Logging
 
-Import and use: `from log import logger`. Use standard levels — `debug` for operational detail, `info` for key events, `warning` for degraded conditions (fallback triggered, API down), `error`/`exception` for failures.
+Import and use: `from log import logger`. Use standard levels — `debug` for operational detail and intermediate retry attempts, `info` for key lifecycle events, `warning` for final failures and degraded conditions, `error`/`exception` for unrecoverable failures. Intermediate retry attempts should be `debug`, not `warning`; only the final failure after all retries exhausted should be `warning` or `error`.
 
 ### Module Header Style
 

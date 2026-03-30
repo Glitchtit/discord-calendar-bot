@@ -629,7 +629,7 @@ async def post_todays_happenings(bot, include_greeting: bool = False):
                 except asyncio.TimeoutError:
                     retry_count += 1
                     if retry_count <= max_retries:
-                        logger.warning(f"Greeting generation timed out, retrying ({retry_count}/{max_retries})")
+                        logger.debug(f"Greeting generation timed out, retrying ({retry_count}/{max_retries})")
                         await asyncio.sleep(2)
                     else:
                         logger.error("Max retries reached for greeting generation")
@@ -1062,28 +1062,31 @@ def cleanup_stale_pending_changes():
 # ║ Utility function to help debug the verification system            ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def debug_verification_system():
-    """Print debug information about the verification system."""
+    """Log debug information about the verification system."""
     status = get_pending_changes_status()
     current_time = datetime.now()
     
-    print(f"\n=== Verification System Debug Info ===")
-    print(f"Current time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Verification delay: {_VERIFICATION_DELAY.total_seconds()} seconds")
-    print(f"Total pending changes: {status['total_pending']}")
+    lines = [
+        "=== Verification System Debug Info ===",
+        f"Current time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Verification delay: {_VERIFICATION_DELAY.total_seconds()} seconds",
+        f"Total pending changes: {status['total_pending']}",
+    ]
     
     if status['tags']:
         for tag, info in status['tags'].items():
             queued_time = datetime.fromisoformat(info['timestamp'])
-            print(f"\nTag: {tag}")
-            print(f"  Added: {info['added_count']}, Removed: {info['removed_count']}, Changed: {info.get('changed_count', 0)}")
-            print(f"  Queued at: {queued_time.strftime('%H:%M:%S')}")
-            print(f"  Elapsed: {info['time_elapsed_seconds']:.1f}s")
-            print(f"  Remaining: {info['time_remaining_seconds']:.1f}s")
-            print(f"  Ready: {info['ready_for_verification']}")
-            print(f"  Attempts: {info['verification_attempts']}")
+            lines.append(f"Tag: {tag}")
+            lines.append(f"  Added: {info['added_count']}, Removed: {info['removed_count']}, Changed: {info.get('changed_count', 0)}")
+            lines.append(f"  Queued at: {queued_time.strftime('%H:%M:%S')}")
+            lines.append(f"  Elapsed: {info['time_elapsed_seconds']:.1f}s")
+            lines.append(f"  Remaining: {info['time_remaining_seconds']:.1f}s")
+            lines.append(f"  Ready: {info['ready_for_verification']}")
+            lines.append(f"  Attempts: {info['verification_attempts']}")
     else:
-        print("No pending changes")
-    print("=" * 40)
+        lines.append("No pending changes")
+
+    logger.debug("\n".join(lines))
 
 
 # ╔════════════════════════════════════════════════════════════════════╗

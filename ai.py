@@ -240,7 +240,7 @@ def generate_image(greeting: str, persona: str, max_retries: int = 3) -> str | N
                     break
                 except requests.exceptions.Timeout:
                     if dl_attempt < download_attempts - 1:
-                        logger.warning(f"Download timeout, retrying ({dl_attempt+1}/{download_attempts})...")
+                        logger.debug(f"Download timeout, retrying ({dl_attempt+1}/{download_attempts})...")
                         time.sleep(2)
                     else:
                         raise

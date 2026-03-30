@@ -28,3 +28,6 @@ USER_TAG_MAPPING = os.getenv("USER_TAG_MAPPING", "")
 
 # Toggle for AI features (greetings, images) - defaults to true
 AI_TOGGLE = os.getenv("AI_TOGGLE", "true").lower() == "true"
+
+# Log format: "text" (default, colored console + plain file) or "json" (JSON-lines file output)
+LOG_FORMAT = os.getenv("LOG_FORMAT", "text").lower()

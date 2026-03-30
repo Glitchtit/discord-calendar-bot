@@ -87,7 +87,7 @@ async def on_ready():
         except discord.errors.HTTPException as e:
             # Handle Discord API issues with exponential backoff
             retry_delay = 2 ** attempt + random.uniform(0, 1)
-            logger.warning(f"Discord API error during initialization (attempt {attempt}/{max_retries}): {e}")
+            logger.debug(f"Discord API error during initialization (attempt {attempt}/{max_retries}): {e}")
             
             if attempt < max_retries:
                 logger.info(f"Retrying initialization in {retry_delay:.2f} seconds...")
@@ -818,7 +818,7 @@ async def resolve_tag_mappings():
                         logger.debug(f"User ID {user_id} not found in guild {guild.name}")
                         break
                     except Exception as e:
-                        logger.warning(f"Error fetching member {user_id} (attempt {attempt+1}): {e}")
+                        logger.debug(f"Error fetching member {user_id} (attempt {attempt+1}): {e}")
                         await asyncio.sleep(1)
                 
                 # Process member if found

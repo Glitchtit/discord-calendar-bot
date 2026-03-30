@@ -397,7 +397,8 @@ Return ONLY the simplified title in the ORIGINAL language, nothing else."""
                 result = clean_words
                 
             return " ".join(result) if result else "Event"
-        except:
+        except Exception:
+            logger.debug("Title shortening failed for '%s', returning default", title)
             return "Event"
 
     def _detect_event_type_fallback(self, title: str) -> Optional[str]:

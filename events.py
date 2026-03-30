@@ -399,7 +399,7 @@ def retry_api_call(func, *args, max_retries=3, **kwargs):
                 
             # For rate limits and server errors, retry with backoff (max 30 seconds)
             backoff = min((2 ** attempt) + random.uniform(0, 1), 30.0)
-            logger.warning(f"Retryable Google API error ({status_code}), attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
+            logger.debug(f"Retryable Google API error ({status_code}), attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
             time.sleep(backoff)
             last_exception = e
             
@@ -409,7 +409,7 @@ def retry_api_call(func, *args, max_retries=3, **kwargs):
             # Cap backoff to 30 seconds to prevent excessive blocking
             if is_ssl_error(e):
                 backoff = min((2 ** attempt) + random.uniform(0, 1), 30.0)
-                logger.warning(f"SSL error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
+                logger.debug(f"SSL error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
                 time.sleep(backoff)
                 last_exception = e
             else:
@@ -419,7 +419,7 @@ def retry_api_call(func, *args, max_retries=3, **kwargs):
         except requests.exceptions.RequestException as e:
             # Network errors are retryable
             backoff = min((2 ** attempt) + random.uniform(0, 1), 30.0)
-            logger.warning(f"Network error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
+            logger.debug(f"Network error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
             time.sleep(backoff)
             last_exception = e
             
@@ -427,7 +427,7 @@ def retry_api_call(func, *args, max_retries=3, **kwargs):
             # HTTP protocol errors (corrupted chunked encoding, etc.) are retryable
             # These can occur when the server sends malformed response data
             backoff = min((2 ** attempt) + random.uniform(0, 1), 30.0)
-            logger.warning(f"HTTP protocol error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
+            logger.debug(f"HTTP protocol error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
             time.sleep(backoff)
             last_exception = e
             

@@ -1,5 +1,7 @@
+import gzip
 import logging
 import os
+import shutil
 import sys
 import platform
 import tempfile
@@ -9,7 +11,61 @@ from logging.handlers import TimedRotatingFileHandler, MemoryHandler
 from logging.handlers import QueueHandler, QueueListener
 import queue
 from colorlog import ColoredFormatter
-from environ import DEBUG
+from environ import DEBUG, LOG_FORMAT
+
+try:
+    from pythonjsonlogger import jsonlogger
+except ImportError:
+    jsonlogger = None
+
+
+class SizedTimedRotatingFileHandler(TimedRotatingFileHandler):
+    """Rotates at midnight AND when the file exceeds *max_bytes*.
+
+    Rotated files are gzip-compressed automatically (e.g. bot.log.2026-03-30.gz).
+    """
+
+    def __init__(self, filename, *, max_bytes: int = 0, **kwargs):
+        super().__init__(filename, **kwargs)
+        self.max_bytes = max_bytes
+        self.namer = self._gzip_namer
+        self.rotator = self._gzip_rotator
+
+    def shouldRollover(self, record):
+        if super().shouldRollover(record):
+            return True
+        if self.max_bytes > 0 and self.stream:
+            self.stream.seek(0, 2)
+            if self.stream.tell() + len(self.format(record)) >= self.max_bytes:
+                return True
+        return False
+
+    @staticmethod
+    def _gzip_namer(name: str) -> str:
+        return name + ".gz"
+
+    @staticmethod
+    def _gzip_rotator(source: str, dest: str):
+        with open(source, "rb") as f_in, gzip.open(dest, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out)
+        os.remove(source)
+
+    def getFilesToDelete(self):
+        """Override to locate .gz-compressed rotated files for cleanup."""
+        dir_name, base_name = os.path.split(self.baseFilename)
+        prefix = base_name + "."
+        result = []
+        for fn in os.listdir(dir_name):
+            if not fn.startswith(prefix):
+                continue
+            # Strip .gz for date-suffix matching
+            suffix = fn.removeprefix(prefix).removesuffix(".gz")
+            if self.extMatch.match(suffix):
+                result.append(os.path.join(dir_name, fn))
+        if len(result) < self.backupCount:
+            return []
+        result.sort()
+        return result[: len(result) - self.backupCount]
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📁 Log Directory & File Setup                                     ║
@@ -40,8 +96,8 @@ def setup_log_directory():
                 active_log_file = LOG_FILE
                 log_dir_used = LOG_DIR
                 return True
-        except Exception:
-            pass  # Will try fallbacks
+        except Exception as e:
+            sys.stderr.write(f"log: cannot create {LOG_DIR}: {e}\n")
     
     # Try fallback locations
     for fallback in FALLBACK_DIRS:
@@ -53,13 +109,13 @@ def setup_log_directory():
             if os.access(fallback, os.W_OK):
                 active_log_file = test_file
                 log_dir_used = fallback
-                print(f"Using fallback log directory: {fallback}")
+                sys.stderr.write(f"log: using fallback log directory: {fallback}\n")
                 return True
         except Exception:
             continue
     
     # Could not find any valid directory
-    print("WARNING: Could not find a writable log directory. Logging to file disabled.")
+    sys.stderr.write("WARNING: Could not find a writable log directory. Logging to file disabled.\n")
     return False
 
 has_valid_log_dir = setup_log_directory()
@@ -84,11 +140,20 @@ else:
     handlers = []
     
     try:
-        # File formatter: plain text logs with timestamps and extended data
-        file_formatter = logging.Formatter(
-            "[%(asctime)s] %(levelname)s in %(name)s [%(filename)s:%(lineno)d]: %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
-        )
+        # File formatter: plain text or JSON depending on LOG_FORMAT env var
+        if LOG_FORMAT == "json" and jsonlogger is not None:
+            file_formatter = jsonlogger.JsonFormatter(
+                "%(asctime)s %(levelname)s %(name)s %(filename)s %(lineno)d %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%S",
+                rename_fields={"asctime": "timestamp", "levelname": "level", "lineno": "line"},
+            )
+        else:
+            if LOG_FORMAT == "json" and jsonlogger is None:
+                sys.stderr.write("log: LOG_FORMAT=json but python-json-logger not installed, falling back to text\n")
+            file_formatter = logging.Formatter(
+                "[%(asctime)s] %(levelname)s in %(name)s [%(filename)s:%(lineno)d]: %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S"
+            )
 
         # Console formatter: colorful output for terminal debugging
         console_formatter = ColoredFormatter(
@@ -103,21 +168,18 @@ else:
             }
         )
 
-        # File handler: logs everything to persistent storage with better rotation
+        # File handler: logs everything to persistent storage with daily + size rotation
         if has_valid_log_dir:
             try:
-                # Use better rotation: daily + size-based with more history kept
-                file_handler = TimedRotatingFileHandler(
+                file_handler = SizedTimedRotatingFileHandler(
                     active_log_file,
-                    when="midnight",  # Rotate at midnight 
-                    interval=1,       # One rotation per day
-                    backupCount=7,    # Keep a week of logs
-                    encoding="utf-8", # Prevent encoding issues
-                    delay=False       # Create the file immediately
+                    when="midnight",
+                    interval=1,
+                    backupCount=7,
+                    encoding="utf-8",
+                    delay=False,
+                    max_bytes=10 * 1024 * 1024,  # 10 MB
                 )
-                
-                # Add size-based restrictions (10MB max)
-                file_handler.maxBytes = 10 * 1024 * 1024
                 
                 file_handler.setFormatter(file_formatter)
                 file_handler.setLevel(logging.DEBUG if DEBUG else logging.INFO)
@@ -131,13 +193,11 @@ else:
                 )
                 handlers.append(memory_handler)
                 
-                # Log startup information
-                print(f"Logging to: {active_log_file}")
+                sys.stderr.write(f"log: logging to {active_log_file}\n")
             except Exception as e:
-                print(f"Error setting up file handler: {e}")
-                # Continue with console logging only
+                sys.stderr.write(f"log: error setting up file handler: {e}\n")
         else:
-            print("File logging disabled due to permission issues")
+            sys.stderr.write("log: file logging disabled (no writable directory)\n")
 
         # Console handler: outputs to stdout for quick feedback
         try:
@@ -146,7 +206,7 @@ else:
             console_handler.setLevel(logging.DEBUG if DEBUG else logging.INFO)
             handlers.append(console_handler)
         except Exception as e:
-            print(f"Error setting up console handler: {e}")
+            sys.stderr.write(f"log: error setting up console handler: {e}\n")
             # If even console logging fails, add a basic handler
             if not handlers:  # No handlers configured yet
                 console_handler = logging.StreamHandler(sys.stdout)
@@ -173,9 +233,9 @@ else:
                 if hasattr(logger, '_listener'):
                     logger._listener.stop()
                     
-                print("Logging shutdown complete.")
-            except:
-                pass
+                sys.stderr.write("Logging shutdown complete.\n")
+            except Exception as exc:
+                sys.stderr.write(f"log: error during shutdown: {exc}\n")
                 
         atexit.register(cleanup)
         
@@ -188,7 +248,7 @@ else:
             logger.warning("File logging disabled - using console only")
             
     except Exception as e:
-        print(f"Critical error initializing logger: {e}")
+        sys.stderr.write(f"log: critical error initializing logger: {e}\n")
         # Fall back to basic logging
         basic_handler = logging.StreamHandler(sys.stdout)
         basic_formatter = logging.Formatter('%(levelname)s: %(message)s')

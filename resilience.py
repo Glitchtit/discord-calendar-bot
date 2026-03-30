@@ -226,8 +226,8 @@ async def async_retry_with_backoff(
             raise
         except Exception as e:
             backoff = min((2 ** attempt) * initial_delay + random.uniform(0, 1), max_delay)
-            logger.warning(f"Async retry {attempt + 1}/{max_retries} failed: {e}")
-            logger.info(f"Retrying in {backoff:.2f} seconds...")
+            logger.debug(f"Async retry {attempt + 1}/{max_retries} failed: {e}")
+            logger.debug(f"Retrying in {backoff:.2f} seconds...")
             last_error = e
             await asyncio.sleep(backoff)
 
