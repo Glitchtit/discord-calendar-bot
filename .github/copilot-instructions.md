@@ -31,9 +31,10 @@ This is a Discord bot (discord.py 2.3.2) that turns Google Calendar and ICS feed
 - **main.py** — Entry point. Environment validation, graceful shutdown with signal handlers, watchdog thread, and startup retry logic with exponential backoff (max 3 attempts).
 - **resilience.py** — Shared `CircuitBreaker` class and `CalendarCircuitBreakers` registry, plus `retry_with_backoff()` and `async_retry_with_backoff()` helpers using tenacity. Used by ai.py, events.py, and commands.py.
 - **bot.py** — Bot instance creation and configuration.
-- **commands.py** — Discord slash commands registered via `@bot.tree.command()`. ~12 commands including `/health`, `/calendars`, `/reset_health`.
+- **commands.py** — Discord slash commands registered via `@bot.tree.command()`. ~14 commands including `/health`, `/calendars`, `/reset_health`, `/search`, `/remind`. Uses `send_embed()` for channel messages and paginated views via `views.py`.
+- **views.py** — Interactive Discord UI components: `PaginatedEmbedView` (◀/▶ navigation + 📋 Details button), page builders (`build_event_pages`, `build_week_pages`), change notification formatting (`format_change_lines`), and video call link extraction.
 - **events.py** — Calendar integration (largest module). Fetches from Google Calendar API (service account) and ICS feeds. Handles ICS preprocessing for malformed data, SSL error detection, and per-calendar circuit breakers.
-- **tasks.py** — Background `@tasks.loop()` tasks: daily/weekly digests (Mon 08:00, daily 08:01 UTC), change detection every 5 minutes with verification queue (6-min delay, up to 3 verification attempts). Tracks task health via `_task_last_success` and `_task_error_counts`.
+- **tasks.py** — Background `@tasks.loop()` tasks: daily/weekly digests (Mon 08:00, daily 08:01 UTC), change detection every 5 minutes with verification queue (6-min delay, up to 3 verification attempts), personal DM reminders every minute. Tracks task health via `_task_last_success` and `_task_error_counts`.
 - **ai.py** — OpenAI integration (GPT-4o for greetings, DALL·E-3 for images). Has its own circuit breaker (opens after 3 errors, resets after 5 min). Falls back to `generate_fallback_greeting()` when unavailable.
 - **ai_title_parser.py** — Simplifies event titles to ≤5 words using OpenAI with regex fallback. Handles Swedish/English course codes, room numbers, group IDs. Uses `@lru_cache`.
 - **calendar_health.py** — Unified health reporting. Status levels: healthy (≥90%), degraded (70–89%), unhealthy (<70%).
@@ -55,27 +56,22 @@ All persistent data lives under `/data/` (Docker volume-mounted):
 - `/data/events.json` — Event fingerprints for change detection
 - `/data/logs/` — Rotating log files
 - `/data/art/` — Generated DALL·E images
+- `/data/reminders.json` — User DM reminder subscriptions
 
 ## Key Patterns
 
 ### Circuit Breaker Pattern
 
-Used in two places with different configurations:
-- **OpenAI** (`ai.py`): Global state via module-level variables (`_circuit_open`, `_error_count`). Opens after 3 errors, auto-resets after 5 minutes.
-- **Calendar sources** (`events.py`): Per-calendar tracking via `_failed_calendars` dict. Exponential backoff from 60s to 3600s max. `_MAX_FAILURE_COUNT = 5`.
+Both `CircuitBreaker` (single-service, e.g. OpenAI: opens after N errors, auto-resets) and `CalendarCircuitBreakers` (per-key instances with exponential backoff 60s→3600s) are in `resilience.py`.
 
-When adding new external service integrations, follow this same circuit breaker pattern.
+When adding new external service integrations, follow the same circuit breaker pattern.
 
 ### Retry with Exponential Backoff and Jitter
 
-Consistent pattern across all external calls:
+Use `retry_with_backoff` / `async_retry_with_backoff` from `resilience.py`:
 ```python
-for attempt in range(max_retries):
-    try:
-        return operation()
-    except RetryableError:
-        backoff = (2 ** attempt) + random.uniform(0, 1)
-        await asyncio.sleep(backoff)
+from resilience import async_retry_with_backoff
+result = await async_retry_with_backoff(operation, max_retries=3)
 ```
 
 Retryable: SSL errors, network timeouts, rate limits (429).

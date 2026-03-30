@@ -23,11 +23,16 @@ from commands import (
     autocomplete_tag,
     autocomplete_range,
     autocomplete_agenda_target,
-    autocomplete_agenda_input
+    autocomplete_agenda_input,
+    search_events,
 )
-from tasks import initialize_event_snapshots, start_all_tasks, post_todays_happenings
+from tasks import (
+    initialize_event_snapshots, start_all_tasks, post_todays_happenings,
+    set_reminder, remove_reminder, load_reminders,
+)
 from utils import get_today, get_monday_of_week, resolve_input_to_tags
 from environ import AI_TOGGLE
+from views import PaginatedEmbedView
 
 # ╔═════════════════════════════════════════════════════════════╗
 # ║ 🤖 Discord Bot Initialization                               ║
@@ -196,6 +201,88 @@ async def agenda_command(interaction: discord.Interaction, input: str, target: s
     except Exception as e:
         logger.exception(f"Error in /agenda command: {e}")
         await interaction.followup.send("An error occurred while processing the agenda.")
+
+
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ 🔎 /search                                                   ║
+# ║ Search upcoming events by keyword                            ║
+# ╚═════════════════════════════════════════════════════════════╝
+@bot.tree.command(name="search", description="Search upcoming events by keyword")
+@app_commands.describe(
+    query="Text to search for in event titles and descriptions",
+    days_ahead="How many days ahead to search (default 30)",
+    tag="Filter to a specific calendar tag",
+)
+@app_commands.autocomplete(tag=autocomplete_tag)
+async def search_command(
+    interaction: discord.Interaction,
+    query: str,
+    days_ahead: int = 30,
+    tag: str = "",
+):
+    try:
+        await interaction.response.defer()
+        pages, epp = await search_events(query, days_ahead, tag or None)
+
+        view = PaginatedEmbedView(pages, epp)
+        await interaction.followup.send(embed=pages[0], view=view)
+        msg = await interaction.original_response()
+        view.message = msg
+    except Exception as e:
+        logger.exception(f"Error in /search command: {e}")
+        await interaction.followup.send("An error occurred while searching events.")
+
+
+# ╔═════════════════════════════════════════════════════════════╗
+# ║ 🔔 /remind                                                   ║
+# ║ Subscribe to personal DM reminders before events             ║
+# ╚═════════════════════════════════════════════════════════════╝
+@bot.tree.command(name="remind", description="Set personal DM reminders before your events")
+@app_commands.describe(
+    action="Enable, disable, or check your reminder status",
+    minutes_before="Minutes before an event to receive the reminder (default 15)",
+    tag="Only remind for events with this tag (leave empty for all)",
+)
+@app_commands.choices(action=[
+    app_commands.Choice(name="on", value="on"),
+    app_commands.Choice(name="off", value="off"),
+    app_commands.Choice(name="status", value="status"),
+])
+@app_commands.autocomplete(tag=autocomplete_tag)
+async def remind_command(
+    interaction: discord.Interaction,
+    action: str = "on",
+    minutes_before: int = 15,
+    tag: str = "",
+):
+    try:
+        uid = interaction.user.id
+        if action == "off":
+            remove_reminder(uid)
+            await interaction.response.send_message("🔕 Reminders disabled.", ephemeral=True)
+        elif action == "status":
+            data = load_reminders()
+            entry = data.get(str(uid))
+            if not entry or not entry.get("enabled"):
+                await interaction.response.send_message("You have no active reminders.", ephemeral=True)
+            else:
+                mins = entry.get("minutes_before", 15)
+                tags = entry.get("tags") or ["all"]
+                await interaction.response.send_message(
+                    f"🔔 Reminders **on** · {mins} min before · tags: {', '.join(tags)}",
+                    ephemeral=True,
+                )
+        else:
+            tags_list = [tag] if tag else []
+            entry = set_reminder(uid, max(1, min(minutes_before, 120)), tags_list)
+            tag_label = tag or "all tags"
+            await interaction.response.send_message(
+                f"🔔 Reminders set! You'll get a DM **{entry['minutes_before']} min** before events ({tag_label}).",
+                ephemeral=True,
+            )
+    except Exception as e:
+        logger.exception(f"Error in /remind command: {e}")
+        await interaction.response.send_message("An error occurred.", ephemeral=True)
 
 
 # ╔═════════════════════════════════════════════════════════════╗

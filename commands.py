@@ -17,6 +17,11 @@ from events import (
 from log import logger
 from utils import format_event, resolve_input_to_tags
 from resilience import async_retry_with_backoff
+from views import (
+    build_event_pages,
+    build_week_pages,
+    PaginatedEmbedView,
+)
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -57,7 +62,7 @@ def check_channel_permissions(channel, bot_member):
 # ║ 📤 send_embed                                                      ║
 # ║ Sends an embed to the announcement channel, optionally with image ║
 # ╚════════════════════════════════════════════════════════════════════╝
-async def send_embed(bot, embed: discord.Embed = None, title: str = "", description: str = "", color: int = 5814783, image_path: str | None = None):
+async def send_embed(bot, embed: discord.Embed = None, title: str = "", description: str = "", color: int = 5814783, image_path: str | None = None, view: discord.ui.View | None = None):
     try:
         if isinstance(embed, str):
             logger.warning("send_embed() received a string instead of an Embed. Converting values assuming misuse.")
@@ -156,13 +161,18 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
                 embed.set_image(url="attachment://image.png")
             except Exception as e:
                 logger.warning(f"Failed to load image from {image_path}: {e}")
-                # Continue without the image
         
         # Send the message with retry
+        kwargs: dict = {"embed": embed}
         if file:
-            await _retry_discord_operation(lambda: channel.send(embed=embed, file=file))
-        else:
-            await _retry_discord_operation(lambda: channel.send(embed=embed))
+            kwargs["file"] = file
+        if view is not None:
+            kwargs["view"] = view
+        msg = await _retry_discord_operation(lambda: channel.send(**kwargs))
+
+        # Store message reference so View can disable buttons on timeout
+        if view is not None and hasattr(view, "message") and msg:
+            view.message = msg
             
     except Exception as e:
         logger.exception(f"Error in send_embed: {e}")
@@ -185,97 +195,30 @@ async def post_tagged_events(bot, tag: str, day: datetime.date) -> bool:
         
         for meta in calendars:
             try:
-                # Get events from the calendar
                 events = get_events(meta, day, day)
                 all_events.extend([(meta["name"], e) for e in events])
             except Exception as e:
                 logger.exception(f"Error getting events for {meta['name']}: {e}")
-                # Continue with other calendars even if one fails
 
-        # Filter events to make sure they're actually on the requested day
         for source_name, event in all_events:
             start_str = event["start"].get("dateTime", event["start"].get("date"))
-            # Handle timezone for datetime events and simple dates for all-day events
             dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
             event_date = dt.date()
-            
-            # Only include events that actually fall on the requested day
             if event_date == day:
                 events_by_source[source_name].append(event)
 
         if not events_by_source:
             logger.debug(f"Skipping {tag} — no events for {day}")
             return False
-            
-        embed = discord.Embed(
+
+        pages, epp = build_event_pages(
+            events_by_source,
             title=f"🗓️ Herald's Scroll — {get_name_for_tag(tag)}",
             description=f"Events for **{day.strftime('%A, %B %d')}**",
-            color=get_color_for_tag(tag)
+            color=get_color_for_tag(tag),
         )
-
-        # Check if we have too many calendars (Discord limits to 25 fields per embed)
-        if len(events_by_source) > 20:  # Leave buffer for other fields
-            logger.warning(f"Too many calendar sources ({len(events_by_source)}) for a single embed. Sending multiple embeds.")
-            
-            # Send the main embed header first
-            await send_embed(bot, embed=embed)
-            
-            # Then send each calendar as its own embed
-            for i, (source_name, events) in enumerate(sorted(events_by_source.items())):
-                if not events:
-                    continue
-                    
-                source_embed = discord.Embed(
-                    title=f"📖 {source_name}",
-                    color=get_color_for_tag(tag)
-                )
-                
-                # Format events with a character limit
-                formatted_events = []
-                total_length = 0
-                MAX_EMBED_VALUE_LENGTH = 900  # Discord limit is 1024, leave buffer
-                
-                for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
-                    event_text = f" {format_event(e)}"
-                    if total_length + len(event_text) > MAX_EMBED_VALUE_LENGTH:
-                        formatted_events.append("... and more events (truncated)")
-                        break
-                    formatted_events.append(event_text)
-                    total_length += len(event_text)
-                
-                source_embed.description = "\n".join(formatted_events)
-                source_embed.set_footer(text=f"Calendar {i+1}/{len(events_by_source)}")
-                
-                await send_embed(bot, embed=source_embed)
-            
-            return True
-        
-        # Standard flow - add all events to a single embed
-        for source_name, events in sorted(events_by_source.items()):
-            if not events:
-                continue
-                
-            # Format events with a character limit to avoid Discord's field value limit
-            formatted_events = []
-            total_length = 0
-            MAX_FIELD_LENGTH = 900  # Discord limit is 1024, leave buffer
-            
-            for e in sorted(events, key=lambda e: e["start"].get("dateTime", e["start"].get("date"))):
-                event_text = f" {format_event(e)}"
-                if total_length + len(event_text) > MAX_FIELD_LENGTH:
-                    formatted_events.append("... and more events (truncated)")
-                    break
-                formatted_events.append(event_text)
-                total_length += len(event_text)
-
-            embed.add_field(
-                name=f"📖 {source_name}",
-                value="\n".join(formatted_events) + "\n\u200b",
-                inline=False
-            )
-
-        embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
-        await send_embed(bot, embed=embed)
+        view = PaginatedEmbedView(pages, epp)
+        await send_embed(bot, embed=pages[0], view=view)
         return True
         
     except Exception as e:
@@ -309,31 +252,15 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
             dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
             events_by_day[dt.date()].append(e)
 
-        embed = discord.Embed(
+        pages, epp = build_week_pages(
+            events_by_day,
             title=f"📜 Herald’s Week — {get_name_for_tag(tag)}",
             description=f"Week of **{monday.strftime('%B %d')}**",
-            color=get_color_for_tag(tag)
+            color=get_color_for_tag(tag),
+            monday=monday,
         )
-
-        for i in range(7):
-            day = monday + timedelta(days=i)
-            day_events = events_by_day.get(day, [])
-            if not day_events:
-                continue
-
-            formatted_events = [
-                f" {format_event(e)}"
-                for e in sorted(day_events, key=lambda e: e["start"].get("dateTime", e["start"].get("date")))
-            ]
-
-            embed.add_field(
-                name=f"📅 {day.strftime('%A')}",
-                value="\n".join(formatted_events) + "\n\u200b",
-                inline=False
-            )
-
-        embed.set_footer(text=f"Posted at {datetime.now().strftime('%H:%M %p')}")
-        await send_embed(bot, embed=embed)
+        view = PaginatedEmbedView(pages, epp)
+        await send_embed(bot, embed=pages[0], view=view)
     except Exception as e:
         logger.exception(f"Error in post_tagged_week for tag {tag} starting {monday}: {e}")
 
@@ -375,3 +302,65 @@ async def autocomplete_agenda_target(interaction: discord.Interaction, current: 
         app_commands.Choice(name=s, value=s)
         for s in suggestions if current.lower() in s.lower()
     ][:25]
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🔎 search_events                                                   ║
+# ║ Search calendar events by keyword across titles and descriptions  ║
+# ╚════════════════════════════════════════════════════════════════════╝
+async def search_events(
+    query: str,
+    days_ahead: int = 30,
+    tag: str | None = None,
+) -> tuple[list[discord.Embed], list[list[dict]]]:
+    """Search upcoming events matching *query*. Returns paginated pages."""
+    from utils import get_today, parse_date_string, get_local_timezone
+
+    today = get_today()
+    end = today + timedelta(days=days_ahead)
+    matches: list[dict] = []
+    q = query.lower()
+
+    tags = [tag] if tag and tag in GROUPED_CALENDARS else list(GROUPED_CALENDARS.keys())
+
+    for t in tags:
+        for meta in GROUPED_CALENDARS.get(t, []):
+            try:
+                events = await asyncio.to_thread(get_events, meta, today, end)
+                for ev in events:
+                    title = (ev.get("summary") or "").lower()
+                    orig = (ev.get("original_summary") or "").lower()
+                    desc = (ev.get("description") or "").lower()
+                    if q in title or q in orig or q in desc:
+                        ev["_search_tag"] = t
+                        matches.append(ev)
+            except Exception as e:
+                logger.debug(f"Search: error fetching {meta.get('name')}: {e}")
+
+    matches.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
+
+    if not matches:
+        embed = discord.Embed(
+            title=f"🔎 No results for \"{query}\"",
+            description=f"No events matching **{query}** in the next {days_ahead} days.",
+            color=0x95A5A6,
+        )
+        return [embed], [[]]
+
+    # Group by date for a clean display
+    local_tz = get_local_timezone()
+    events_by_day: dict = defaultdict(list)
+    for ev in matches:
+        start_str = ev["start"].get("dateTime", ev["start"].get("date", ""))
+        dt = parse_date_string(start_str, local_tz)
+        if dt:
+            events_by_day[dt.date()].append(ev)
+
+    pages, epp = build_week_pages(
+        events_by_day,
+        title=f"🔎 Results for \"{query}\"",
+        description=f"{len(matches)} event{'s' if len(matches) != 1 else ''} in the next {days_ahead} days",
+        color=0x3498DB,
+        monday=None,
+    )
+    return pages, epp

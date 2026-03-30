@@ -28,6 +28,7 @@ from events import (
     compute_event_fingerprint,
     compute_event_core_fingerprint
 )
+from views import format_change_lines
 from log import logger
 from ai import generate_greeting, generate_image
 from environ import AI_TOGGLE
@@ -160,6 +161,9 @@ def start_all_tasks(bot):
         # Start health monitoring tasks
         monitor_task_health.start(bot)
         calendar_health_monitor.start(bot)
+
+        # Start reminder system
+        check_reminders.start(bot)
         
         logger.info("All scheduled tasks started successfully")
     except Exception as e:
@@ -171,6 +175,7 @@ def start_all_tasks(bot):
         try_start_task(verification_watchdog, bot)
         try_start_task(monitor_task_health, bot)
         try_start_task(calendar_health_monitor, bot)
+        try_start_task(check_reminders, bot)
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔄 try_start_task                                                  ║
@@ -874,22 +879,15 @@ async def process_single_verification(bot, tag: str):
         # If changes are verified, post them
         if verified_added or verified_removed or verified_changed:
             try:
-                lines = []
-                if verified_added:
-                    lines.append("**📥 Added Events This Week:**")
-                    lines += [f"➕ {format_event(e)}" for e in verified_added]
-                if verified_removed:
-                    lines.append("**📤 Removed Events This Week:**")
-                    lines += [f"➖ {format_event(e)}" for e in verified_removed]
-                if verified_changed:
-                    lines.append("**🔄 Changed Events This Week:**")
-                    lines += [f"🔄 {format_event(new_event)}" for old_event, new_event in verified_changed]
+                description, color_hint = format_change_lines(
+                    verified_added, verified_removed, verified_changed
+                )
 
                 await send_embed(
                     bot,
                     title=f"📣 Event Changes – {get_name_for_tag(tag)}",
-                    description="\n".join(lines),
-                    color=get_color_for_tag(tag)
+                    description=description,
+                    color=color_hint,
                 )
                 logger.info(f"Posted verified changes for '{tag}': {len(verified_added)} added, {len(verified_removed)} removed, {len(verified_changed)} changed")
                 
@@ -1086,3 +1084,171 @@ def debug_verification_system():
     else:
         print("No pending changes")
     print("=" * 40)
+
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ 🔔 Personal reminder system                                        ║
+# ║ DM users before their events start                                ║
+# ╚════════════════════════════════════════════════════════════════════╝
+
+import json
+import os
+
+_REMINDERS_PATH = os.path.join(os.getenv("DATA_DIR", "/data"), "reminders.json")
+_REMINDERS_FALLBACK = os.path.join(os.path.dirname(__file__), "data", "reminders.json")
+_sent_reminders: set[str] = set()  # "user_id:event_id:date" dedup keys
+
+
+def _reminders_file() -> str:
+    """Return writable reminders path, trying primary then fallback."""
+    for path in (_REMINDERS_PATH, _REMINDERS_FALLBACK):
+        parent = os.path.dirname(path)
+        if parent and os.path.isdir(parent) and os.access(parent, os.W_OK):
+            return path
+    return _REMINDERS_FALLBACK
+
+
+def load_reminders() -> dict:
+    """Load reminder subscriptions from disk. Returns {user_id_str: {...}}."""
+    path = _reminders_file()
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.warning(f"Failed to load reminders from {path}: {e}")
+        return {}
+
+
+def save_reminders(data: dict):
+    """Persist reminder subscriptions to disk."""
+    path = _reminders_file()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to save reminders to {path}: {e}")
+
+
+def set_reminder(user_id: int, minutes_before: int = 15, tags: list[str] | None = None) -> dict:
+    """Subscribe *user_id* to DM reminders. Returns the saved entry."""
+    data = load_reminders()
+    entry = {
+        "minutes_before": minutes_before,
+        "tags": tags or [],
+        "enabled": True,
+    }
+    data[str(user_id)] = entry
+    save_reminders(data)
+    return entry
+
+
+def remove_reminder(user_id: int):
+    """Unsubscribe *user_id* from reminders."""
+    data = load_reminders()
+    data.pop(str(user_id), None)
+    save_reminders(data)
+
+
+@tasks.loop(minutes=1)
+async def check_reminders(bot):
+    """Send DM reminders to subscribed users for upcoming events."""
+    task_name = "check_reminders"
+
+    async with TaskLock(task_name) as acquired:
+        if not acquired:
+            return
+
+        try:
+            reminders = load_reminders()
+            if not reminders:
+                return
+
+            now = datetime.now(tz=get_local_timezone())
+            today = now.date()
+
+            for user_id_str, prefs in reminders.items():
+                if not prefs.get("enabled", True):
+                    continue
+
+                minutes_before = prefs.get("minutes_before", 15)
+                sub_tags = prefs.get("tags") or list(GROUPED_CALENDARS.keys())
+
+                for tag in sub_tags:
+                    if tag not in GROUPED_CALENDARS:
+                        continue
+
+                    for meta in GROUPED_CALENDARS[tag]:
+                        try:
+                            events = await asyncio.wait_for(
+                                asyncio.to_thread(get_events, meta, today, today),
+                                timeout=30,
+                            )
+                        except Exception:
+                            continue
+
+                        for ev in (events or []):
+                            start_str = ev.get("start", {}).get("dateTime", "")
+                            if not start_str or "T" not in start_str:
+                                continue
+
+                            from utils import parse_date_string
+                            ev_start = parse_date_string(start_str, get_local_timezone())
+                            if ev_start is None:
+                                continue
+
+                            delta = (ev_start - now).total_seconds() / 60
+                            if 0 < delta <= minutes_before:
+                                dedup = f"{user_id_str}:{ev.get('id', '')}:{today}"
+                                if dedup in _sent_reminders:
+                                    continue
+                                _sent_reminders.add(dedup)
+
+                                await _send_reminder_dm(
+                                    bot, int(user_id_str), ev, int(delta)
+                                )
+
+            # Prune old dedup keys daily
+            today_str = str(today)
+            _sent_reminders.difference_update(
+                {k for k in _sent_reminders if not k.endswith(today_str)}
+            )
+
+            update_task_health(task_name, True)
+        except Exception as e:
+            logger.exception(f"Error in {task_name}: {e}")
+            update_task_health(task_name, False)
+
+
+async def _send_reminder_dm(bot, user_id: int, event: dict, minutes_left: int):
+    """Send a DM embed to *user_id* about an upcoming event."""
+    try:
+        user = bot.get_user(user_id) or await bot.fetch_user(user_id)
+        if user is None:
+            return
+
+        title = event.get("summary", "Untitled")
+        location = event.get("location", "")
+
+        import discord
+        embed = discord.Embed(
+            title=f"🔔 Reminder: {title}",
+            description=f"Starting in **{minutes_left} minute{'s' if minutes_left != 1 else ''}**",
+            color=0x3498DB,
+        )
+        if location:
+            embed.add_field(name="📍 Location", value=location, inline=False)
+
+        desc = event.get("description", "") or ""
+        from views import extract_video_links
+        links = extract_video_links(desc)
+        if links:
+            link_text = "\n".join(f"[{label}]({url})" for label, url in links)
+            embed.add_field(name="🔗 Join", value=link_text, inline=False)
+
+        await user.send(embed=embed)
+        logger.debug(f"Sent reminder DM to {user_id} for '{title}'")
+    except Exception as e:
+        logger.debug(f"Could not DM user {user_id}: {e}")
