@@ -6,7 +6,7 @@ google-auth-oauthlib==1.2.0
 packaging>=24.0          # Required by google-api-core
 python-dateutil==2.9.0.post0
 ics==0.7.2
-requests==2.31.0
+requests==2.34.2      # >=2.33.0 closes CVE-2024-35195, CVE-2024-47081, CVE-2026-25645
 rich==13.7.1
 colorlog==6.8.2
 discord.py==2.3.2
@@ -20,4 +20,4 @@ aiohttp==3.9.1         # Async HTTP client with enhanced stability
 python-json-logger==2.0.7  # Optional JSON-lines log format (LOG_FORMAT=json)
 
 # Testing
-pytest==8.1.1
+pytest==9.0.3         # >=9.0.3 closes CVE-2025-71176
