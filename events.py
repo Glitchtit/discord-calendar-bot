@@ -507,6 +507,29 @@ def fetch_google_calendar_metadata(calendar_id: str) -> Dict[str, Any]:
         _calendar_metadata_cache[cache_key] = result
         return result
     
+# Browser-like headers shared by the ICS validation probe and the real content
+# fetch. Cloudflare-fronted hosts (e.g. inschool.fi/Wilma) challenge the default
+# python-requests User-Agent, so both paths must look identical to the server.
+_ICS_REQUEST_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (compatible; Calendar-Bot/1.0)',
+    'Accept': 'text/calendar, text/plain, */*',
+    'Accept-Encoding': 'identity',
+}
+
+
+def _derive_ics_name_from_url(url: str) -> str:
+    """Derive a human-friendly calendar name from an ICS URL's last path segment."""
+    parts = url.split("?")[0].split("/") if "?" in url else url.split("/")
+    name = next((part for part in reversed(parts) if part), "ICS Calendar")
+    if "%" in name:
+        try:
+            from urllib.parse import unquote
+            name = unquote(name)
+        except Exception:
+            pass
+    return name
+
+
 def fetch_ics_calendar_metadata(url: str) -> Dict[str, Any]:
     """Fetch ICS Calendar metadata with enhanced validation and error handling."""
     # Check cache first
@@ -537,73 +560,46 @@ def fetch_ics_calendar_metadata(url: str) -> Dict[str, Any]:
             return cached_result
     
     try:
-        # Try HEAD request first for efficiency
-        try:
-            response = requests.head(url, timeout=10, allow_redirects=True)
+        # Validate via HEAD (cheap), falling back to a tiny ranged GET when the
+        # server rejects HEAD. Both probes carry the same browser headers as the
+        # real content fetch, and the whole probe is retried with backoff — so a
+        # transient Cloudflare blip can't flip the calendar's name. (a)
+        def _probe():
+            response = requests.head(
+                url, timeout=10, headers=_ICS_REQUEST_HEADERS, allow_redirects=True
+            )
+            if response.status_code == 405:
+                logger.debug(f"HEAD not allowed for {url}, validating via ranged GET")
+                response = requests.get(
+                    url,
+                    timeout=10,
+                    headers={**_ICS_REQUEST_HEADERS, "Range": "bytes=0-1023"},
+                    allow_redirects=True,
+                )
+                # 200 (range ignored) or 206 (partial) both mean the URL is good.
+                if response.status_code in (200, 206):
+                    return "GET-partial"
             response.raise_for_status()
-            validation_method = "HEAD"
-        except requests.exceptions.HTTPError as he:
-            # If HEAD fails with 405 Method Not Allowed, try GET with minimal data
-            if he.response and he.response.status_code == 405:
-                logger.debug(f"HEAD method not allowed for {url}, trying GET with range")
-                try:
-                    # Request only first 1KB to validate without downloading full calendar
-                    headers = {'Range': 'bytes=0-1023'}
-                    response = requests.get(url, timeout=10, headers=headers, allow_redirects=True)
-                    # Don't raise for 206 (Partial Content) or 200 (if range not supported)
-                    if response.status_code not in [200, 206]:
-                        response.raise_for_status()
-                    validation_method = "GET-partial"
-                except requests.exceptions.HTTPError as ge:
-                    if ge.response and ge.response.status_code in [401, 403]:
-                        logger.info(f"ICS calendar at {url} requires authentication (HTTP {ge.response.status_code})")
-                        result = {
-                            "type": "ics", 
-                            "id": url, 
-                            "name": "ICS Calendar (Auth Required)", 
-                            "error": True,
-                            "error_type": "authentication",
-                            "status_code": ge.response.status_code,
-                            "cached_at": time.time()
-                        }
-                        _calendar_metadata_cache[cache_key] = result
-                        return result
-                    else:
-                        raise  # Re-raise other HTTP errors
-            else:
-                raise  # Re-raise non-405 errors
-        
-        # Try to extract a meaningful name from the URL
-        if "?" in url:
-            url_parts = url.split("?")[0].split("/")
-        else:
-            url_parts = url.split("/")
-            
-        name = next((part for part in reversed(url_parts) if part), "ICS Calendar")
-        
-        # Decode URL-encoded characters
-        if "%" in name:
-            try:
-                from urllib.parse import unquote
-                name = unquote(name)
-            except Exception:
-                pass
-                
+            return "HEAD"
+
+        validation_method = retry_with_backoff(_probe, max_retries=2, initial_delay=1.0)
+
+        name = _derive_ics_name_from_url(url)
         result = {
-            "type": "ics", 
-            "id": url, 
-            "name": name, 
+            "type": "ics",
+            "id": url,
+            "name": name,
             "validation_method": validation_method,
-            "cached_at": time.time()
+            "cached_at": time.time(),
         }
         logger.debug(f"Loaded ICS calendar metadata: {name} (validated via {validation_method})")
-        
+
         # Cache the result
         _calendar_metadata_cache[cache_key] = result
         return result
-        
+
     except requests.exceptions.HTTPError as he:
-        status_code = he.response.status_code if he.response else 0
+        status_code = he.response.status_code if he.response is not None else 0
         if status_code == 401:
             logger.info(f"ICS calendar at {url} requires authentication (HTTP 401 Unauthorized)")
             error_type = "authentication"
@@ -621,14 +617,26 @@ def fetch_ics_calendar_metadata(url: str) -> Dict[str, Any]:
             error_type = "method_not_allowed"
             name = "ICS Calendar (Method Not Allowed)"
         else:
-            logger.warning(f"HTTP error validating ICS calendar URL {url}: {he}")
-            error_type = "http_error"
-            name = "ICS Calendar (HTTP Error)"
-            
+            # Unexpected/transient status (5xx, 429, ...) that survived retries.
+            # Don't show a scary name or cache it as a sticky error: fall back to
+            # the URL-derived name so events still render and it self-heals on the
+            # next load. (c)
+            logger.warning(
+                f"Transient HTTP error validating ICS calendar URL {url} "
+                f"(status {status_code}); using URL-derived name: {he}"
+            )
+            return {
+                "type": "ics",
+                "id": url,
+                "name": _derive_ics_name_from_url(url),
+                "validation_method": "unvalidated",
+                "cached_at": time.time(),
+            }
+
         result = {
-            "type": "ics", 
-            "id": url, 
-            "name": name, 
+            "type": "ics",
+            "id": url,
+            "name": name,
             "error": True,
             "error_type": error_type,
             "status_code": status_code,
@@ -845,14 +853,8 @@ def _fetch_ics_content(url: str) -> str | None:
     Returns the response text on success, or None on failure.
     Records circuit breaker state and metrics.
     """
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (compatible; Calendar-Bot/1.0)',
-        'Accept': 'text/calendar, text/plain, */*',
-        'Accept-Encoding': 'identity',
-    }
-
     def fetch_calendar():
-        response = requests.get(url, timeout=30, headers=headers, allow_redirects=True)
+        response = requests.get(url, timeout=30, headers=_ICS_REQUEST_HEADERS, allow_redirects=True)
 
         http_error_handlers = {
             401: ("auth_errors", "Authentication required"),
