@@ -12,7 +12,13 @@ DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
 # Channel ID where announcements and embeds will be posted
-ANNOUNCEMENT_CHANNEL_ID = int(os.getenv("ANNOUNCEMENT_CHANNEL_ID", "0"))
+# (falls back to 0 on a malformed value instead of crashing at import)
+try:
+    ANNOUNCEMENT_CHANNEL_ID = int(os.getenv("ANNOUNCEMENT_CHANNEL_ID", "0"))
+except ValueError:
+    import sys
+    sys.stderr.write("environ: ANNOUNCEMENT_CHANNEL_ID is not a valid integer, using 0\n")
+    ANNOUNCEMENT_CHANNEL_ID = 0
 
 # OpenAI API key — required for generating greetings and images
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")

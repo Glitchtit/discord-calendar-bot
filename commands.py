@@ -105,7 +105,7 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
             embed = discord.Embed(title=title, description=description, color=color)
             
         # Check if embed is too large (Discord limit is 6000 characters)
-        embed_size = len(embed.title) + len(embed.description or "")
+        embed_size = len(embed.title or "") + len(embed.description or "")
         for field in embed.fields:
             embed_size += len(field.name) + len(field.value)
             
@@ -181,21 +181,22 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📅 post_tagged_events                                              ║
 # ║ Sends an embed of events for a specific tag on a given day        ║
-# ║ Returns True if events were posted, False otherwise               ║
+# ║ Returns the list of posted events (empty if nothing was posted)   ║
 # ╚════════════════════════════════════════════════════════════════════╝
-async def post_tagged_events(bot, tag: str, day: datetime.date) -> bool:
+async def post_tagged_events(bot, tag: str, day: datetime.date) -> list:
     try:
         calendars = GROUPED_CALENDARS.get(tag)
         if not calendars:
             logger.warning(f"No calendars found for tag: {tag}")
-            return False
+            return []
 
         events_by_source = defaultdict(list)
         all_events = []
-        
+
         for meta in calendars:
             try:
-                events = get_events(meta, day, day)
+                # Run the blocking fetch (requests + retry sleeps) off the event loop
+                events = await asyncio.to_thread(get_events, meta, day, day)
                 all_events.extend([(meta["name"], e) for e in events])
             except Exception as e:
                 logger.exception(f"Error getting events for {meta['name']}: {e}")
@@ -209,7 +210,7 @@ async def post_tagged_events(bot, tag: str, day: datetime.date) -> bool:
 
         if not events_by_source:
             logger.debug(f"Skipping {tag} — no events for {day}")
-            return False
+            return []
 
         pages, epp = build_event_pages(
             events_by_source,
@@ -219,11 +220,11 @@ async def post_tagged_events(bot, tag: str, day: datetime.date) -> bool:
         )
         view = PaginatedEmbedView(pages, epp)
         await send_embed(bot, embed=pages[0], view=view)
-        return True
-        
+        return [ev for evs in events_by_source.values() for ev in evs]
+
     except Exception as e:
         logger.exception(f"Error in post_tagged_events for tag {tag} on {day}: {e}")
-        return False
+        return []
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -240,7 +241,11 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
         end = monday + timedelta(days=6)
         all_events = []
         for meta in calendars:
-            all_events += get_events(meta, monday, end)
+            try:
+                # Run the blocking fetch (requests + retry sleeps) off the event loop
+                all_events += await asyncio.to_thread(get_events, meta, monday, end)
+            except Exception as e:
+                logger.exception(f"Error getting weekly events for {meta['name']}: {e}")
 
         if not all_events:
             logger.debug(f"Skipping {tag} — no weekly events from {monday} to {end}")

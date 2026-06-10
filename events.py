@@ -210,6 +210,14 @@ def get_circuit_breaker_status() -> Dict[str, Any]:
 # Fallback directory for events if primary location is unavailable
 FALLBACK_EVENTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
+def _events_file() -> str:
+    """Return a writable events snapshot path, preferring /data then local fallback."""
+    primary_dir = os.path.dirname(EVENTS_FILE)
+    if os.path.isdir(primary_dir) and os.access(primary_dir, os.W_OK):
+        return EVENTS_FILE
+    os.makedirs(FALLBACK_EVENTS_DIR, exist_ok=True)
+    return os.path.join(FALLBACK_EVENTS_DIR, "events.json")
+
 logger.debug(f"Loading Google credentials from: {SERVICE_ACCOUNT_FILE}")
 try:
     credentials = service_account.Credentials.from_service_account_file(
@@ -701,9 +709,22 @@ def fetch_ics_calendar_metadata(url: str) -> Dict[str, Any]:
 # ║ 📚 Source Loader                                                   ║
 # ║ Groups calendar sources by tag and loads them into memory         ║
 # ╚════════════════════════════════════════════════════════════════════╝
-def load_calendar_sources():
+# Mutated in place by load_calendar_sources(). Other modules import this dict
+# directly, so it must never be rebound — only cleared and updated.
+GROUPED_CALENDARS: Dict[str, List[Dict[str, Any]]] = {}
+
+def load_calendar_sources(force_refresh: bool = False):
+    """(Re)load calendar sources, updating GROUPED_CALENDARS in place.
+
+    Called from on_ready and /reload rather than at import time, so
+    environment validation runs before any network I/O. With
+    force_refresh=True the metadata cache is dropped first so /reload
+    actually re-fetches calendar names instead of serving cached entries.
+    """
     try:
         logger.info("Loading calendar sources...")
+        if force_refresh:
+            _calendar_metadata_cache.clear()
         grouped = {}
         for ctype, cid, tag in parse_calendar_sources():
             try:
@@ -713,20 +734,21 @@ def load_calendar_sources():
                 logger.debug(f"Calendar loaded: {meta}")
             except Exception as e:
                 logger.exception(f"Error loading calendar source {cid} for tag {tag}: {e}")
-        return grouped
+        GROUPED_CALENDARS.clear()
+        GROUPED_CALENDARS.update(grouped)
+        return GROUPED_CALENDARS
     except Exception as e:
         logger.exception(f"Error in load_calendar_sources: {e}")
-        return {}
-
-GROUPED_CALENDARS = load_calendar_sources()
+        return GROUPED_CALENDARS
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 💾 Event Snapshot Persistence                                      ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def load_previous_events():
     try:
-        if os.path.exists(EVENTS_FILE):
-            with open(EVENTS_FILE, "r", encoding="utf-8") as f:
+        path = _events_file()
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
                 logger.debug("Loaded previous event snapshot from disk.")
                 return json.load(f)
     except json.JSONDecodeError:
@@ -740,7 +762,7 @@ def save_current_events_for_key(key, events):
         logger.debug(f"Saving {len(events)} events under key: {key}")
         all_data = load_previous_events()
         all_data[key] = events
-        with open(EVENTS_FILE, "w", encoding="utf-8") as f:
+        with open(_events_file(), "w", encoding="utf-8") as f:
             json.dump(all_data, f, ensure_ascii=False)
         logger.info(f"Saved events for key '{key}'.")
     except Exception as e:
@@ -1014,16 +1036,19 @@ def _extract_ics_events(cal, url: str, start_date, end_date) -> list:
                     continue
 
                 try:
-                    original_title = (getattr(e, 'name', None) or getattr(e, 'summary', None) or "")
+                    original_title = getattr(e, 'name', None) or getattr(e, 'summary', None) or ""
                     location = getattr(e, 'location', None) or ""
                     description = getattr(e, 'description', None) or ""
-                    for attr in [original_title, location, description]:
-                        if attr and not isinstance(attr, str):
-                            attr = str(attr)
-                    original_title = original_title[:500] if original_title else ""
-                    location = location[:200] if location else ""
-                    description = description[:1000] if description else ""
-                except (UnicodeDecodeError, UnicodeEncodeError, Exception):
+                    if not isinstance(original_title, str):
+                        original_title = str(original_title)
+                    if not isinstance(location, str):
+                        location = str(location)
+                    if not isinstance(description, str):
+                        description = str(description)
+                    original_title = original_title[:500]
+                    location = location[:200]
+                    description = description[:1000]
+                except Exception:
                     original_title, location, description = "Event", "", ""
 
                 id_source = f"{original_title}|{e.begin}|{e.end}|{location}"

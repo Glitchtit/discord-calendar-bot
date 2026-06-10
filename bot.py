@@ -5,6 +5,7 @@ from datetime import datetime
 import dateparser
 import asyncio
 import random
+import time
 
 from log import logger
 from events import (
@@ -63,44 +64,63 @@ async def on_ready():
     max_retries = 3
     for attempt in range(1, max_retries + 1):
         try:
-            # Step 1: Resolve tag mappings
+            # Step 1: Load calendar sources (network I/O, run off the event loop)
+            await asyncio.to_thread(load_calendar_sources)
+
+            # Step 2: Resolve tag mappings
             await resolve_tag_mappings()
-            
-            # Step 2: Add slight delay to avoid rate limiting
+
+            # Step 3: Add slight delay to avoid rate limiting
             await asyncio.sleep(1)
-            
-            # Step 3: Sync slash commands
+
+            # Step 4: Sync slash commands
             synced = await bot.tree.sync()
             logger.info(f"Synced {len(synced)} commands.")
-            
-            # Step 4: Initialize event snapshots
+
+            # Step 5: Initialize event snapshots
             await initialize_event_snapshots()
-            
-            # Step 5: Start recurring tasks
+
+            # Step 6: Start recurring tasks
             start_all_tasks(bot)
-            
+
             # Mark successful initialization
             bot.is_initialized = True
             logger.info("Bot initialization completed successfully")
             break
-            
+
         except discord.errors.HTTPException as e:
             # Handle Discord API issues with exponential backoff
             retry_delay = 2 ** attempt + random.uniform(0, 1)
             logger.debug(f"Discord API error during initialization (attempt {attempt}/{max_retries}): {e}")
-            
+
             if attempt < max_retries:
                 logger.info(f"Retrying initialization in {retry_delay:.2f} seconds...")
                 await asyncio.sleep(retry_delay)
             else:
                 logger.error("Maximum retries reached. Continuing with partial initialization.")
-                # Still mark as initialized to prevent endless retries on reconnect
-                bot.is_initialized = True
-                
+                _start_tasks_after_failed_init()
+
         except Exception as e:
-            logger.exception(f"Unexpected error during initialization: {e}")
-            # Mark as initialized despite error to prevent retry loops
-            bot.is_initialized = True
+            logger.exception(f"Unexpected error during initialization (attempt {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                await asyncio.sleep(2 ** attempt)
+            else:
+                logger.error("Initialization failed after all retries. Starting recurring tasks anyway.")
+                _start_tasks_after_failed_init()
+
+
+def _start_tasks_after_failed_init():
+    """Last-resort startup so a failed on_ready doesn't leave a zombie bot.
+
+    Without the recurring tasks nothing would ever post or self-heal, so even
+    after a failed initialization we start them (they tolerate missing data)
+    and mark the bot initialized to prevent retry loops on reconnect.
+    """
+    try:
+        start_all_tasks(bot)
+    except Exception:
+        logger.exception("Failed to start recurring tasks after failed initialization")
+    bot.is_initialized = True
 
 
 # ╔═════════════════════════════════════════════════════════════╗
@@ -119,6 +139,7 @@ async def on_disconnect():
 @bot.event
 async def on_resumed():
     logger.info("Bot connection resumed")
+    bot.last_heartbeat = time.time()
 
 
 # ╔═════════════════════════════════════════════════════════════╗
@@ -174,7 +195,7 @@ async def agenda_command(interaction: discord.Interaction, input: str, target: s
         if input.lower() == "today":
             for tag in tags:
                 posted = await post_tagged_events(bot, tag, today)
-                any_posted |= posted
+                any_posted |= bool(posted)
             label = today.strftime("%A, %B %d")
         elif input.lower() == "week":
             monday = get_monday_of_week(today)
@@ -190,7 +211,7 @@ async def agenda_command(interaction: discord.Interaction, input: str, target: s
             day = parsed.date()
             for tag in tags:
                 posted = await post_tagged_events(bot, tag, day)
-                any_posted |= posted
+                any_posted |= bool(posted)
             label = day.strftime("%A, %B %d")
 
         tag_names = ", ".join(TAG_NAMES.get(t, t) for t in tags)
@@ -315,7 +336,9 @@ async def greet_command(interaction: discord.Interaction):
 async def reload_command(interaction: discord.Interaction):
     try:
         await interaction.response.defer()
-        load_calendar_sources()
+        # force_refresh drops the metadata cache; to_thread keeps the network
+        # I/O off the event loop. Updates GROUPED_CALENDARS in place.
+        await asyncio.to_thread(load_calendar_sources, True)
         await resolve_tag_mappings()
         await interaction.followup.send("Reloaded calendar sources and tag mappings.")
     except Exception as e:

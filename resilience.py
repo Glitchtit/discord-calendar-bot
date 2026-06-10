@@ -11,6 +11,8 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, Callable, TypeVar
 
+import requests
+
 from tenacity import (
     RetryError,
     retry,
@@ -179,6 +181,20 @@ class CalendarCircuitBreakers:
 # ║ 🔁 Retry helpers                                                   ║
 # ║ Centralized retry logic with exponential backoff                   ║
 # ╚════════════════════════════════════════════════════════════════════╝
+def _is_retryable(e: BaseException) -> bool:
+    """Default retryability check for retry_with_backoff.
+
+    Permanent HTTP client errors (4xx except 429) will never succeed on
+    retry, so don't waste backoff cycles on them.
+    """
+    if isinstance(e, KeyboardInterrupt):
+        return False
+    if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
+        status = e.response.status_code
+        return status >= 500 or status == 429
+    return True
+
+
 def retry_with_backoff(
     func: Callable[..., T],
     max_retries: int = 3,
@@ -188,12 +204,13 @@ def retry_with_backoff(
 ) -> T:
     """Retry a synchronous function with exponential backoff and jitter.
 
-    Retries on all exceptions except KeyboardInterrupt.
+    Retries on all exceptions except KeyboardInterrupt and permanent
+    HTTP client errors (4xx other than 429).
     """
     @retry(
         stop=stop_after_attempt(max_retries + 1),
         wait=wait_exponential_jitter(initial=initial_delay, max=max_delay, jitter=1),
-        retry=retry_if_exception(lambda e: not isinstance(e, KeyboardInterrupt)),
+        retry=retry_if_exception(_is_retryable),
         reraise=True,
     )
     def _wrapped():

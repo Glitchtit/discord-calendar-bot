@@ -11,7 +11,8 @@ from utils import (
     get_monday_of_week,
     is_in_current_week,
     format_event,
-    get_local_timezone
+    get_local_timezone,
+    parse_date_string,
 )
 from commands import (
     post_tagged_week,
@@ -44,6 +45,15 @@ _HEALTH_CHECK_INTERVAL = timedelta(hours=1)
 _pending_changes = {}  # tag -> {timestamp, added_events, removed_events, changed_events, verification_count}
 _VERIFICATION_DELAY = timedelta(minutes=6)  # Wait 6 minutes before re-checking (avoid exact minute boundary issues)
 _MAX_VERIFICATION_ATTEMPTS = 3  # Maximum number of verification attempts
+
+# Rotating cursor so watch_for_event_changes covers every tag over successive
+# cycles instead of always re-checking the first few.
+_watch_tag_cursor = 0
+
+# Daily/weekly post markers so the scheduler is robust to loop drift
+# (posts once anytime within the 08:00 hour instead of on an exact minute).
+_last_weekly_post_date = None
+_last_daily_post_date = None
 
 
 async def _fetch_calendar_events_safe(meta: dict, start, end, context: str = "", timeout: int = 300) -> list:
@@ -284,15 +294,20 @@ async def schedule_daily_posts(bot):
             return
             
         try:
+            global _last_weekly_post_date, _last_daily_post_date
+
             # Use utils' timezone-safe function
             local_now = datetime.now(tz=get_local_timezone())
             today = local_now.date()
 
-            # Monday 08:00 — Post weekly summaries
-            if local_now.weekday() == 0 and local_now.hour == 8 and local_now.minute == 0:
+            # Monday 08:00 hour — Post weekly summaries (once per day).
+            # Matching the whole hour instead of an exact minute means a loop
+            # iteration that drifts or gets skipped can't silently drop the post.
+            if local_now.weekday() == 0 and local_now.hour == 8 and _last_weekly_post_date != today:
+                _last_weekly_post_date = today
                 logger.info("Starting weekly summary posting")
                 monday = get_monday_of_week(today)
-                
+
                 for tag in list(GROUPED_CALENDARS.keys()):  # Use list() to prevent dict changed during iteration
                     try:
                         await post_tagged_week(bot, tag, monday)
@@ -301,11 +316,13 @@ async def schedule_daily_posts(bot):
                     except Exception as e:
                         logger.exception(f"Error posting weekly summary for tag {tag}: {e}")
 
-            # Daily 08:01 — Post today's agenda and greeting
-            if local_now.hour == 8 and local_now.minute == 1:
+            # Daily 08:00 hour — Post today's agenda and greeting (once per day,
+            # from minute 1 so the Monday weekly post goes out first)
+            if local_now.hour == 8 and local_now.minute >= 1 and _last_daily_post_date != today:
+                _last_daily_post_date = today
                 logger.info("Starting daily posts with greeting")
                 await post_todays_happenings(bot, include_greeting=True)
-                
+
             # Update task health status
             update_task_health(task_name, True)
             
@@ -329,23 +346,34 @@ async def watch_for_event_changes(bot):
             return
             
         try:
+            global _watch_tag_cursor
+
             today = get_today()
             monday = get_monday_of_week(today)
-            processed_tags = set()
 
-            # Process calendars in batches to avoid overloading
-            for tag, calendars in GROUPED_CALENDARS.items():
-                # Skip if we've already processed too many in this cycle
-                if len(processed_tags) >= 3:  # Process max 3 tags per cycle
-                    break
-                    
+            # Process at most 3 tags per cycle to avoid overloading, but rotate
+            # through them with a persistent cursor so every tag gets checked
+            # over successive cycles (a fixed `break` after 3 would starve the rest).
+            all_tags = list(GROUPED_CALENDARS.keys())
+            if not all_tags:
+                update_task_health(task_name, True)
+                return
+
+            batch_size = min(3, len(all_tags))
+            batch = [all_tags[(_watch_tag_cursor + i) % len(all_tags)] for i in range(batch_size)]
+            _watch_tag_cursor = (_watch_tag_cursor + batch_size) % len(all_tags)
+
+            for batch_index, tag in enumerate(batch):
+                calendars = GROUPED_CALENDARS.get(tag)
+                if not calendars:
+                    continue
+
                 # Add small delay between calendar checks to avoid rate limiting
-                if processed_tags:
+                if batch_index:
                     await asyncio.sleep(2)
-                
+
                 earliest = today - timedelta(days=30)
                 latest = today + timedelta(days=90)
-                processed_tags.add(tag)
 
                 # Fetch and fingerprint all events in the date window
                 all_events = []
@@ -538,30 +566,16 @@ async def post_todays_happenings(bot, include_greeting: bool = False):
         for tag in GROUPED_CALENDARS:
             tag_count += 1
             try:
-                # Post events for this tag
-                posted = await post_tagged_events(bot, tag, today)
-                if posted:
+                # Post events for this tag; reuse the returned events for the
+                # greeting instead of re-fetching every calendar a second time
+                posted_events = await post_tagged_events(bot, tag, today)
+                if posted_events:
                     success_count += 1
-                    
+                    all_events_for_greeting += posted_events
+
                 # Add small delay between posts to avoid rate limiting
                 if tag_count > 1:
                     await asyncio.sleep(1)
-                    
-                # Get events for greeting generation
-                for meta in GROUPED_CALENDARS[tag]:
-                    try:
-                        # Add timeout to prevent hanging (2 minutes max per calendar for daily events)
-                        events = await asyncio.wait_for(
-                            asyncio.to_thread(get_events, meta, today, today),
-                            timeout=120
-                        )
-                        # Ensure events is a list before extending (get_events should always return list, but this guards against None)
-                        if events:
-                            all_events_for_greeting += events
-                    except asyncio.TimeoutError:
-                        logger.warning(f"Timeout fetching greeting events for {meta.get('name', 'Unknown')}")
-                    except Exception as e:
-                        logger.warning(f"Error fetching greeting events for {meta.get('name', 'Unknown')}: {e}")
             except Exception as e:
                 error_count += 1
                 logger.exception(f"Error posting events for tag {tag}: {e}")
@@ -943,7 +957,11 @@ async def update_snapshot_after_verification(tag: str, calendars: list):
 async def verification_watchdog(bot):
     """Dedicated task to process pending verifications more frequently."""
     task_name = "verification_watchdog"
-    
+
+    # Liveness signal for the watchdog thread in main.py: this only advances
+    # while the event loop is actually running tasks.
+    bot.last_heartbeat = time.time()
+
     async with TaskLock(task_name) as acquired:
         if not acquired:
             return
@@ -1172,6 +1190,30 @@ async def check_reminders(bot):
             now = datetime.now(tz=get_local_timezone())
             today = now.date()
 
+            # Fetch each subscribed tag's events ONCE per cycle, then evaluate
+            # per user — re-fetching every calendar for every subscriber each
+            # minute hammers the sources (and Cloudflare-fronted ICS hosts).
+            needed_tags: set = set()
+            for prefs in reminders.values():
+                if not prefs.get("enabled", True):
+                    continue
+                needed_tags.update(prefs.get("tags") or GROUPED_CALENDARS.keys())
+            needed_tags &= set(GROUPED_CALENDARS.keys())
+
+            events_by_tag: dict = {}
+            for tag in needed_tags:
+                tag_events: list = []
+                for meta in GROUPED_CALENDARS[tag]:
+                    try:
+                        events = await asyncio.wait_for(
+                            asyncio.to_thread(get_events, meta, today, today),
+                            timeout=30,
+                        )
+                    except Exception:
+                        continue
+                    tag_events.extend(events or [])
+                events_by_tag[tag] = tag_events
+
             for user_id_str, prefs in reminders.items():
                 if not prefs.get("enabled", True):
                     continue
@@ -1180,38 +1222,25 @@ async def check_reminders(bot):
                 sub_tags = prefs.get("tags") or list(GROUPED_CALENDARS.keys())
 
                 for tag in sub_tags:
-                    if tag not in GROUPED_CALENDARS:
-                        continue
-
-                    for meta in GROUPED_CALENDARS[tag]:
-                        try:
-                            events = await asyncio.wait_for(
-                                asyncio.to_thread(get_events, meta, today, today),
-                                timeout=30,
-                            )
-                        except Exception:
+                    for ev in events_by_tag.get(tag, []):
+                        start_str = ev.get("start", {}).get("dateTime", "")
+                        if not start_str or "T" not in start_str:
                             continue
 
-                        for ev in (events or []):
-                            start_str = ev.get("start", {}).get("dateTime", "")
-                            if not start_str or "T" not in start_str:
+                        ev_start = parse_date_string(start_str, get_local_timezone())
+                        if ev_start is None:
+                            continue
+
+                        delta = (ev_start - now).total_seconds() / 60
+                        if 0 < delta <= minutes_before:
+                            dedup = f"{user_id_str}:{ev.get('id', '')}:{today}"
+                            if dedup in _sent_reminders:
                                 continue
+                            _sent_reminders.add(dedup)
 
-                            from utils import parse_date_string
-                            ev_start = parse_date_string(start_str, get_local_timezone())
-                            if ev_start is None:
-                                continue
-
-                            delta = (ev_start - now).total_seconds() / 60
-                            if 0 < delta <= minutes_before:
-                                dedup = f"{user_id_str}:{ev.get('id', '')}:{today}"
-                                if dedup in _sent_reminders:
-                                    continue
-                                _sent_reminders.add(dedup)
-
-                                await _send_reminder_dm(
-                                    bot, int(user_id_str), ev, int(delta)
-                                )
+                            await _send_reminder_dm(
+                                bot, int(user_id_str), ev, int(delta)
+                            )
 
             # Prune old dedup keys daily
             today_str = str(today)

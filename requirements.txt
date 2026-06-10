@@ -6,6 +6,7 @@ google-auth-oauthlib==1.2.0
 packaging>=24.0          # Required by google-api-core
 python-dateutil==2.9.0.post0
 ics==0.7.2
+tatsu==5.8.3           # ics dep, unpinned upstream; tatsu >=5.9 breaks ics 0.7.2 at import ("Unknown settings ... buffer_class")
 requests==2.34.2      # >=2.33.0 closes CVE-2024-35195, CVE-2024-47081, CVE-2026-25645
 rich==13.7.1
 colorlog==6.8.2

@@ -10,6 +10,11 @@ services:
     env_file:
       - .env
 
+    # Without TZ the container runs on UTC, shifting the 08:00 posts and
+    # reminder windows. Override via TZ in .env or the shell if needed.
+    environment:
+      - TZ=${TZ:-Europe/Helsinki}
+
     # Mount persistent data + Google credentials
     volumes:
       - ./data:/data

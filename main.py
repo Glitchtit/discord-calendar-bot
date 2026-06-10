@@ -104,17 +104,19 @@ def setup_watchdog():
     def watchdog_thread():
         # Wait for initial startup period
         time.sleep(300)  # 5 minutes
-        
+
         while not shutdown_in_progress:
-            # Check if event loop is still responsive
-            if not bot.is_closed() and bot.is_ready():
-                # Bot is still running normally
-                pass
-            else:
-                # Only log issues after a reasonable time 
-                if hasattr(bot, 'last_heartbeat') and time.time() - bot.last_heartbeat > 600:  # 10 minutes
-                    logger.warning("Watchdog detected possible bot freeze - no heartbeat for 10 minutes")
-            
+            # bot.last_heartbeat is refreshed every 30s by the
+            # verification_watchdog task, so it only advances while the
+            # event loop is actually executing tasks. A stale value means
+            # the loop is blocked/frozen even if the gateway looks alive.
+            last_heartbeat = getattr(bot, 'last_heartbeat', None)
+            if last_heartbeat and time.time() - last_heartbeat > 600:  # 10 minutes
+                logger.warning(
+                    f"Watchdog detected possible bot freeze - event loop heartbeat "
+                    f"stale for {(time.time() - last_heartbeat) / 60:.0f} minutes"
+                )
+
             # Sleep before next check
             time.sleep(60)  # Check every minute
     
@@ -169,19 +171,13 @@ def main():
         
         # Configure Discord client with reconnect settings
         bot.max_reconnect_attempts = 10
-        
-        # Track last heartbeat for monitoring
+
+        # Seed the event-loop liveness timestamp; the verification_watchdog
+        # task in tasks.py refreshes it every 30 seconds once running.
+        # (Note: registering on_resumed/on_heartbeat here would silently
+        # replace bot.py's handlers — discord.py keys events by name.)
         bot.last_heartbeat = time.time()
-        
-        @bot.event
-        async def on_resumed():
-            logger.info("Discord connection resumed")
-            bot.last_heartbeat = time.time()
-            
-        @bot.event 
-        async def on_heartbeat(sequence):
-            bot.last_heartbeat = time.time()
-        
+
         # Start the bot with reconnect enabled and retry logic
         logger.info("Starting Discord bot...")
         
