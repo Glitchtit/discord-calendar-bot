@@ -15,7 +15,7 @@ dateparser==1.1.8
 
 # Stability enhancements
 tenacity==8.2.3        # Retry logic (used by resilience.py)
-aiohttp==3.13.5        # discord.py dep; >=3.13.4 closes the aiohttp CVE set
+aiohttp==3.14.0        # discord.py dep; >=3.14.0 closes the cross-origin redirect cookie + untrusted deserialization advisories
 
 # Logging
 python-json-logger==2.0.7  # Optional JSON-lines log format (LOG_FORMAT=json)
