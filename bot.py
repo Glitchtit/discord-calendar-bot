@@ -14,15 +14,12 @@ from events import (
     USER_TAG_MAP,
     TAG_NAMES,
     TAG_COLORS,
-    get_events
 )
-from ai import generate_greeting, generate_image
 from commands import (
     post_tagged_events,
     post_tagged_week,
     send_embed,
     autocomplete_tag,
-    autocomplete_range,
     autocomplete_agenda_target,
     autocomplete_agenda_input,
     search_events,
@@ -243,7 +240,7 @@ async def search_command(
 ):
     try:
         await interaction.response.defer()
-        pages, epp = await search_events(query, days_ahead, tag or None)
+        pages, epp = await search_events(query, max(1, min(days_ahead, 365)), tag or None)
 
         view = PaginatedEmbedView(pages, epp)
         await interaction.followup.send(embed=pages[0], view=view)
@@ -293,7 +290,13 @@ async def remind_command(
                     f"🔔 Reminders **on** · {mins} min before · tags: {', '.join(tags)}",
                     ephemeral=True,
                 )
+        elif tag and tag.upper() not in GROUPED_CALENDARS:
+            await interaction.response.send_message(
+                f"Unknown tag **{tag}**. Known tags: {', '.join(sorted(GROUPED_CALENDARS)) or 'none'}",
+                ephemeral=True,
+            )
         else:
+            tag = tag.upper()
             tags_list = [tag] if tag else []
             entry = set_reminder(uid, max(1, min(minutes_before, 120)), tags_list)
             tag_label = tag or "all tags"
@@ -333,6 +336,7 @@ async def greet_command(interaction: discord.Interaction):
 # ║ Reloads calendar sources and tag-to-user mapping            ║
 # ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(name="reload", description="Reload calendar sources and tag-user mappings")
+@app_commands.default_permissions(administrator=True)
 async def reload_command(interaction: discord.Interaction):
     try:
         await interaction.response.defer()
@@ -373,14 +377,14 @@ async def verify_status_command(interaction: discord.Interaction):
         from tasks import get_pending_changes_status
         status = get_pending_changes_status()
         
-        if not status:
+        if not status['total_pending']:
             await interaction.followup.send("No pending change verifications.")
             return
         
         lines = ["**📋 Pending Change Verifications:**\n"]
-        for tag, info in status.items():
-            ready = "✅ Ready" if info['ready_for_verification'] else f"⏳ {info['time_remaining_minutes']:.1f}min left"
-            lines.append(f"**{tag}**: +{info['added_count']} -{info['removed_count']} ({ready})")
+        for tag, info in status['tags'].items():
+            ready = "✅ Ready" if info['ready_for_verification'] else f"⏳ {info['time_remaining_seconds'] / 60:.1f}min left"
+            lines.append(f"**{tag}**: +{info['added_count']} -{info['removed_count']} ~{info['changed_count']} ({ready})")
         
         await interaction.followup.send("\n".join(lines))
     except Exception as e:
@@ -393,6 +397,7 @@ async def verify_status_command(interaction: discord.Interaction):
 # ║ Clears all pending change verifications (debug/admin)       ║
 # ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(name="clear_pending", description="Clear all pending change verifications (admin)")
+@app_commands.default_permissions(administrator=True)
 async def clear_pending_command(interaction: discord.Interaction):
     try:
         await interaction.response.defer()
@@ -534,6 +539,7 @@ async def health_command(interaction: discord.Interaction, detailed: bool = Fals
 # ║ Resets health metrics and circuit breakers (admin)         ║
 # ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(name="reset_health", description="Reset calendar health metrics and circuit breakers (admin)")
+@app_commands.default_permissions(administrator=True)
 @app_commands.describe(
     component="Which component to reset: 'metrics', 'circuits', or 'all'"
 )
@@ -682,14 +688,13 @@ async def calendars_command(interaction: discord.Interaction):
 # ║ Debug a specific calendar source (admin)                   ║
 # ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(name="debug_calendar", description="Debug a specific calendar source by URL or partial name (admin)")
+@app_commands.default_permissions(administrator=True)
 @app_commands.describe(query="URL or partial name of the calendar to debug")
 async def debug_calendar_command(interaction: discord.Interaction, query: str):
     try:
         await interaction.response.defer()
         
-        # Import here to avoid circular imports
-        from events import GROUPED_CALENDARS
-        import requests
+        from events import _fetch_ics_content
         
         # Find matching calendars
         matches = []
@@ -740,8 +745,6 @@ async def debug_calendar_command(interaction: discord.Interaction, query: str):
             error_type = cal.get("error_type", "unknown")
             error_info = f"❌ **Error:** {error_type}"
             if cal.get("cached_at"):
-                from datetime import datetime
-                import time
                 cache_age = (time.time() - cal.get("cached_at", 0)) / 3600
                 error_info += f" (cached {cache_age:.1f}h ago)"
         else:
@@ -757,15 +760,13 @@ async def debug_calendar_command(interaction: discord.Interaction, query: str):
         if cal_type == "ics" and not cal.get("error"):
             try:
                 logger.info(f"Debug fetch requested for calendar {cal_id} by {interaction.user}")
-                response = requests.get(cal_id, timeout=10)
-                
-                content_info = f"**HTTP Status:** {response.status_code}\n"
-                content_info += f"**Content Length:** {len(response.text)} chars\n"
-                content_info += f"**Content Type:** {response.headers.get('content-type', 'Unknown')}\n"
-                
-                # Analyze content
-                content = response.text
-                if content.startswith('<!doctype') or '<html' in content.lower()[:200]:
+                # Same fetch path (browser headers, retries) as the real sync, off the event loop
+                content = await asyncio.to_thread(_fetch_ics_content, cal_id)
+                if content is None:
+                    raise RuntimeError("fetch failed (HTTP error or circuit breaker; see logs)")
+
+                content_info = f"**Content Length:** {len(content)} chars\n"
+                if content.lower().startswith('<!doctype') or '<html' in content.lower()[:200]:
                     content_info += "⚠️ **Issue:** Received HTML instead of ICS"
                 elif not content.startswith("BEGIN:VCALENDAR"):
                     content_info += "⚠️ **Issue:** Missing VCALENDAR header"

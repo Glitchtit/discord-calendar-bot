@@ -1,11 +1,12 @@
 import os
+import re
 import json
 import hashlib
 import requests
 import time
-import random
 import ssl
-from datetime import datetime, timedelta
+import threading
+from datetime import datetime, timedelta, timezone, time as dtime
 from typing import Dict, List, Tuple, Optional, Any
 from ics import Calendar as ICS_Calendar # type: ignore
 from google.oauth2 import service_account # type: ignore
@@ -15,11 +16,11 @@ from environ import GOOGLE_APPLICATION_CREDENTIALS, CALENDAR_SOURCES, USER_TAG_M
 from log import logger
 from ai_title_parser import simplify_event_title
 from resilience import CalendarCircuitBreakers, retry_with_backoff
+from utils import get_local_timezone
 
 # Import TatSu exceptions for proper ICS parsing error handling
 try:
     from tatsu.exceptions import ParseException, FailedParse # type: ignore[import-untyped]
-    TATSU_AVAILABLE = True
 except ImportError:
     # If TatSu is not available, define placeholder classes
     class ParseException(Exception):
@@ -28,7 +29,6 @@ except ImportError:
     class FailedParse(Exception):
         """Placeholder for TatSu FailedParse when TatSu is not available."""
         pass
-    TATSU_AVAILABLE = False
     logger.warning("TatSu parser exceptions not available - some ICS parsing errors may not be caught optimally")
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -39,12 +39,12 @@ SERVICE_ACCOUNT_FILE = GOOGLE_APPLICATION_CREDENTIALS
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 EVENTS_FILE = "/data/events.json"
 
-# In-memory cache and error tracking
+# In-memory cache
 _calendar_metadata_cache = {}
-_api_last_error_time = None
-_api_error_count = 0
-_API_BACKOFF_RESET = timedelta(minutes=30)
-_MAX_API_ERRORS = 10
+
+# httplib2 inside the shared Google `service` is not thread-safe, and calls
+# arrive from several asyncio.to_thread workers at once.
+_google_lock = threading.Lock()
 
 # Per-calendar circuit breakers (replaces manual _failed_calendars dict)
 _calendar_breakers = CalendarCircuitBreakers(
@@ -71,7 +71,6 @@ def preprocess_ics_content(content: str, url: str) -> str:
     """
     Preprocess ICS content to fix common malformed patterns that cause parser errors.
     """
-    import re
     
     original_length = len(content)
     logger.debug(f"Preprocessing ICS content from {url} ({original_length} chars)")
@@ -375,84 +374,27 @@ def parse_calendar_sources() -> List[Tuple[str, str, str]]:
 # ║ 🔁 retry_api_call                                                  ║
 # ║ Helper to retry Google API calls with exponential backoff         ║
 # ╚════════════════════════════════════════════════════════════════════╝
+def _google_retryable(e: BaseException) -> bool:
+    """Rate limits, server errors, SSL blips and corrupted HTTP responses are worth retrying."""
+    if isinstance(e, HttpError):
+        return e.resp.status >= 500 or e.resp.status == 429
+    if isinstance(e, OSError):
+        return is_ssl_error(e)
+    return isinstance(e, (ValueError, AttributeError))
+
+
 def retry_api_call(func, *args, max_retries=3, **kwargs):
-    """Retry a Google API call with exponential backoff on transient errors."""
-    global _api_last_error_time, _api_error_count
-    
-    # Check if we've had too many errors recently
-    if _api_last_error_time and _api_error_count >= _MAX_API_ERRORS:
-        # Check if enough time has passed to reset the counter
-        if datetime.now() - _api_last_error_time > _API_BACKOFF_RESET:
-            logger.info("API error count reset after backoff period")
-            _api_error_count = 0
-        else:
-            logger.warning(f"Too many API errors ({_api_error_count}), backing off")
-            return None
-    
-    last_exception = None
-    
-    for attempt in range(max_retries):
-        try:
+    """Call a Google API function with backoff; None once retryable errors exhaust max_retries attempts."""
+    def call():
+        with _google_lock:
             return func(*args, **kwargs)
-            
-        except HttpError as e:
-            status_code = e.resp.status
-            
-            # Don't retry on client errors except for 429 (rate limit)
-            if status_code < 500 and status_code != 429:
-                logger.warning(f"Non-retryable Google API error: {status_code} - {str(e)}")
-                _api_error_count += 1
-                _api_last_error_time = datetime.now()
-                raise
-                
-            # For rate limits and server errors, retry with backoff (max 30 seconds)
-            backoff = min((2 ** attempt) + random.uniform(0, 1), 30.0)
-            logger.debug(f"Retryable Google API error ({status_code}), attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
-            time.sleep(backoff)
-            last_exception = e
-            
-        except (ssl.SSLError, OSError) as e:
-            # SSL errors and OS-level socket errors are retryable as they're often temporary network issues
-            # OSError catches SSL errors that manifest as socket errors (e.g., [SSL] record layer failure)
-            # Cap backoff to 30 seconds to prevent excessive blocking
-            if is_ssl_error(e):
-                backoff = min((2 ** attempt) + random.uniform(0, 1), 30.0)
-                logger.debug(f"SSL error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
-                time.sleep(backoff)
-                last_exception = e
-            else:
-                # Not an SSL error, re-raise to be handled by other exception handlers
-                raise
-            
-        except requests.exceptions.RequestException as e:
-            # Network errors are retryable
-            backoff = min((2 ** attempt) + random.uniform(0, 1), 30.0)
-            logger.debug(f"Network error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
-            time.sleep(backoff)
-            last_exception = e
-            
-        except (ValueError, AttributeError) as e:
-            # HTTP protocol errors (corrupted chunked encoding, etc.) are retryable
-            # These can occur when the server sends malformed response data
-            backoff = min((2 ** attempt) + random.uniform(0, 1), 30.0)
-            logger.debug(f"HTTP protocol error in API call, attempt {attempt+1}/{max_retries}, backing off for {backoff:.2f}s: {str(e)}")
-            time.sleep(backoff)
-            last_exception = e
-            
-        except Exception as e:
-            # Other errors are not retried - log with full traceback for debugging
-            logger.exception(f"Unexpected error in API call: {e}")
-            _api_error_count += 1
-            _api_last_error_time = datetime.now()
+    try:
+        return retry_with_backoff(call, max_retries=max_retries - 1, retry_if=_google_retryable)
+    except Exception as e:
+        if not _google_retryable(e):
             raise
-    
-    # If we've exhausted retries, record the error and return None
-    if last_exception:
-        _api_error_count += 1
-        _api_last_error_time = datetime.now()
-        logger.error(f"All {max_retries} retries failed for API call: {last_exception}")
-        
-    return None
+        logger.error(f"All {max_retries} retries failed for API call: {e}")
+        return None
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📄 Calendar Metadata Fetching                                     ║
@@ -757,13 +699,20 @@ def load_previous_events():
         logger.exception(f"Error loading previous events: {e}")
     return {}
 
+def write_json_atomic(path: str, data, **dump_kwargs) -> None:
+    """Write JSON via a temp file + rename, so a crash mid-write can't leave a truncated file."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, **dump_kwargs)
+    os.replace(tmp, path)
+
+
 def save_current_events_for_key(key, events):
     try:
         logger.debug(f"Saving {len(events)} events under key: {key}")
         all_data = load_previous_events()
         all_data[key] = events
-        with open(_events_file(), "w", encoding="utf-8") as f:
-            json.dump(all_data, f, ensure_ascii=False)
+        write_json_atomic(_events_file(), all_data, ensure_ascii=False)
         logger.info(f"Saved events for key '{key}'.")
     except Exception as e:
         logger.exception(f"Error saving events for key {key}: {e}")
@@ -773,19 +722,21 @@ def save_current_events_for_key(key, events):
 # ║ Retrieves events from Google or ICS sources                        ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def get_google_events(start_date, end_date, calendar_id):
-    """Fetch events from Google Calendar with robust error handling and retry logic."""
+    """Fetch events from Google Calendar. Returns None on failure, a list (maybe empty) on success."""
     if not service:
         logger.error(f"Google Calendar service not initialized, cannot fetch events for {calendar_id}")
-        return []
+        return None
     
     # Check circuit breaker
     if is_calendar_circuit_open(calendar_id):
         logger.debug(f"Circuit breaker open for Google calendar {calendar_id}, skipping")
-        return []
+        return None
     
     try:
-        start_utc = start_date.isoformat() + "T00:00:00Z"
-        end_utc = end_date.isoformat() + "T23:59:59Z"
+        # Local midnight to local midnight, so "today" matches the bot's timezone, not UTC
+        local_tz = get_local_timezone()
+        start_utc = datetime.combine(start_date, dtime.min, tzinfo=local_tz).isoformat()
+        end_utc = datetime.combine(end_date + timedelta(days=1), dtime.min, tzinfo=local_tz).isoformat()
         logger.debug(f"Fetching Google events for calendar {calendar_id} from {start_utc} to {end_utc}")
         update_metrics("requests_total")
         
@@ -796,14 +747,15 @@ def get_google_events(start_date, end_date, calendar_id):
                 timeMin=start_utc,
                 timeMax=end_utc,
                 singleEvents=True,
-                orderBy="startTime"
+                orderBy="startTime",
+                maxResults=2500,  # API max; the default page of 250 silently truncated busy calendars
             ).execute()
         
         result = retry_api_call(api_call, max_retries=3)
         
         if result is None:
             logger.warning(f"Failed to fetch events for calendar {calendar_id} after retries")
-            return []
+            return None
             
         items = result.get("items", [])
         
@@ -833,7 +785,7 @@ def get_google_events(start_date, end_date, calendar_id):
             record_calendar_failure(calendar_id)
             update_metrics("requests_failed")
             update_metrics("network_errors")
-            return []
+            return None
         else:
             # Not an SSL error, re-raise to be handled by the general exception handler
             raise
@@ -843,14 +795,14 @@ def get_google_events(start_date, end_date, calendar_id):
         record_calendar_failure(calendar_id)
         update_metrics("requests_failed")
         update_metrics("network_errors")
-        return []
+        return None
     except requests.exceptions.Timeout as e:
         logger.error(f"Timeout error fetching Google events from calendar {calendar_id}: {e}")
         logger.info("Request timed out. The calendar will be retried on the next sync.")
         record_calendar_failure(calendar_id)
         update_metrics("requests_failed")
         update_metrics("network_errors")
-        return []
+        return None
     except HttpError as e:
         if e.resp.status in [403, 404]:
             logger.error(f"Access denied or calendar not found for {calendar_id}: {e}")
@@ -862,12 +814,12 @@ def get_google_events(start_date, end_date, calendar_id):
             logger.error(f"Google API error fetching events from calendar {calendar_id}: {e}")
             update_metrics("requests_failed")
             # Don't record failure for temporary API issues (rate limits, etc)
-        return []
+        return None
     except Exception as e:
         logger.exception(f"Unexpected error fetching Google events from calendar {calendar_id}: {e}")
         record_calendar_failure(calendar_id)
         update_metrics("requests_failed")
-        return []
+        return None
 
 def _fetch_ics_content(url: str) -> str | None:
     """Fetch raw ICS content from a URL with retry logic and HTTP error handling.
@@ -935,17 +887,12 @@ def _validate_ics_content(content: str, url: str) -> str | None:
         logger.warning(f"Invalid ICS format (missing BEGIN/END markers) from {url}")
         logger.debug(f"Content preview: {content[:200]}...")
         return None
-    if "BEGIN:VEVENT" not in content:
-        logger.debug(f"No VEVENT blocks found in ICS from {url} - calendar may be empty")
-        return None
-
     content_bytes = content.encode('utf-8', errors='ignore')
     if b'\x00' in content_bytes or '\x00' in content:
         logger.warning(f"Suspicious content detected in ICS from {url}")
         return None
 
     # Preprocess unless explicitly disabled
-    import os
     if os.getenv("DISABLE_ICS_PREPROCESSING", "false").lower() != "true":
         original = content
         try:
@@ -960,27 +907,16 @@ def _validate_ics_content(content: str, url: str) -> str | None:
 
 def _parse_ics_calendar(content: str, url: str):
     """Parse ICS content into a Calendar object. Returns the calendar or None."""
-    original_content = content
     try:
         return ICS_Calendar(content)
     except ValueError as ve:
-        if "mandatory DTSTART not found" in str(ve) and content != original_content:
-            logger.debug(f"Preprocessing may have caused parsing issue for {url}, trying original content")
-            try:
-                cal = ICS_Calendar(original_content)
-                logger.info(f"Successfully parsed {url} with original content after preprocessing failed")
-                return cal
-            except Exception as e:
-                logger.warning(f"Both preprocessed and original content failed for {url}: {e}")
+        error_msg = str(ve)
+        if "time data" in error_msg or "does not match format" in error_msg:
+            logger.warning(f"ICS datetime format error for {url}: Malformed date/time field - {ve}")
         else:
-            error_msg = str(ve)
-            if "time data" in error_msg or "does not match format" in error_msg:
-                logger.warning(f"ICS datetime format error for {url}: Malformed date/time field - {ve}")
-            elif "mandatory DTSTART not found" in error_msg:
-                logger.warning(f"ICS value parsing error for {url}: {ve}")
+            logger.warning(f"ICS value parsing error for {url}: {ve}")
+            if "mandatory DTSTART not found" in error_msg:
                 logger.debug(f"ICS content sample from {url}: {content.split(chr(10))[:10]}")
-            else:
-                logger.warning(f"ICS value parsing error for {url}: {ve}")
     except (IndexError, TypeError, AttributeError, ImportError, MemoryError, RecursionError, UnicodeDecodeError) as e:
         logger.warning(f"ICS parsing error for {url}: {type(e).__name__} - {e}")
     except ParseException as pe:
@@ -1004,8 +940,12 @@ def _parse_ics_calendar(content: str, url: str):
     return None
 
 
-def _extract_ics_events(cal, url: str, start_date, end_date) -> list:
-    """Extract and normalize events from a parsed ICS calendar."""
+def _extract_ics_events(cal, url: str, start_date, end_date, has_uids: bool = True) -> list:
+    """Extract and normalize events from a parsed ICS calendar.
+
+    has_uids=False means the feed itself carries no UIDs; the ics library then
+    invents a random one per parse, so a content-based id is used instead.
+    """
     if not hasattr(cal, 'events') or cal.events is None:
         logger.warning(f"No events found in ICS calendar from {url}")
         return []
@@ -1020,20 +960,25 @@ def _extract_ics_events(cal, url: str, start_date, end_date) -> list:
     try:
         for i, e in enumerate(cal_events):
             try:
-                if i >= 1000:
-                    logger.warning(f"ICS calendar {url} has too many events (>1000), truncating")
-                    break
-
                 if not hasattr(e, 'begin') or not hasattr(e, 'end') or e.begin is None or e.end is None:
                     continue
 
                 try:
-                    event_date = e.begin.date()
+                    all_day = bool(getattr(e, "all_day", False))
+                    # Timed events are dated (and shown) in the bot's timezone; all-day events keep their calendar date
+                    begin = e.begin if all_day else e.begin.to(get_local_timezone())
+                    event_date = begin.date()
                 except (AttributeError, ValueError, TypeError):
                     continue
 
                 if not (start_date <= event_date <= end_date):
                     continue
+
+                # Cap counts only in-window events; cal.events is an unordered set,
+                # so capping before the date filter kept a random subset each fetch
+                if len(events) >= 1000:
+                    logger.warning(f"ICS calendar {url} has too many events in range (>1000), truncating")
+                    break
 
                 try:
                     original_title = getattr(e, 'name', None) or getattr(e, 'summary', None) or ""
@@ -1051,7 +996,9 @@ def _extract_ics_events(cal, url: str, start_date, end_date) -> list:
                 except Exception:
                     original_title, location, description = "Event", "", ""
 
-                id_source = f"{original_title}|{e.begin}|{e.end}|{location}"
+                # A real UID is stable across time changes, so reschedules show as "changed"
+                uid = getattr(e, "uid", None) if has_uids else None
+                id_source = uid or f"{original_title}|{e.begin}|{e.end}|{location}"
 
                 try:
                     simplified_title = simplify_event_title(original_title) if original_title else "Event"
@@ -1062,8 +1009,9 @@ def _extract_ics_events(cal, url: str, start_date, end_date) -> list:
                     event = {
                         "summary": simplified_title,
                         "original_summary": original_title,
-                        "start": {"dateTime": e.begin.isoformat()},
-                        "end": {"dateTime": e.end.isoformat()},
+                        # Same shape as Google: {"date"} for all-day, local {"dateTime"} otherwise
+                        "start": {"date": e.begin.date().isoformat()} if all_day else {"dateTime": begin.isoformat()},
+                        "end": {"date": e.end.date().isoformat()} if all_day else {"dateTime": e.end.to(get_local_timezone()).isoformat()},
                         "location": location,
                         "description": description,
                         "id": hashlib.md5(id_source.encode("utf-8")).hexdigest(),
@@ -1107,10 +1055,10 @@ def _deduplicate_events(events: list, url: str) -> list:
 
 
 def get_ics_events(start_date, end_date, url):
-    """Fetch events from ICS calendar with robust error handling and circuit breaker."""
+    """Fetch events from an ICS calendar. Returns None on failure, a list (maybe empty) on success."""
     if is_calendar_circuit_open(url):
         logger.debug(f"Circuit breaker open for ICS calendar {url}, skipping")
-        return []
+        return None
 
     try:
         logger.debug(f"Fetching ICS events from {url}")
@@ -1118,17 +1066,19 @@ def get_ics_events(start_date, end_date, url):
 
         content = _fetch_ics_content(url)
         if content is None:
-            return []
+            return None
 
         content = _validate_ics_content(content, url)
         if content is None:
-            return []
+            return None
 
         cal = _parse_ics_calendar(content, url)
         if cal is None:
-            return []
+            return None
 
-        events = _extract_ics_events(cal, url, start_date, end_date)
+        # Only trust UIDs when every VEVENT has one (else ics invents random ones)
+        has_uids = len(re.findall(r"^UID[:;]", content, re.M)) >= content.count("BEGIN:VEVENT")
+        events = _extract_ics_events(cal, url, start_date, end_date, has_uids)
         deduped = _deduplicate_events(events, url)
 
         record_calendar_success(url)
@@ -1146,29 +1096,29 @@ def get_ics_events(start_date, end_date, url):
         else:
             update_metrics("requests_failed")
             update_metrics("network_errors")
-        return []
+        return None
     except requests.exceptions.RequestException as e:
         logger.warning(f"Network error fetching ICS calendar {url}: {e}")
         record_calendar_failure(url)
         update_metrics("requests_failed")
         update_metrics("network_errors")
-        return []
+        return None
     except (ssl.SSLError, OSError) as e:
         if is_ssl_error(e):
             logger.warning(f"SSL error fetching ICS calendar {url}: {e}")
             record_calendar_failure(url)
             update_metrics("requests_failed")
             update_metrics("network_errors")
-            return []
+            return None
         raise
     except Exception as e:
         logger.exception(f"Unexpected error fetching/parsing ICS calendar {url}: {e}")
         record_calendar_failure(url)
         update_metrics("requests_failed")
-        return []
+        return None
 
 def get_events(source_meta, start_date, end_date):
-    """Fetch events from a calendar source with comprehensive error handling."""
+    """Fetch events from a calendar source. Returns None when the fetch failed, so callers can tell it from an empty calendar."""
     try:
         logger.debug(f"Getting events from source: {source_meta['name']} ({source_meta['type']})")
         
@@ -1185,17 +1135,21 @@ def get_events(source_meta, start_date, end_date):
             logger.error(f"Missing required fields in source metadata: {source_meta}")
             return []
         
-        # Check if this source has validation errors and should be skipped
-        if source_meta.get("error"):
-            error_type = source_meta.get("error_type", "unknown")
-            if error_type in ["authentication", "forbidden", "not_found", "method_not_allowed"]:
-                # Only log this occasionally to avoid spam
-                if source_meta.get("cached_at", 0) + 3600 < time.time():  # Log once per hour
-                    logger.info(f"Skipping calendar '{source_name}' - {error_type} error (will retry in {(6 if error_type in ['authentication', 'forbidden', 'not_found'] else 24)}h)")
-                    source_meta["cached_at"] = time.time()  # Update to reduce log frequency
+        # Sources that failed validation with a config-type error are skipped,
+        # but re-validated once the cached error expires (6h/24h) -- otherwise one
+        # bad probe at startup (e.g. a Cloudflare 403) would hide it until /reload
+        if source_type == "ics" and source_meta.get("error_type") in ["authentication", "forbidden", "not_found", "method_not_allowed"]:
+            fresh = fetch_ics_calendar_metadata(source_id)
+            if fresh.get("error"):
+                logger.debug(f"Skipping calendar '{source_name}' - {fresh.get('error_type')} error")
                 return []
-            # For other error types (timeout, connection, etc.), still try to fetch
-            # as they might be temporary issues
+            # Recovered: update in place, since GROUPED_CALENDARS holds this dict
+            logger.info(f"Calendar '{source_name}' validated again as '{fresh['name']}'")
+            tag = source_meta.get("tag")
+            source_meta.clear()
+            source_meta.update(fresh, tag=tag)
+            source_name = source_meta["name"]
+        # Other error types (timeout, connection, ...) are still fetched: likely temporary
         
         # Route to appropriate fetcher based on source type
         if source_type == "google":
@@ -1209,7 +1163,7 @@ def get_events(source_meta, start_date, end_date):
     except Exception as e:
         source_name = source_meta.get("name", "Unknown") if isinstance(source_meta, dict) else "Unknown"
         logger.exception(f"Unexpected error getting events from source '{source_name}': {e}")
-        return []
+        return None
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🧬 compute_event_fingerprint                                       ║
@@ -1218,15 +1172,18 @@ def get_events(source_meta, start_date, end_date):
 def compute_event_fingerprint(event: dict) -> str:
     try:
         def normalize_time(val: str) -> str:
-            if "Z" in val:
-                val = val.replace("Z", "+00:00")
-            dt = datetime.fromisoformat(val)
+            # Naive UTC, so the same instant matches whatever offset (or all-day
+            # midnight-UTC form) it was stored with
+            dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+            if dt.tzinfo:
+                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
             return dt.isoformat(timespec="minutes")
 
         def clean(text: str) -> str:
             return " ".join(text.strip().split())
 
-        summary = clean(event.get("summary", ""))
+        # Original title, not the AI-simplified one: the simplification can vary between runs
+        summary = clean(event.get("original_summary") or event.get("summary", ""))
         location = clean(event.get("location", ""))
         description = clean(event.get("description", ""))
 
@@ -1262,7 +1219,8 @@ def compute_event_core_fingerprint(event: dict) -> str:
         def clean(text: str) -> str:
             return " ".join(text.strip().split())
 
-        summary = clean(event.get("summary", ""))
+        # Original title, not the AI-simplified one: the simplification can vary between runs
+        summary = clean(event.get("original_summary") or event.get("summary", ""))
         location = clean(event.get("location", ""))
         description = clean(event.get("description", ""))
         

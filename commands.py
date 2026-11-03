@@ -15,7 +15,7 @@ from events import (
     TAG_NAMES
 )
 from log import logger
-from utils import format_event, resolve_input_to_tags
+from utils import format_event, resolve_input_to_tags, event_local_date
 from resilience import async_retry_with_backoff
 from views import (
     build_event_pages,
@@ -63,6 +63,7 @@ def check_channel_permissions(channel, bot_member):
 # ║ Sends an embed to the announcement channel, optionally with image ║
 # ╚════════════════════════════════════════════════════════════════════╝
 async def send_embed(bot, embed: discord.Embed = None, title: str = "", description: str = "", color: int = 5814783, image_path: str | None = None, view: discord.ui.View | None = None):
+    """Send to the announcement channel. Returns the (last) sent message, or None on failure."""
     try:
         if isinstance(embed, str):
             logger.warning("send_embed() received a string instead of an Embed. Converting values assuming misuse.")
@@ -118,7 +119,7 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
                 main_embed.set_footer(text=embed.footer.text)
                 
             # Send the main embed first
-            await _retry_discord_operation(lambda: channel.send(embed=main_embed))
+            msg = await _retry_discord_operation(lambda: channel.send(embed=main_embed))
             
             # Then send fields as separate embeds, grouping a few fields per embed
             field_groups = []
@@ -149,9 +150,9 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
                 for field in group:
                     continuation_embed.add_field(name=field.name, value=field.value, inline=field.inline)
                     
-                await _retry_discord_operation(lambda: channel.send(embed=continuation_embed))
+                msg = await _retry_discord_operation(lambda: channel.send(embed=continuation_embed))
                 
-            return
+            return msg
             
         # Process image if provided
         file = None
@@ -173,17 +174,19 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
         # Store message reference so View can disable buttons on timeout
         if view is not None and hasattr(view, "message") and msg:
             view.message = msg
-            
+        return msg
+
     except Exception as e:
         logger.exception(f"Error in send_embed: {e}")
+        return None
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📅 post_tagged_events                                              ║
 # ║ Sends an embed of events for a specific tag on a given day        ║
-# ║ Returns the list of posted events (empty if nothing was posted)   ║
+# ║ Returns posted events ([] if none to post, None if send failed)   ║
 # ╚════════════════════════════════════════════════════════════════════╝
-async def post_tagged_events(bot, tag: str, day: datetime.date) -> list:
+async def post_tagged_events(bot, tag: str, day: datetime.date) -> list | None:
     try:
         calendars = GROUPED_CALENDARS.get(tag)
         if not calendars:
@@ -196,16 +199,14 @@ async def post_tagged_events(bot, tag: str, day: datetime.date) -> list:
         for meta in calendars:
             try:
                 # Run the blocking fetch (requests + retry sleeps) off the event loop
-                events = await asyncio.to_thread(get_events, meta, day, day)
+                events = await asyncio.to_thread(get_events, meta, day, day) or []
                 all_events.extend([(meta["name"], e) for e in events])
             except Exception as e:
                 logger.exception(f"Error getting events for {meta['name']}: {e}")
 
         for source_name, event in all_events:
             start_str = event["start"].get("dateTime", event["start"].get("date"))
-            dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
-            event_date = dt.date()
-            if event_date == day:
+            if event_local_date(start_str) == day:
                 events_by_source[source_name].append(event)
 
         if not events_by_source:
@@ -219,7 +220,8 @@ async def post_tagged_events(bot, tag: str, day: datetime.date) -> list:
             color=get_color_for_tag(tag),
         )
         view = PaginatedEmbedView(pages, epp)
-        await send_embed(bot, embed=pages[0], view=view)
+        if not await send_embed(bot, embed=pages[0], view=view):
+            return None
         return [ev for evs in events_by_source.values() for ev in evs]
 
     except Exception as e:
@@ -231,31 +233,32 @@ async def post_tagged_events(bot, tag: str, day: datetime.date) -> list:
 # ║ 📆 post_tagged_week                                                ║
 # ║ Sends an embed of the weekly schedule for a given calendar tag    ║
 # ╚════════════════════════════════════════════════════════════════════╝
-async def post_tagged_week(bot, tag: str, monday: datetime.date):
+async def post_tagged_week(bot, tag: str, monday: datetime.date) -> bool:
+    """Post the week for a tag. False only if sending to Discord failed."""
     try:
         calendars = GROUPED_CALENDARS.get(tag)
         if not calendars:
             logger.warning(f"No calendars for tag {tag}")
-            return
+            return True
 
         end = monday + timedelta(days=6)
         all_events = []
         for meta in calendars:
             try:
                 # Run the blocking fetch (requests + retry sleeps) off the event loop
-                all_events += await asyncio.to_thread(get_events, meta, monday, end)
+                all_events += await asyncio.to_thread(get_events, meta, monday, end) or []
             except Exception as e:
                 logger.exception(f"Error getting weekly events for {meta['name']}: {e}")
 
         if not all_events:
             logger.debug(f"Skipping {tag} — no weekly events from {monday} to {end}")
-            return
+            return True
 
         events_by_day = defaultdict(list)
         for e in all_events:
-            start_str = e["start"].get("dateTime", e["start"].get("date"))
-            dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")) if "T" in start_str else datetime.fromisoformat(start_str)
-            events_by_day[dt.date()].append(e)
+            day = event_local_date(e["start"].get("dateTime", e["start"].get("date")))
+            if day:
+                events_by_day[day].append(e)
 
         pages, epp = build_week_pages(
             events_by_day,
@@ -265,9 +268,10 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date):
             monday=monday,
         )
         view = PaginatedEmbedView(pages, epp)
-        await send_embed(bot, embed=pages[0], view=view)
+        return bool(await send_embed(bot, embed=pages[0], view=view))
     except Exception as e:
         logger.exception(f"Error in post_tagged_week for tag {tag} starting {monday}: {e}")
+        return True  # a bug, not an outage: retrying won't help
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -283,13 +287,6 @@ async def autocomplete_tag(interaction: discord.Interaction, current: str):
     return [
         app_commands.Choice(name=tag, value=tag)
         for tag in get_known_tags() if current.lower() in tag.lower()
-    ]
-
-
-async def autocomplete_range(interaction: discord.Interaction, current: str):
-    return [
-        app_commands.Choice(name=r, value=r)
-        for r in ["today", "week"] if current.lower() in r
     ]
 
 
@@ -319,7 +316,7 @@ async def search_events(
     tag: str | None = None,
 ) -> tuple[list[discord.Embed], list[list[dict]]]:
     """Search upcoming events matching *query*. Returns paginated pages."""
-    from utils import get_today, parse_date_string, get_local_timezone
+    from utils import get_today
 
     today = get_today()
     end = today + timedelta(days=days_ahead)
@@ -331,7 +328,7 @@ async def search_events(
     for t in tags:
         for meta in GROUPED_CALENDARS.get(t, []):
             try:
-                events = await asyncio.to_thread(get_events, meta, today, end)
+                events = await asyncio.to_thread(get_events, meta, today, end) or []
                 for ev in events:
                     title = (ev.get("summary") or "").lower()
                     orig = (ev.get("original_summary") or "").lower()
@@ -353,13 +350,11 @@ async def search_events(
         return [embed], [[]]
 
     # Group by date for a clean display
-    local_tz = get_local_timezone()
     events_by_day: dict = defaultdict(list)
     for ev in matches:
-        start_str = ev["start"].get("dateTime", ev["start"].get("date", ""))
-        dt = parse_date_string(start_str, local_tz)
-        if dt:
-            events_by_day[dt.date()].append(ev)
+        day = event_local_date(ev["start"].get("dateTime", ev["start"].get("date", "")))
+        if day:
+            events_by_day[day].append(ev)
 
     pages, epp = build_week_pages(
         events_by_day,

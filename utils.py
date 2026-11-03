@@ -72,7 +72,7 @@ def emoji_for_event(title: str) -> str:
         
     try:
         title = title.lower()
-        if "class" in title or "lecture" in title or "em" in title or "ia" in title:
+        if "class" in title or "lecture" in title or re.search(r"\b(em|ia)\b", title):
             return "📚"
         if "meeting" in title:
             return "📞"
@@ -125,12 +125,20 @@ def parse_date_string(date_str: str, default_timezone=None):
             dt = dt.replace(tzinfo=tz.UTC)
             return dt.astimezone(default_timezone)
             
-        # Normal case with timezone info
-        return datetime.fromisoformat(date_str)
+        # Normal case with timezone info: show it in the bot's timezone
+        return datetime.fromisoformat(date_str).astimezone(default_timezone)
         
     except (ValueError, TypeError) as e:
         logger.warning(f"Failed to parse date string '{date_str}': {e}")
         return None
+
+
+def event_local_date(start_str: str):
+    """Calendar date of an event start in the bot's timezone (None if unparseable)."""
+    dt = parse_date_string(start_str)
+    if dt is None:
+        return None
+    return dt.astimezone(get_local_timezone()).date() if "T" in start_str else dt.date()
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -214,23 +222,17 @@ def is_in_current_week(event: dict, reference: date = None) -> bool:
             
         reference = reference or get_today()
         monday = get_monday_of_week(reference)
-        week_range = {monday + timedelta(days=i) for i in range(7)}
-        
-        # Get and validate start date
+
         start_data = event.get("start", {})
         if not isinstance(start_data, dict):
             return False
-            
         start_str = start_data.get("dateTime", start_data.get("date", ""))
         if not start_str:
             return False
-            
-        # Parse the date
-        dt = parse_date_string(start_str)
-        if not dt:
-            return False
-            
-        return dt.date() in week_range
+
+        # Same local-date rule as the agenda views
+        day = event_local_date(start_str)
+        return day is not None and monday <= day <= monday + timedelta(days=6)
     except Exception as e:
         logger.exception(f"Error checking if event is in current week: {e}")
         return False

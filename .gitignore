@@ -1,4 +1,5 @@
 .env
+service_account.json
 .comment_system.md
 __pycache__/
 *.pyc

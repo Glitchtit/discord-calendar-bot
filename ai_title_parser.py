@@ -4,7 +4,6 @@ import openai
 from typing import Dict, Optional
 from log import logger
 import os
-from functools import lru_cache
 
 class AITitleParser:
     """OpenAI-powered title parser that intelligently simplifies calendar event titles."""
@@ -46,7 +45,8 @@ class AITitleParser:
                 logger.warning("OPENAI_API_KEY not found in environment variables. Falling back to pattern-based parsing.")
                 return
                 
-            self.client = openai.OpenAI(api_key=api_key)
+            # Runs inside the calendar fetch: a hung call must not outlast the fetch timeout
+            self.client = openai.OpenAI(api_key=api_key, timeout=10.0, max_retries=1)
             logger.info("OpenAI client initialized successfully")
             
         except Exception as e:
@@ -500,18 +500,9 @@ Return ONLY the simplified title in the ORIGINAL language, nothing else."""
         words = [w for w in title.split() if len(w) > 2]
         return words[:3]
 
-    def clear_cache(self):
-        """Clear the title cache."""
-        self._title_cache.clear()
-        logger.debug("Title cache cleared")
-
 # Global instance
 ai_parser = AITitleParser()
 
 def simplify_event_title(title: str) -> str:
     """Public function to simplify event titles using OpenAI."""
     return ai_parser.simplify_title(title)
-
-def clear_title_cache():
-    """Public function to clear the title cache."""
-    ai_parser.clear_cache()

@@ -1,52 +1,11 @@
-#!/usr/bin/env python3
 """
-Calendar Health Monitoring Utility
-
-This script provides functions to monitor calendar processing health and can be
-imported by other modules or run standalone to check current status.
+Calendar health reporting, used by the /health, /log_health and /calendars
+commands and the periodic health monitor task. Metrics live in the bot
+process's memory, so there is no standalone mode.
 """
-
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from events import get_metrics_summary, get_circuit_breaker_status, log_metrics_summary
 from log import logger
-
-def print_health_status():
-    """Print detailed health status to console."""
-    print("=" * 60)
-    print("Calendar System Health Status")
-    print("=" * 60)
-    
-    # Get metrics
-    metrics = get_metrics_summary()
-    print(f"\n📊 Processing Metrics (last {metrics['duration_minutes']:.1f} minutes):")
-    print(f"   Total requests: {metrics['requests_total']}")
-    print(f"   Successful: {metrics['requests_successful']}")
-    print(f"   Failed: {metrics['requests_failed']}")
-    print(f"   Success rate: {metrics['success_rate_percent']}%")
-    print(f"   Events processed: {metrics['events_processed']}")
-    
-    print(f"\n⚠️  Error Breakdown:")
-    print(f"   Parsing errors: {metrics['parsing_errors']}")
-    print(f"   Network errors: {metrics['network_errors']}")
-    print(f"   Auth errors: {metrics['auth_errors']}")
-    
-    # Get circuit breaker status
-    breakers = get_circuit_breaker_status()
-    print(f"\n🚫 Circuit Breakers ({len(breakers)} active):")
-    if not breakers:
-        print("   ✅ No circuit breakers active - all calendars operational")
-    else:
-        for calendar_id, status in breakers.items():
-            backoff_min = status['backoff_remaining_seconds'] / 60
-            print(f"   🔴 {calendar_id[:50]}...")
-            print(f"      Failures: {status['failure_count']}")
-            print(f"      Last failure: {status['last_failure']}")
-            print(f"      Retry in: {backoff_min:.1f} minutes")
-    
-    print("\n" + "=" * 60)
 
 def get_health_summary() -> dict:
     """Get a summary of system health for programmatic use."""
@@ -215,52 +174,3 @@ def get_calendar_summary() -> dict:
     except Exception as e:
         logger.exception(f"Error getting calendar summary: {e}")
         return {"error": str(e)}
-
-if __name__ == "__main__":
-    """Run standalone health check."""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Calendar Health Monitor")
-    parser.add_argument("--json", action="store_true", help="Output health data as JSON")
-    parser.add_argument("--watch", action="store_true", help="Continuously monitor health (every 60s)")
-    parser.add_argument("--quiet", "-q", action="store_true", help="Only log to system logs, no console output")
-    
-    args = parser.parse_args()
-    
-    try:
-        if args.watch:
-            print("Starting continuous health monitoring (press Ctrl+C to stop)...")
-            import time
-            while True:
-                if not args.quiet:
-                    from datetime import datetime
-                    print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]")
-                    if args.json:
-                        import json
-                        health = get_health_summary()
-                        print(json.dumps(health, indent=2, default=str))
-                    else:
-                        print_health_status()
-                
-                log_health_status()
-                time.sleep(60)
-        
-        elif args.json:
-            import json
-            health = get_health_summary()
-            print(json.dumps(health, indent=2, default=str))
-        
-        elif not args.quiet:
-            print_health_status()
-        
-        # Always log to system logs unless specifically requested not to
-        if not args.quiet:
-            log_health_status()
-        
-    except KeyboardInterrupt:
-        if args.watch:
-            print("\nHealth monitoring stopped.")
-        sys.exit(0)
-    except Exception as e:
-        print(f"Error checking health: {e}")
-        sys.exit(1)

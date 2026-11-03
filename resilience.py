@@ -201,16 +201,17 @@ def retry_with_backoff(
     initial_delay: float = 1.0,
     backoff_factor: float = 2.0,
     max_delay: float = 30.0,
+    retry_if: Callable[[BaseException], bool] = _is_retryable,
 ) -> T:
     """Retry a synchronous function with exponential backoff and jitter.
 
-    Retries on all exceptions except KeyboardInterrupt and permanent
-    HTTP client errors (4xx other than 429).
+    By default retries on all exceptions except KeyboardInterrupt and
+    permanent HTTP client errors (4xx other than 429).
     """
     @retry(
         stop=stop_after_attempt(max_retries + 1),
         wait=wait_exponential_jitter(initial=initial_delay, max=max_delay, jitter=1),
-        retry=retry_if_exception(_is_retryable),
+        retry=retry_if_exception(retry_if),
         reraise=True,
     )
     def _wrapped():

@@ -7,7 +7,7 @@ import platform
 import tempfile
 from datetime import datetime
 import atexit
-from logging.handlers import TimedRotatingFileHandler, MemoryHandler
+from logging.handlers import TimedRotatingFileHandler
 from logging.handlers import QueueHandler, QueueListener
 import queue
 from colorlog import ColoredFormatter
@@ -185,14 +185,6 @@ else:
                 file_handler.setLevel(logging.DEBUG if DEBUG else logging.INFO)
                 handlers.append(file_handler)
                 
-                # Add a buffered handler to protect against crashes
-                memory_handler = MemoryHandler(
-                    capacity=1000,          # Buffer up to 1000 records
-                    flushLevel=logging.ERROR, # Flush immediately on errors
-                    target=file_handler
-                )
-                handlers.append(memory_handler)
-                
                 sys.stderr.write(f"log: logging to {active_log_file}\n")
             except Exception as e:
                 sys.stderr.write(f"log: error setting up file handler: {e}\n")
@@ -224,12 +216,7 @@ else:
         # Register cleanup for application exit
         def cleanup():
             try:
-                # Flush memory handler if exists
-                for handler in handlers:
-                    if isinstance(handler, MemoryHandler):
-                        handler.flush()
-                
-                # Stop the queue listener
+                # Stop the queue listener (flushes queued records to the handlers)
                 if hasattr(logger, '_listener'):
                     logger._listener.stop()
                     

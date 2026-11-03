@@ -26,6 +26,7 @@ from events import (
     get_color_for_tag,
     load_previous_events,
     save_current_events_for_key,
+    write_json_atomic,
     compute_event_fingerprint,
     compute_event_core_fingerprint
 )
@@ -56,19 +57,18 @@ _last_weekly_post_date = None
 _last_daily_post_date = None
 
 
-async def _fetch_calendar_events_safe(meta: dict, start, end, context: str = "", timeout: int = 300) -> list:
+async def _fetch_calendar_events_safe(meta: dict, start, end, context: str = "", timeout: int = 300) -> list | None:
     """Fetch events from a single calendar with timeout and comprehensive error handling.
 
-    Returns a list of events (empty on failure). Never raises except for
-    CancelledError and KeyboardInterrupt.
+    Returns a list of events, or None if the fetch failed. Never raises except
+    for CancelledError and KeyboardInterrupt.
     """
     cal_name = meta.get("name", "Unknown")
     try:
-        events = await asyncio.wait_for(
+        return await asyncio.wait_for(
             asyncio.to_thread(get_events, meta, start, end),
             timeout=timeout,
         )
-        return events or []
     except asyncio.CancelledError:
         logger.info(f"Event fetching was cancelled{' during ' + context if context else ''}")
         raise
@@ -83,7 +83,25 @@ async def _fetch_calendar_events_safe(meta: dict, start, end, context: str = "",
         logger.error(f"Data type error fetching events from calendar {cal_name}: {e}")
     except Exception as e:
         logger.exception(f"Error fetching events from calendar {cal_name}{' during ' + context if context else ''}: {e}")
-    return []
+    return None
+
+
+def _event_start_key(e: dict) -> str:
+    return e["start"].get("dateTime", e["start"].get("date", ""))
+
+
+async def _fetch_tag_events(calendars: list, start, end, context: str = "") -> list | None:
+    """All events for a tag, sorted. None if ANY calendar failed: a partial result
+    would make the failed calendar's events look removed."""
+    all_events = []
+    for meta in calendars:
+        events = await _fetch_calendar_events_safe(meta, start, end, context=context)
+        if events is None:
+            logger.info(f"Calendar {meta.get('name', 'Unknown')} failed during {context}; skipping tag this cycle")
+            return None
+        all_events += events
+    all_events.sort(key=_event_start_key)
+    return all_events
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔒 TaskLock                                                        ║
@@ -273,7 +291,9 @@ def detect_event_changes(prev_events: list, curr_events: list, today) -> tuple:
         # Filter to current week
         added_week = [e for e in added if is_in_current_week(e, today)]
         removed_week = [e for e in removed if is_in_current_week(e, today)]
-        changed_week = [(old, new) for old, new in changed if is_in_current_week(new, today)]
+        # Either side in this week counts, so an event moved out of the week is still announced
+        changed_week = [(old, new) for old, new in changed
+                        if is_in_current_week(new, today) or is_in_current_week(old, today)]
         
         return added_week, removed_week, changed_week
         
@@ -300,28 +320,34 @@ async def schedule_daily_posts(bot):
             local_now = datetime.now(tz=get_local_timezone())
             today = local_now.date()
 
-            # Monday 08:00 hour — Post weekly summaries (once per day).
-            # Matching the whole hour instead of an exact minute means a loop
-            # iteration that drifts or gets skipped can't silently drop the post.
-            if local_now.weekday() == 0 and local_now.hour == 8 and _last_weekly_post_date != today:
+            # Posts go out in a 08:00–08:14 window rather than an exact minute, so loop
+            # drift can't drop them; the window is short so a restart later in the
+            # morning doesn't post a second time (the markers live in memory only).
+            in_window = local_now.hour == 8 and local_now.minute < 15
+
+            # Monday — weekly summaries
+            if local_now.weekday() == 0 and in_window and _last_weekly_post_date != today:
                 _last_weekly_post_date = today
                 logger.info("Starting weekly summary posting")
                 monday = get_monday_of_week(today)
 
+                results = []
                 for tag in list(GROUPED_CALENDARS.keys()):  # Use list() to prevent dict changed during iteration
-                    try:
-                        await post_tagged_week(bot, tag, monday)
-                        # Small delay between posts to avoid rate limits
-                        await asyncio.sleep(1)
-                    except Exception as e:
-                        logger.exception(f"Error posting weekly summary for tag {tag}: {e}")
+                    results.append(await post_tagged_week(bot, tag, monday))
+                    # Small delay between posts to avoid rate limits
+                    await asyncio.sleep(1)
+                if results and not any(results):
+                    # Every send failed (Discord/channel down): retry next minute
+                    logger.warning("Weekly posts all failed to send; will retry")
+                    _last_weekly_post_date = None
 
-            # Daily 08:00 hour — Post today's agenda and greeting (once per day,
-            # from minute 1 so the Monday weekly post goes out first)
-            if local_now.hour == 8 and local_now.minute >= 1 and _last_daily_post_date != today:
+            # Daily agenda and greeting (from minute 1 so the Monday weekly post goes out first)
+            if in_window and local_now.minute >= 1 and _last_daily_post_date != today:
                 _last_daily_post_date = today
                 logger.info("Starting daily posts with greeting")
-                await post_todays_happenings(bot, include_greeting=True)
+                if not await post_todays_happenings(bot, include_greeting=True):
+                    logger.warning("Daily posts all failed to send; will retry")
+                    _last_daily_post_date = None
 
             # Update task health status
             update_task_health(task_name, True)
@@ -375,21 +401,20 @@ async def watch_for_event_changes(bot):
                 earliest = today - timedelta(days=30)
                 latest = today + timedelta(days=90)
 
-                # Fetch and fingerprint all events in the date window
-                all_events = []
-                for meta in calendars:
-                    all_events += await _fetch_calendar_events_safe(meta, earliest, latest, context="change detection")
-                        
-                # Skip further processing if we couldn't fetch any events
+                all_events = await _fetch_tag_events(calendars, earliest, latest, context="change detection")
                 if not all_events:
                     continue
-                        
-                # Sort events reliably to ensure consistent fingerprinting
-                all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
 
                 # Compare with previous snapshot
                 key = f"{tag}_full"
-                prev_snapshot = load_previous_events().get(key, [])
+                snapshots = load_previous_events()
+                if key not in snapshots:
+                    # No baseline yet (failed startup snapshot, new tag): record one
+                    # silently instead of announcing every event as "added"
+                    save_current_events_for_key(key, all_events)
+                    logger.info(f"No snapshot for '{tag}' yet; saved baseline of {len(all_events)} events")
+                    continue
+                prev_snapshot = snapshots[key]
                 
                 # Use improved change detection that distinguishes between added/removed/changed
                 added_week, removed_week, changed_week = detect_event_changes(prev_snapshot, all_events, today)
@@ -468,7 +493,7 @@ async def watch_for_event_changes(bot):
                     
                 else:
                     # Only save if we have data and it differs from previous
-                    if all_events and (len(all_events) != len(prev_snapshot)):
+                    if all_events and all_events != prev_snapshot:
                         save_current_events_for_key(key, all_events)
                         logger.debug(f"Updated snapshot for '{tag}' with {len(all_events)} events")
                     else:
@@ -513,18 +538,20 @@ async def monitor_task_health(bot):
             all_tasks = {
                 "schedule_daily_posts": schedule_daily_posts,
                 "watch_for_event_changes": watch_for_event_changes,
-                "verification_watchdog": verification_watchdog
+                "verification_watchdog": verification_watchdog,
+                "calendar_health_monitor": calendar_health_monitor,
+                "check_reminders": check_reminders,
             }
             
-            for task_name, task_func in all_tasks.items():
+            for name, task_func in all_tasks.items():
                 # Check error count
-                error_count = _task_error_counts.get(task_name, 0)
+                error_count = _task_error_counts.get(name, 0)
                 if error_count >= _MAX_CONSECUTIVE_ERRORS:
-                    logger.warning(f"Task {task_name} has {error_count} consecutive errors. Restarting...")
+                    logger.warning(f"Task {name} has {error_count} consecutive errors. Restarting...")
                     if task_func.is_running():
                         task_func.cancel()
-                    _task_error_counts[task_name] = 0
-                    _task_locks[task_name] = False  # Release lock if stuck
+                    _task_error_counts[name] = 0
+                    _task_locks[name] = False  # Release lock if stuck
                     
                     # Wait a moment before restarting
                     await asyncio.sleep(2)
@@ -532,15 +559,15 @@ async def monitor_task_health(bot):
                     continue
                     
                 # Check for deadlocks (task locked for too long)
-                if _task_locks.get(task_name, False):
-                    last_success = _task_last_success.get(task_name)
+                if _task_locks.get(name, False):
+                    last_success = _task_last_success.get(name)
                     if last_success and (now - last_success) > _HEALTH_CHECK_INTERVAL:
-                        logger.warning(f"Task {task_name} appears deadlocked. Forcing lock release.")
-                        _task_locks[task_name] = False
+                        logger.warning(f"Task {name} appears deadlocked. Forcing lock release.")
+                        _task_locks[name] = False
                 
                 # Ensure task is running
                 if not task_func.is_running():
-                    logger.warning(f"Task {task_name} is not running. Restarting...")
+                    logger.warning(f"Task {name} is not running. Restarting...")
                     try_start_task(task_func, bot)
                     
             # Self-update health status
@@ -554,13 +581,15 @@ async def monitor_task_health(bot):
 # ║ 📜 post_todays_happenings                                          ║
 # ║ Posts all events for today and an optional greeting and image     ║
 # ╚════════════════════════════════════════════════════════════════════╝
-async def post_todays_happenings(bot, include_greeting: bool = False):
+async def post_todays_happenings(bot, include_greeting: bool = False) -> bool:
+    """Post today's events (and greeting). False only if every Discord send failed."""
     try:
         today = get_today()
         all_events_for_greeting = []
         tag_count = 0
         success_count = 0
         error_count = 0
+        send_failures = 0
 
         # Post events for each tag
         for tag in GROUPED_CALENDARS:
@@ -572,6 +601,8 @@ async def post_todays_happenings(bot, include_greeting: bool = False):
                 if posted_events:
                     success_count += 1
                     all_events_for_greeting += posted_events
+                elif posted_events is None:
+                    send_failures += 1
 
                 # Add small delay between posts to avoid rate limiting
                 if tag_count > 1:
@@ -579,6 +610,9 @@ async def post_todays_happenings(bot, include_greeting: bool = False):
             except Exception as e:
                 error_count += 1
                 logger.exception(f"Error posting events for tag {tag}: {e}")
+
+        if send_failures and not success_count:
+            return False
 
         # Generate and post greeting if requested
         if include_greeting and (success_count > 0 or tag_count == 0):
@@ -588,7 +622,7 @@ async def post_todays_happenings(bot, include_greeting: bool = False):
             # Check if AI is enabled before attempting generation
             if not AI_TOGGLE:
                 logger.info("AI features disabled via AI_TOGGLE. Skipping greeting generation.")
-                return # Exit the function early if AI is off
+                return True
                 
             while retry_count <= max_retries:
                 try:
@@ -654,8 +688,10 @@ async def post_todays_happenings(bot, include_greeting: bool = False):
         # Log error summary 
         if error_count > 0:
             logger.warning(f"Completed with {error_count} errors, {success_count} successes")
+        return True
     except Exception as e:
         logger.exception(f"Error in post_todays_happenings: {e}")
+        return True  # a bug, not an outage: retrying won't help
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
@@ -668,75 +704,24 @@ async def initialize_event_snapshots():
         today = get_today()
         earliest = today - timedelta(days=30)
         latest = today + timedelta(days=90)
-        
-        total_calendars = sum(len(cals) for cals in GROUPED_CALENDARS.values())
-        processed = 0
+
         failed = 0
-
         # Process tags sequentially to avoid overloading APIs
-        for tag, calendars in GROUPED_CALENDARS.items():
-            try:
-                # Add a delay between tag processing to avoid rate limits
-                if processed > 0:
-                    await asyncio.sleep(2)
-                    
-                # Gather events from all calendars for this tag
-                all_events = []
-                for meta in calendars:
-                    try:
-                        # Wrap event fetching with comprehensive error handling
-                        try:
-                            # Add timeout to prevent hanging during initialization (5 minutes max)
-                            events = await asyncio.wait_for(
-                                asyncio.to_thread(get_events, meta, earliest, latest),
-                                timeout=300
-                            )
-                            if events:
-                                all_events += events
-                                processed += 1
-                            else:
-                                logger.debug(f"No events returned from calendar {meta.get('name', 'Unknown')} during initialization")
-                                processed += 1  # Still count as processed
-                        except asyncio.TimeoutError:
-                            logger.warning(f"Timeout during initialization for calendar {meta.get('name', 'Unknown')}")
-                            failed += 1
-                        except asyncio.CancelledError:
-                            logger.info("Event fetching was cancelled during initialization")
-                            raise  # Re-raise cancellation
-                        except MemoryError:
-                            logger.error(f"Memory error during initialization for calendar {meta.get('name', 'Unknown')} - calendar may be too large")
-                            failed += 1
-                        except (TypeError, AttributeError, KeyError) as type_error:
-                            logger.error(f"Data type error during initialization for calendar {meta.get('name', 'Unknown')}: {type_error}")
-                            failed += 1
-                        except Exception as calendar_error:
-                            failed += 1
-                            logger.exception(f"Error fetching events for calendar {meta.get('name', 'Unknown')}: {calendar_error}")
-                        
-                        # Small delay between calendar fetches
-                        await asyncio.sleep(0.5)
-                        
-                    except KeyboardInterrupt:
-                        logger.info("Calendar initialization interrupted by user")
-                        raise
-                    except Exception as outer_error:
-                        failed += 1
-                        logger.exception(f"Outer error during initialization for calendar {meta.get('name', 'Unknown')}: {outer_error}")
-                
-                # Only save if we got events
-                if all_events:
-                    # Sort before saving for consistent fingerprinting
-                    all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
-                    save_current_events_for_key(f"{tag}_full", all_events)
-                    logger.debug(f"Initial snapshot saved for '{tag}' with {len(all_events)} events")
-                else:
-                    logger.warning(f"No events found for tag '{tag}' during initialization")
-            except Exception as e:
+        for i, (tag, calendars) in enumerate(list(GROUPED_CALENDARS.items())):
+            if i:
+                await asyncio.sleep(2)
+            all_events = await _fetch_tag_events(calendars, earliest, latest, context="initialization")
+            if all_events is None:
+                # Keep any older snapshot rather than saving a partial one
                 failed += 1
-                logger.exception(f"Error initializing snapshot for tag {tag}: {e}")
+                continue
+            save_current_events_for_key(f"{tag}_full", all_events)
+            logger.debug(f"Initial snapshot saved for '{tag}' with {len(all_events)} events")
 
-        status = "complete" if failed == 0 else f"partial (failed: {failed})"
-        logger.info(f"Initial snapshot {status}. Processed {processed}/{total_calendars} calendars.")
+        status = "complete" if failed == 0 else f"partial (failed tags: {failed})"
+        logger.info(f"Initial snapshot {status}.")
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         logger.exception(f"Error in initialize_event_snapshots: {e}")
 
@@ -759,17 +744,10 @@ async def verify_changes(tag: str, calendars: list, original_added: list, origin
         earliest = today - timedelta(days=30)
         latest = today + timedelta(days=90)
         
-        # Re-fetch current events
-        current_events = []
-        for meta in calendars:
-            current_events += await _fetch_calendar_events_safe(meta, earliest, latest, context="verification")
-        
+        current_events = await _fetch_tag_events(calendars, earliest, latest, context="verification")
         if not current_events:
-            logger.warning(f"No events found during verification for tag '{tag}'")
+            logger.warning(f"No events (or a failed source) during verification for tag '{tag}'; will re-detect next cycle")
             return [], [], []
-            
-        # Sort events reliably
-        current_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
         
         # Get previous snapshot for comparison
         key = f"{tag}_full"
@@ -865,89 +843,62 @@ async def process_pending_verifications(bot):
 
 async def process_single_verification(bot, tag: str):
     """Process verification for a single tag."""
-    global _pending_changes
-    
-    if tag not in _pending_changes:
-        logger.warning(f"Tag '{tag}' no longer in pending changes when processing verification")
+    # Pop up front: the watch loop and the watchdog both run verifications, and a
+    # tag left in _pending_changes during the fetch could be verified (and posted) twice
+    change_data = _pending_changes.pop(tag, None)
+    if change_data is None:
         return
-    
+
     logger.info(f"Starting verification process for tag '{tag}'")
     try:
-        change_data = _pending_changes[tag]
         calendars = GROUPED_CALENDARS.get(tag, [])
-        
         if not calendars:
             logger.warning(f"No calendars found for tag '{tag}' during verification")
-            del _pending_changes[tag]
             return
-        
-        logger.debug(f"Calling verify_changes for tag '{tag}' with {len(change_data['added_events'])} added, {len(change_data['removed_events'])} removed, and {len(change_data.get('changed_events', []))} changed events")
-        
-        # Verify the changes
+
         verified_added, verified_removed, verified_changed = await verify_changes(
             tag, calendars, change_data['added_events'], change_data['removed_events'], change_data.get('changed_events', [])
         )
-        
         logger.debug(f"Verification complete for tag '{tag}': {len(verified_added)} verified added, {len(verified_removed)} verified removed, {len(verified_changed)} verified changed")
-        
-        # If changes are verified, post them
-        if verified_added or verified_removed or verified_changed:
-            try:
-                description, color_hint = format_change_lines(
-                    verified_added, verified_removed, verified_changed
-                )
 
-                await send_embed(
-                    bot,
-                    title=f"📣 Event Changes – {get_name_for_tag(tag)}",
-                    description=description,
-                    color=color_hint,
-                )
-                logger.info(f"Posted verified changes for '{tag}': {len(verified_added)} added, {len(verified_removed)} removed, {len(verified_changed)} changed")
-                
-                # Update the snapshot with current events
-                await update_snapshot_after_verification(tag, calendars)
-                
-            except Exception as e:
-                logger.exception(f"Error posting verified changes for tag {tag}: {e}")
-        else:
-            # No verified changes - were false positives
+        if not (verified_added or verified_removed or verified_changed):
             logger.info(f"No verified changes for '{tag}' - original detection was false positive")
-            
-        # Remove from pending changes
-        if tag in _pending_changes:
-            del _pending_changes[tag]
-            
+            return
+
+        description, color_hint = format_change_lines(verified_added, verified_removed, verified_changed)
+        sent = await send_embed(
+            bot,
+            title=f"📣 Event Changes – {get_name_for_tag(tag)}",
+            description=description,
+            color=color_hint,
+        )
+        if not sent:
+            # Snapshot untouched, so the next watch cycle re-detects and re-posts
+            logger.warning(f"Could not post changes for '{tag}'; will retry on next detection")
+            return
+        logger.info(f"Posted verified changes for '{tag}': {len(verified_added)} added, {len(verified_removed)} removed, {len(verified_changed)} changed")
+
+        # Apply only what was posted: anything that changed since detection
+        # stays a diff and is announced next cycle instead of being absorbed
+        key = f"{tag}_full"
+        prev = load_previous_events().get(key, [])
+        save_current_events_for_key(key, apply_changes(prev, verified_added, verified_removed, verified_changed))
+
     except Exception as e:
         logger.exception(f"Error processing pending verification for tag '{tag}': {e}")
-        
-        # Increment verification attempt count
-        if tag in _pending_changes:
-            change_data = _pending_changes[tag]
-            change_data['verification_count'] = change_data.get('verification_count', 0) + 1
-            
-            # Remove if we've exceeded max attempts
-            if change_data['verification_count'] >= _MAX_VERIFICATION_ATTEMPTS:
-                logger.warning(f"Max verification attempts reached for tag '{tag}', discarding changes")
-                del _pending_changes[tag]
+        attempts = change_data.get('verification_count', 0) + 1
+        if attempts >= _MAX_VERIFICATION_ATTEMPTS:
+            logger.warning(f"Max verification attempts reached for tag '{tag}', discarding changes")
+        else:
+            # Re-queue for another attempt unless a newer detection already replaced it
+            _pending_changes.setdefault(tag, {**change_data, 'verification_count': attempts})
 
-async def update_snapshot_after_verification(tag: str, calendars: list):
-    """Update the event snapshot after successful verification."""
-    try:
-        today = get_today()
-        earliest = today - timedelta(days=30)
-        latest = today + timedelta(days=90)
-        all_events = []
-        
-        for meta in calendars:
-            all_events += await _fetch_calendar_events_safe(meta, earliest, latest, context="snapshot update")
-        
-        if all_events:
-            all_events.sort(key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")))
-            save_current_events_for_key(f"{tag}_full", all_events)
-            logger.debug(f"Updated snapshot for '{tag}' after verification with {len(all_events)} events")
-    except Exception as e:
-        logger.exception(f"Error updating snapshot after verification for tag '{tag}': {e}")
+def apply_changes(snapshot: list, added: list, removed: list, changed: list) -> list:
+    """Return snapshot with the given added/removed/changed events applied."""
+    drop = {compute_event_fingerprint(e) for e in removed}
+    drop |= {compute_event_fingerprint(old) for old, _ in changed}
+    kept = [e for e in snapshot if compute_event_fingerprint(e) not in drop]
+    return sorted(kept + list(added) + [new for _, new in changed], key=_event_start_key)
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔍 verification_watchdog                                           ║
@@ -1076,38 +1027,6 @@ def cleanup_stale_pending_changes():
     return len(stale_tags)
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# ║ 🐛 debug_verification_system                                       ║
-# ║ Utility function to help debug the verification system            ║
-# ╚════════════════════════════════════════════════════════════════════╝
-def debug_verification_system():
-    """Log debug information about the verification system."""
-    status = get_pending_changes_status()
-    current_time = datetime.now()
-    
-    lines = [
-        "=== Verification System Debug Info ===",
-        f"Current time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}",
-        f"Verification delay: {_VERIFICATION_DELAY.total_seconds()} seconds",
-        f"Total pending changes: {status['total_pending']}",
-    ]
-    
-    if status['tags']:
-        for tag, info in status['tags'].items():
-            queued_time = datetime.fromisoformat(info['timestamp'])
-            lines.append(f"Tag: {tag}")
-            lines.append(f"  Added: {info['added_count']}, Removed: {info['removed_count']}, Changed: {info.get('changed_count', 0)}")
-            lines.append(f"  Queued at: {queued_time.strftime('%H:%M:%S')}")
-            lines.append(f"  Elapsed: {info['time_elapsed_seconds']:.1f}s")
-            lines.append(f"  Remaining: {info['time_remaining_seconds']:.1f}s")
-            lines.append(f"  Ready: {info['ready_for_verification']}")
-            lines.append(f"  Attempts: {info['verification_attempts']}")
-    else:
-        lines.append("No pending changes")
-
-    logger.debug("\n".join(lines))
-
-
-# ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔔 Personal reminder system                                        ║
 # ║ DM users before their events start                                ║
 # ╚════════════════════════════════════════════════════════════════════╝
@@ -1118,6 +1037,10 @@ import os
 _REMINDERS_PATH = os.path.join(os.getenv("DATA_DIR", "/data"), "reminders.json")
 _REMINDERS_FALLBACK = os.path.join(os.path.dirname(__file__), "data", "reminders.json")
 _sent_reminders: set[str] = set()  # "user_id:event_id:date" dedup keys
+# tag -> (date, fetched_at, events). shortcut: an event created <5 min before its
+# start can miss its reminder; shorten _REMINDER_CACHE_SECONDS if that matters.
+_reminder_cache: dict = {}
+_REMINDER_CACHE_SECONDS = 300
 
 
 def _reminders_file() -> str:
@@ -1147,8 +1070,7 @@ def save_reminders(data: dict):
     path = _reminders_file()
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            json.dump(data, f, indent=2)
+        write_json_atomic(path, data, indent=2)
     except Exception as e:
         logger.warning(f"Failed to save reminders to {path}: {e}")
 
@@ -1200,9 +1122,15 @@ async def check_reminders(bot):
                 needed_tags.update(prefs.get("tags") or GROUPED_CALENDARS.keys())
             needed_tags &= set(GROUPED_CALENDARS.keys())
 
+            # Each tag is fetched at most every 5 min, not every minute, to spare the sources
             events_by_tag: dict = {}
             for tag in needed_tags:
+                cached = _reminder_cache.get(tag)
+                if cached and cached[0] == today and time.time() - cached[1] < _REMINDER_CACHE_SECONDS:
+                    events_by_tag[tag] = cached[2]
+                    continue
                 tag_events: list = []
+                complete = True
                 for meta in GROUPED_CALENDARS[tag]:
                     try:
                         events = await asyncio.wait_for(
@@ -1210,8 +1138,13 @@ async def check_reminders(bot):
                             timeout=30,
                         )
                     except Exception:
+                        events = None
+                    if events is None:
+                        complete = False
                         continue
-                    tag_events.extend(events or [])
+                    tag_events.extend(events)
+                if complete:
+                    _reminder_cache[tag] = (today, time.time(), tag_events)
                 events_by_tag[tag] = tag_events
 
             for user_id_str, prefs in reminders.items():

@@ -16,7 +16,8 @@ _openai_breaker = CircuitBreaker("openai", threshold=3, reset_after=300.0)
 # Initialize OpenAI client with API key from environment
 # Use safer initialization with error handling
 try:
-    client = OpenAI(api_key=OPENAI_API_KEY, timeout=30.0)  # Add explicit timeout
+    # OpenAI(api_key=None) raises, so only build the client when a key is set
+    client = OpenAI(api_key=OPENAI_API_KEY, timeout=30.0) if OPENAI_API_KEY else None
     if not OPENAI_API_KEY:
         logger.warning("OPENAI_API_KEY not set. AI-based features will be unavailable.")
 except Exception as e:

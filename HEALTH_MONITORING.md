@@ -38,33 +38,6 @@ Manually triggers health status logging to system logs.
 /log_health
 ```
 
-## Command Line Health Checker
-
-The `calendar_health.py` script can be run standalone for monitoring:
-
-**Basic usage:**
-```bash
-python calendar_health.py                    # Show current health status
-python calendar_health.py --json            # Output as JSON
-python calendar_health.py --watch           # Continuous monitoring
-python calendar_health.py --quiet           # Only log to system, no console
-```
-
-**Examples:**
-```bash
-# Check health once
-python calendar_health.py
-
-# Get machine-readable output
-python calendar_health.py --json
-
-# Monitor continuously 
-python calendar_health.py --watch
-
-# Run in background, only log to system
-python calendar_health.py --quiet
-```
-
 ## Automatic Health Monitoring
 
 The bot automatically:
