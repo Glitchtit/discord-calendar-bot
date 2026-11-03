@@ -2,6 +2,8 @@ from datetime import datetime, timedelta
 from dateutil import tz
 from discord.ext import tasks
 import asyncio
+import json
+import os
 import random
 import time
 from typing import Dict, Optional, Set
@@ -665,13 +667,18 @@ async def post_todays_happenings(bot, include_greeting: bool = False) -> bool:
                             logger.warning("Image generation timed out, continuing without image")
                         
                         # Send the greeting embed
-                        await send_embed(
-                            bot,
-                            title=f"The Morning Proclamation 📜 — {persona}",
-                            description=greeting,
-                            color=0xffe4b5,
-                            image_path=image_path
-                        )
+                        try:
+                            await send_embed(
+                                bot,
+                                title=f"The Morning Proclamation 📜 — {persona}",
+                                description=greeting,
+                                color=0xffe4b5,
+                                image_path=image_path
+                            )
+                        finally:
+                            # Discord keeps the uploaded copy; without this /data/art grows ~2 MB a day forever
+                            if image_path and os.path.exists(image_path):
+                                os.remove(image_path)
                     break  # Success, exit retry loop
                     
                 except asyncio.TimeoutError:
@@ -1031,12 +1038,10 @@ def cleanup_stale_pending_changes():
 # ║ DM users before their events start                                ║
 # ╚════════════════════════════════════════════════════════════════════╝
 
-import json
-import os
-
 _REMINDERS_PATH = os.path.join(os.getenv("DATA_DIR", "/data"), "reminders.json")
 _REMINDERS_FALLBACK = os.path.join(os.path.dirname(__file__), "data", "reminders.json")
-_sent_reminders: set[str] = set()  # "user_id:event_id:date" dedup keys
+_sent_reminders: set[str] = set()  # "user_id:event_id:date" dedup keys, persisted so restarts don't re-DM
+_sent_reminders_loaded = False
 # tag -> (date, fetched_at, events). shortcut: an event created <5 min before its
 # start can miss its reminder; shorten _REMINDER_CACHE_SECONDS if that matters.
 _reminder_cache: dict = {}
@@ -1050,6 +1055,10 @@ def _reminders_file() -> str:
         if parent and os.path.isdir(parent) and os.access(parent, os.W_OK):
             return path
     return _REMINDERS_FALLBACK
+
+
+def _sent_reminders_file() -> str:
+    return os.path.join(os.path.dirname(_reminders_file()), "sent_reminders.json")
 
 
 def load_reminders() -> dict:
@@ -1108,6 +1117,16 @@ async def check_reminders(bot):
             reminders = load_reminders()
             if not reminders:
                 return
+
+            global _sent_reminders_loaded
+            if not _sent_reminders_loaded:
+                try:
+                    with open(_sent_reminders_file(), encoding="utf-8") as f:
+                        _sent_reminders.update(json.load(f))
+                except (OSError, ValueError):
+                    pass
+                _sent_reminders_loaded = True
+            sent_before = set(_sent_reminders)
 
             now = datetime.now(tz=get_local_timezone())
             today = now.date()
@@ -1180,6 +1199,11 @@ async def check_reminders(bot):
             _sent_reminders.difference_update(
                 {k for k in _sent_reminders if not k.endswith(today_str)}
             )
+            if _sent_reminders != sent_before:
+                try:
+                    write_json_atomic(_sent_reminders_file(), sorted(_sent_reminders))
+                except OSError as e:
+                    logger.warning(f"Could not persist sent reminders: {e}")
 
             update_task_health(task_name, True)
         except Exception as e:

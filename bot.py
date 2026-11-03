@@ -2,7 +2,6 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
-import dateparser
 import asyncio
 import random
 import time
@@ -28,7 +27,7 @@ from tasks import (
     initialize_event_snapshots, start_all_tasks, post_todays_happenings,
     set_reminder, remove_reminder, load_reminders,
 )
-from utils import get_today, get_monday_of_week, resolve_input_to_tags
+from utils import get_today, get_monday_of_week, resolve_input_to_tags, parse_agenda_date
 from environ import AI_TOGGLE
 from views import PaginatedEmbedView
 
@@ -201,11 +200,10 @@ async def agenda_command(interaction: discord.Interaction, input: str, target: s
             any_posted = True  # Weekly always posts if calendars are valid
             label = f"week of {monday.strftime('%B %d')}"
         else:
-            parsed = dateparser.parse(input)
-            if not parsed:
-                await interaction.followup.send("Could not understand the date. Try 'today', 'week', or a real date.")
+            day = parse_agenda_date(input, today)
+            if not day:
+                await interaction.followup.send("Could not understand the date. Try 'today', 'tomorrow', 'friday', 'next monday' or 'DD.MM'.")
                 return
-            day = parsed.date()
             for tag in tags:
                 posted = await post_tagged_events(bot, tag, day)
                 any_posted |= bool(posted)

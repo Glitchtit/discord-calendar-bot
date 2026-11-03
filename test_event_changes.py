@@ -186,3 +186,36 @@ def test_errored_ics_source_is_revalidated(monkeypatch):
     monkeypatch.setattr(events, "get_ics_events", lambda s, e, url: ["ok"])
     assert events.get_events(meta, date(2026, 11, 1), date(2026, 11, 2)) == ["ok"]
     assert meta == {"type": "ics", "id": "https://x/cal.ics", "name": "cal.ics", "tag": "T"}
+
+
+# --- cycle 3 ----------------------------------------------------------------------
+from events import floating_times_to_utc
+from utils import parse_agenda_date
+from views import build_week_pages
+
+
+def test_floating_ics_time_is_local_wall_clock():
+    floating = ICS.replace("{start}00Z", "{start}00").replace("{end}00Z", "{end}00")
+    content = floating_times_to_utc(floating.format(start="0800", end="0900"))
+    ev = _extract_ics_events(Calendar(content), "test", date(2026, 11, 1), date(2026, 11, 30))[0]
+    assert datetime.fromisoformat(ev["start"]["dateTime"]).hour == 8
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("today", date(2026, 11, 3)), ("tomorrow", date(2026, 11, 4)),
+    ("10.04", date(2026, 4, 10)), ("25.12.2027", date(2027, 12, 25)), ("31.02", None),
+    ("friday", date(2026, 11, 6)), ("this friday", date(2026, 11, 6)), ("tuesday", date(2026, 11, 3)),
+    ("next monday", date(2026, 11, 9)), ("next friday", date(2026, 11, 13)),
+])
+def test_parse_agenda_date(text, expected):
+    assert parse_agenda_date(text, date(2026, 11, 3)) == expected  # a Tuesday
+
+
+def test_week_pages_respect_discord_limits_and_keep_all_events():
+    start = date(2026, 11, 2)
+    by_day = {start + timedelta(days=d): [_ev(f"{d}-{i}", f"Lesson number {i} with a long title", start + timedelta(days=d), hour=i % 12)
+                                          for i in range(25)] for d in range(30)}
+    pages, epp = build_week_pages(by_day, title="t", description="d")
+    for p in pages:
+        assert len(p) <= 6000 and len(p.fields) <= 25 and all(len(f.value) <= 1024 for f in p.fields)
+    assert sum(len(e) for e in epp) == 30 * 25

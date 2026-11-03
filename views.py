@@ -32,8 +32,58 @@ def extract_video_links(text: str) -> list[tuple[str, str]]:
 # Page builders
 # ---------------------------------------------------------------------------
 
-_MAX_FIELD_LEN = 900  # Discord field limit is 1024; leave buffer
-_MAX_FIELDS = 20      # Discord embed limit is 25; leave room for header
+_MAX_FIELD_LEN = 900   # Discord field limit is 1024; leave buffer
+_MAX_FIELDS = 20       # Discord embed limit is 25; leave room for header
+_MAX_PAGE_CHARS = 5500  # Discord rejects embeds over 6000 chars in total; leave room for the footer
+
+
+def _start_key(e: dict) -> str:
+    return e["start"].get("dateTime", e["start"].get("date", ""))
+
+
+def _chunk_events(events: list[dict]) -> list[list[dict]]:
+    """Split sorted events into groups whose formatted lines fit one embed field."""
+    chunks: list[list[dict]] = []
+    chunk: list[dict] = []
+    chunk_len = 0
+    for ev in sorted(events, key=_start_key):
+        line_len = len(format_event(ev)) + 2
+        if chunk and chunk_len + line_len > _MAX_FIELD_LEN:
+            chunks.append(chunk)
+            chunk, chunk_len = [], 0
+        chunk.append(ev)
+        chunk_len += line_len
+    if chunk:
+        chunks.append(chunk)
+    return chunks
+
+
+def _paginate(fields: list[tuple[str, list[dict]]], title: str, description: str, color: int):
+    """Lay out (field name, events) pairs over as many embeds as Discord's limits need."""
+    pages: list[discord.Embed] = []
+    epp: list[list[dict]] = []
+    embed = discord.Embed(title=title, description=description, color=color)
+    cur_events: list[dict] = []
+    page_chars = len(title) + len(description)
+
+    for name, events in fields:
+        value = "\n".join(f" {format_event(e)}" for e in events) + "\n\u200b"
+        size = len(name) + len(value)
+        if embed.fields and (len(embed.fields) >= _MAX_FIELDS or page_chars + size > _MAX_PAGE_CHARS):
+            pages.append(embed)
+            epp.append(cur_events)
+            cont_title = f"{title} (cont.)"
+            embed = discord.Embed(title=cont_title, color=color)
+            cur_events = []
+            page_chars = len(cont_title)
+        embed.add_field(name=name, value=value, inline=False)
+        cur_events.extend(events)
+        page_chars += size
+
+    # Always return at least one page
+    pages.append(embed)
+    epp.append(cur_events)
+    return pages, epp
 
 
 def build_event_pages(
@@ -49,55 +99,11 @@ def build_event_pages(
     :class:`discord.Embed` and *events_per_page[i]* is the flat list
     of event dicts visible on that page.
     """
-    pages: list[discord.Embed] = []
-    epp: list[list[dict]] = []
-
-    embed = discord.Embed(title=title, description=description, color=color)
-    cur_events: list[dict] = []
-    field_n = 0
-
+    fields = []
     for source_name, events in sorted(events_by_source.items()):
-        if not events:
-            continue
-        sorted_evts = sorted(
-            events,
-            key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")),
-        )
-
-        # Split into chunks that fit one embed field each
-        chunks: list[list[dict]] = []
-        chunk: list[dict] = []
-        chunk_len = 0
-        for ev in sorted_evts:
-            line = f" {format_event(ev)}\n"
-            if chunk and chunk_len + len(line) > _MAX_FIELD_LEN:
-                chunks.append(chunk)
-                chunk = [ev]
-                chunk_len = len(line)
-            else:
-                chunk.append(ev)
-                chunk_len += len(line)
-        if chunk:
-            chunks.append(chunk)
-
-        for ci, ch in enumerate(chunks):
-            if field_n >= _MAX_FIELDS:
-                pages.append(embed)
-                epp.append(cur_events)
-                embed = discord.Embed(title=f"{title} (cont.)", color=color)
-                cur_events = []
-                field_n = 0
-
-            name = f"📖 {source_name}" if ci == 0 else f"📖 {source_name} (cont.)"
-            value = "\n".join(f" {format_event(e)}" for e in ch) + "\n\u200b"
-            embed.add_field(name=name, value=value, inline=False)
-            cur_events.extend(ch)
-            field_n += 1
-
-    # Always append at least one page
-    pages.append(embed)
-    epp.append(cur_events)
-    return pages, epp
+        for ci, chunk in enumerate(_chunk_events(events)):
+            fields.append((f"📖 {source_name}" + (" (cont.)" if ci else ""), chunk))
+    return _paginate(fields, title, description, color)
 
 
 def build_week_pages(
@@ -108,57 +114,15 @@ def build_week_pages(
     color: int = 0x95A5A6,
     monday=None,
 ) -> tuple[list[discord.Embed], list[list[dict]]]:
-    """Build paginated embeds for a weekly view (one field per day)."""
-    pages: list[discord.Embed] = []
-    epp: list[list[dict]] = []
-
-    embed = discord.Embed(title=title, description=description, color=color)
-    cur_events: list[dict] = []
-    field_n = 0
-
+    """Build paginated embeds for a weekly view (one or more fields per day)."""
     days = [monday + timedelta(days=i) for i in range(7)] if monday else sorted(events_by_day.keys())
-
+    fields = []
     for day in days:
-        day_events = events_by_day.get(day, [])
-        if not day_events:
-            continue
-        sorted_evts = sorted(
-            day_events,
-            key=lambda e: e["start"].get("dateTime", e["start"].get("date", "")),
-        )
-
-        if field_n >= _MAX_FIELDS:
-            pages.append(embed)
-            epp.append(cur_events)
-            embed = discord.Embed(title=f"{title} (cont.)", color=color)
-            cur_events = []
-            field_n = 0
-
-        formatted = "\n".join(f" {format_event(e)}" for e in sorted_evts)
-        # Safety truncation for extremely dense days
-        if len(formatted) > _MAX_FIELD_LEN:
-            lines = formatted.split("\n")
-            kept: list[str] = []
-            length = 0
-            for ln in lines:
-                if length + len(ln) + 1 > _MAX_FIELD_LEN - 40:
-                    kept.append("*… more events on next page*")
-                    break
-                kept.append(ln)
-                length += len(ln) + 1
-            formatted = "\n".join(kept)
-
-        embed.add_field(
-            name=f"📅 {day.strftime('%A')}",
-            value=formatted + "\n\u200b",
-            inline=False,
-        )
-        cur_events.extend(sorted_evts)
-        field_n += 1
-
-    pages.append(embed)
-    epp.append(cur_events)
-    return pages, epp
+        for ci, chunk in enumerate(_chunk_events(events_by_day.get(day, []))):
+            # Multi-week ranges (e.g. /search) need the date to tell repeated weekdays apart
+            label = day.strftime('%A') if monday else day.strftime('%a %d.%m')
+            fields.append((f"📅 {label}" + (" (cont.)" if ci else ""), chunk))
+    return _paginate(fields, title, description, color)
 
 
 # ---------------------------------------------------------------------------

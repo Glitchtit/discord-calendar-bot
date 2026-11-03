@@ -75,37 +75,29 @@ def preprocess_ics_content(content: str, url: str) -> str:
     original_length = len(content)
     logger.debug(f"Preprocessing ICS content from {url} ({original_length} chars)")
     
-    # Apply only minimal, safe fixes to avoid breaking valid content
-    # Only fix obviously broken patterns, be very conservative
-    
-    # Pattern 1: Only fix completely missing timezone on datetime formats that clearly need it
-    # Only apply if the datetime is clearly malformed (has T but no timezone)
-    content = re.sub(r'DTSTART:(\d{8}T\d{6})$', r'DTSTART:\1Z', content, flags=re.MULTILINE)
-    content = re.sub(r'DTEND:(\d{8}T\d{6})$', r'DTEND:\1Z', content, flags=re.MULTILINE)
-    
-    # Pattern 2: Only fix empty values that would definitely break parsing
-    content = re.sub(r'DTSTART:\s*$', 'DTSTART:19700101T000000Z', content, flags=re.MULTILINE)
-    content = re.sub(r'DTEND:\s*$', 'DTEND:19700101T010000Z', content, flags=re.MULTILINE)
-    
-    # Only apply the most essential fixes
-    
-    # Remove only null bytes which definitely break parsing
-    content = re.sub(r'[\x00]', '', content)
-    
-    # Only add missing VCALENDAR wrapper if completely missing
-    if 'BEGIN:VCALENDAR' not in content and 'BEGIN:VEVENT' in content:
-        logger.debug(f"ICS from {url} missing VCALENDAR wrapper, adding minimal wrapper")
-        content = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\n' + content + '\r\nEND:VCALENDAR\r\n'
-    
-    # Skip the cleanup section for now - it might be too aggressive
-    # Just ensure proper line endings
+    # Normalize line endings first so the line-anchored patterns also match CRLF feeds
     content = content.replace('\r\n', '\n').replace('\r', '\n')
+
+    # Empty DTSTART/DTEND values break the parser; park them in 1970 (outside every window)
+    content = re.sub(r'^DTSTART:\s*$', 'DTSTART:19700101T000000Z', content, flags=re.MULTILINE)
+    content = re.sub(r'^DTEND:\s*$', 'DTEND:19700101T010000Z', content, flags=re.MULTILINE)
     
     processed_length = len(content)
     if processed_length != original_length:
         logger.debug(f"ICS preprocessing for {url}: {original_length} -> {processed_length} chars")
     
     return content
+
+_FLOATING_RE = re.compile(r"^(DTSTART|DTEND)(;VALUE=DATE-TIME)?:(\d{8}T\d{6})\r?$", re.MULTILINE)
+
+
+def floating_times_to_utc(content: str) -> str:
+    """RFC 5545 floating times (no Z, no TZID) are local wall-clock times, but the
+    ics library parses them as UTC. Rewrite them as explicit UTC from the bot's timezone."""
+    def to_utc(m):
+        local = datetime.strptime(m.group(3), "%Y%m%dT%H%M%S").replace(tzinfo=get_local_timezone())
+        return f"{m.group(1)}{m.group(2) or ''}:{local.astimezone(timezone.utc):%Y%m%dT%H%M%S}Z"
+    return _FLOATING_RE.sub(to_utc, content)
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔄 Circuit Breaker and Retry Logic                                ║
@@ -1071,6 +1063,7 @@ def get_ics_events(start_date, end_date, url):
         content = _validate_ics_content(content, url)
         if content is None:
             return None
+        content = floating_times_to_utc(content)  # correctness, so not behind DISABLE_ICS_PREPROCESSING
 
         cal = _parse_ics_calendar(content, url)
         if cal is None:

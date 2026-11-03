@@ -141,6 +141,36 @@ def event_local_date(start_str: str):
     return dt.astimezone(get_local_timezone()).date() if "T" in start_str else dt.date()
 
 
+_WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+_DDMM_RE = re.compile(r"^(\d{1,2})\.(\d{1,2})\.?(\d{4})?$")
+
+
+def parse_agenda_date(text: str, today: date):
+    """Parse /agenda input: today, tomorrow, DD.MM[.YYYY], [this|next] <weekday>,
+    else dateparser (day-first). Returns a date or None."""
+    import dateparser
+    s = text.strip().lower()
+    if s == "today":
+        return today
+    if s == "tomorrow":
+        return today + timedelta(days=1)
+    m = _DDMM_RE.match(s)
+    if m:
+        day, month, year = int(m[1]), int(m[2]), int(m[3] or today.year)
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
+    words = s.split()
+    if words and words[-1] in _WEEKDAYS and len(words) <= 2 and (len(words) == 1 or words[0] in ("this", "next")):
+        idx = _WEEKDAYS.index(words[-1])
+        if words[0] == "next":  # that weekday in next week
+            return get_monday_of_week(today) + timedelta(days=7 + idx)
+        return today + timedelta(days=(idx - today.weekday()) % 7)  # upcoming, today included
+    parsed = dateparser.parse(text, settings={"DATE_ORDER": "DMY", "PREFER_DATES_FROM": "future"})
+    return parsed.date() if parsed else None
+
+
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📝 format_event                                                    ║
 # ║ Converts an event dictionary into a stylized, readable string     ║
