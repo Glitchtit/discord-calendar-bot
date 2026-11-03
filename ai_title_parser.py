@@ -9,6 +9,42 @@ import os
 TITLE_MODEL = os.getenv("OPENAI_TITLE_MODEL", "gpt-5.4-nano")
 
 
+_CODE_CHARS = re.compile(r"[\d()\[\]/|]")
+
+
+def _strip_codes(title: str) -> str:
+    """'2627H.Arbete inom el (230.1) (AM26H)' -> 'Arbete inom el': drops parentheses and
+    tokens with digits, keeps the rest in order."""
+    text = re.sub(r"\([^)]*\)", " ", title)
+    words = [w.strip(".,:;_") for w in re.split(r"[\s_.]+", text)]
+    return _uncaps(" ".join(w for w in words if w and not re.search(r"\d", w)))
+
+
+def _caps(word: str) -> bool:
+    letters = [c for c in word if c.isalpha()]
+    return bool(letters) and all(c.isupper() for c in letters)
+
+
+def _uncaps(title: str) -> str:
+    """'PEDAGOGISK TIMME' -> 'Pedagogisk timme', 'AI-material FAST ARBETSTID' -> 'AI-material fast arbetstid'.
+    A lone short all-caps word (DIFF, EM24H) is an acronym and stays."""
+    words = title.split(" ")
+    out = []
+    for i, w in enumerate(words):
+        shouting = _caps(w) and (
+            sum(c.isalpha() for c in w) > 5
+            or (i > 0 and _caps(words[i - 1]))
+            or (i + 1 < len(words) and _caps(words[i + 1]))
+        )
+        if shouting:
+            w = w.lower()
+            if not any(c.isalpha() for c in " ".join(out)):  # first word: sentence case
+                j = next(k for k, c in enumerate(w) if c.isalpha())
+                w = w[:j] + w[j].upper() + w[j + 1:]
+        out.append(w)
+    return " ".join(out)
+
+
 class AITitleParser:
     """OpenAI-powered title parser that intelligently simplifies calendar event titles."""
     
@@ -72,7 +108,11 @@ class AITitleParser:
                 return "Event"
                 
             title = original_title.strip()
-            
+
+            # Short titles without codes or room numbers are already what people typed: keep them
+            if len(title.split()) <= 4 and len(title) <= 40 and not _CODE_CHARS.search(title):
+                return _uncaps(title)
+
             # Check cache first
             if title in self._title_cache:
                 logger.debug(f"Using cached result for: '{title}'")
@@ -87,6 +127,7 @@ class AITitleParser:
                 simplified = self._fallback_simplify(title)
             
             # Cache the result
+            simplified = _uncaps(simplified)
             self._title_cache[title] = simplified
             
             logger.debug(f"Simplified '{title}' -> '{simplified}'")
@@ -114,9 +155,9 @@ class AITitleParser:
 CRITICAL RULES:
 1. FIRST identify the language: English, Swedish, or Finnish (including slang and dialects)
 2. ALWAYS output in the SAME language as the input
-3. Use exactly 5 words when possible (minimum 3, maximum 5)
-4. Prefer 5-word summaries for better context and clarity
-5. Use title case (First Letter Capitalized)
+3. Use at most 5 words; fewer is fine. If the title is already short and clear, return it unchanged
+4. NEVER translate. Keep every word you keep exactly as written: same spelling, same capitalisation
+5. Do not capitalise words that were lowercase in the input (Swedish and Finnish do not use title case)
 6. Focus on the most important information
 7. Remove unnecessary details like times, locations, specific room numbers, recurring indicators
 8. Preserve the core meaning and purpose
@@ -128,78 +169,78 @@ CRITICAL RULES:
 14. FOCUS on the core topic/activity description rather than administrative details
 15. For educational events, prioritize the subject matter over the course code
 
-SWEDISH LANGUAGE & SLANG EXAMPLES (5 words preferred, OUTPUT IN SWEDISH):
-"Möte med utvecklingsteam klockan 10" → "Möte Med Utvecklingsteam"
-"Fika med kollegorna på kontoret" → "Fika Med Kollegorna"
-"Träff med chefen angående projekt" → "Träff Med Chefen"
-"Tandläkartid kl 14 i City" → "Tandläkartid Klockan 14"
-"Mamma födelsedag hemma" → "Mamma Födelsedag"
-"Plugga inför tentan i matematik" → "Plugga Inför Tentan"
-"Handla mat efter jobbet Ica" → "Handla Mat Efter Jobbet"
-"Träning på gymmet kl 18" → "Träning På Gymmet"
-"Läkarbesök för hälsokontroll" → "Läkarbesök Hälsokontroll"
-"Jobbintervju på Microsoft Stockholm" → "Jobbintervju På Microsoft"
-"Middag med familjen hemma" → "Middag Med Familjen"
-"Ansvarsarbetstid hemma distans" → "Ansvarsarbetstid Hemma"
-"Undervisning i matematik kl 13" → "Undervisning I Matematik"
-"Ringa mormor på kvällen" → "Ringa Mormor"
-"Städa lägenheten helgen" → "Städa Lägenheten"
-"Veckomöte projektgrupp Alpha" → "Veckomöte Projektgrupp Alpha"
-"Kvartalsmöte försäljning Q4" → "Kvartalsmöte Försäljning"
-"Personalfest på kontoret" → "Personalfest På Kontoret"
-"Föreläsning om AI teknologi" → "Föreläsning Om AI"
-"Tandvård - rengöring" → "Tandvård Rengöring"
+SWEDISH LANGUAGE & SLANG EXAMPLES (OUTPUT IN SWEDISH):
+"Möte med utvecklingsteam klockan 10" → "Möte med utvecklingsteam"
+"Fika med kollegorna på kontoret" → "Fika med kollegorna"
+"Träff med chefen angående projekt" → "Träff med chefen"
+"Tandläkartid kl 14 i City" → "Tandläkartid kl 14"
+"Mamma födelsedag hemma" → "Mamma födelsedag"
+"Plugga inför tentan i matematik" → "Plugga inför tentan"
+"Handla mat efter jobbet Ica" → "Handla mat efter jobbet"
+"Träning på gymmet kl 18" → "Träning på gymmet"
+"Läkarbesök för hälsokontroll" → "Läkarbesök hälsokontroll"
+"Jobbintervju på Microsoft Stockholm" → "Jobbintervju på Microsoft"
+"Middag med familjen hemma" → "Middag med familjen"
+"Ansvarsarbetstid hemma distans" → "Ansvarsarbetstid hemma"
+"Undervisning i matematik kl 13" → "Undervisning i matematik"
+"Ringa mormor på kvällen" → "Ringa mormor"
+"Städa lägenheten helgen" → "Städa lägenheten"
+"Veckomöte projektgrupp Alpha" → "Veckomöte projektgrupp Alpha"
+"Kvartalsmöte försäljning Q4" → "Kvartalsmöte försäljning"
+"Personalfest på kontoret" → "Personalfest på kontoret"
+"Föreläsning om AI teknologi" → "Föreläsning om AI"
+"Tandvård - rengöring" → "Tandvård rengöring"
 "Bilbesiktning Volvo" → "Bilbesiktning Volvo"
-"2526H.Arbete inom el- och automationsbranschen Elgrunder (230.1) (AM25H/EM25H)" → "Arbete El Automation Elgrunder"
-"GRU101-Grundläggande svenska (Rum 3.14)" → "Grundläggande Svenska"
-"MAT205.Avancerad matematik för ingenjörer (A1234/B5678)" → "Avancerad Matematik För Ingenjörer"
+"2526H.Arbete inom el- och automationsbranschen Elgrunder (230.1) (AM25H/EM25H)" → "Arbete el automation Elgrunder"
+"GRU101-Grundläggande svenska (Rum 3.14)" → "Grundläggande svenska"
+"MAT205.Avancerad matematik för ingenjörer (A1234/B5678)" → "Avancerad matematik för ingenjörer"
 "FYS301 - Kvantmekanik (Sal B205) Föreläsning 5" → "Kvantmekanik Föreläsning"
 
-FINNISH LANGUAGE & SLANG EXAMPLES (5 words preferred, OUTPUT IN FINNISH):
-"Kokous kehitystiimin kanssa klo 10" → "Kokous Kehitystiimin Kanssa"
-"Kahvitauko toimistolla aamulla" → "Kahvitauko Toimistolla"
-"Tapaaminen pomojen kanssa" → "Tapaaminen Pomojen Kanssa"
-"Hammaslääkäri klo 15 keskustassa" → "Hammaslääkäri Klo 15"
-"Äidin syntymäpäivä kotona" → "Äidin Syntymäpäivä"
-"Lukemista tenttiin matematiikka" → "Lukemista Tenttiin"
-"Ruokaostokset töiden jälkeen" → "Ruokaostokset Töiden Jälkeen"
-"Treenit salilla klo 18" → "Treenit Salilla"
-"Lääkärikäynti terveystarkastus" → "Lääkärikäynti Terveystarkastus"
+FINNISH LANGUAGE & SLANG EXAMPLES (OUTPUT IN FINNISH):
+"Kokous kehitystiimin kanssa klo 10" → "Kokous kehitystiimin kanssa"
+"Kahvitauko toimistolla aamulla" → "Kahvitauko toimistolla"
+"Tapaaminen pomojen kanssa" → "Tapaaminen pomojen kanssa"
+"Hammaslääkäri klo 15 keskustassa" → "Hammaslääkäri klo 15"
+"Äidin syntymäpäivä kotona" → "Äidin syntymäpäivä"
+"Lukemista tenttiin matematiikka" → "Lukemista tenttiin"
+"Ruokaostokset töiden jälkeen" → "Ruokaostokset töiden jälkeen"
+"Treenit salilla klo 18" → "Treenit salilla"
+"Lääkärikäynti terveystarkastus" → "Lääkärikäynti terveystarkastus"
 "Työhaastattelu Nokialla Espoossa" → "Työhaastattelu Nokialla"
-"Illallinen perheen kanssa" → "Illallinen Perheen Kanssa"
-"Etätyö kotoa tänään" → "Etätyö Kotoa"
-"Matematiikan opetus luokka 5" → "Matematiikan Opetus"
-"Soitto mummille illalla" → "Soitto Mummille"
-"Asunnon siivous viikonloppuna" → "Asunnon Siivous"
-"Viikkokokous projektiryhmä Beta" → "Viikkokokous Projektiryhmä Beta"
-"Kvartaalitapaaminen myynti Q4" → "Kvartaalitapaaminen Myynti"
-"Henkilöstöjuhlat toimistossa" → "Henkilöstöjuhlat Toimistossa"
-"Luento tekoälystä" → "Luento Tekoälystä"
-"Hammashoito - puhdistus" → "Hammashoito Puhdistus"
-"Auton katsastus huolto" → "Auton Katsastus"
-"Bileet Pekan luona" → "Bileet Pekan Luona"
-"Synttärikahvit toimistolla" → "Synttärikahvit Toimistolla"
-"FYS201-Kvanttimekaniikka perusteet (sali H305)" → "Kvanttimekaniikka Perusteet"
-"MAT301.Tilastotiede jatkokurssi (K123/K456)" → "Tilastotiede Jatkokurssi"
-"OHJ101 - Ohjelmoinnin alkeet Luento 3" → "Ohjelmoinnin Alkeet Luento"
+"Illallinen perheen kanssa" → "Illallinen perheen kanssa"
+"Etätyö kotoa tänään" → "Etätyö kotoa"
+"Matematiikan opetus luokka 5" → "Matematiikan opetus"
+"Soitto mummille illalla" → "Soitto mummille"
+"Asunnon siivous viikonloppuna" → "Asunnon siivous"
+"Viikkokokous projektiryhmä Beta" → "Viikkokokous projektiryhmä Beta"
+"Kvartaalitapaaminen myynti Q4" → "Kvartaalitapaaminen myynti"
+"Henkilöstöjuhlat toimistossa" → "Henkilöstöjuhlat toimistossa"
+"Luento tekoälystä" → "Luento tekoälystä"
+"Hammashoito - puhdistus" → "Hammashoito puhdistus"
+"Auton katsastus huolto" → "Auton katsastus"
+"Bileet Pekan luona" → "Bileet Pekan luona"
+"Synttärikahvit toimistolla" → "Synttärikahvit toimistolla"
+"FYS201-Kvanttimekaniikka perusteet (sali H305)" → "Kvanttimekaniikka perusteet"
+"MAT301.Tilastotiede jatkokurssi (K123/K456)" → "Tilastotiede jatkokurssi"
+"OHJ101 - Ohjelmoinnin alkeet Luento 3" → "Ohjelmoinnin alkeet Luento"
 
-ENGLISH LANGUAGE EXAMPLES (5 words preferred, OUTPUT IN ENGLISH):
+ENGLISH LANGUAGE EXAMPLES (OUTPUT IN ENGLISH):
 "Weekly Team Standup Meeting - Project Alpha Q4" → "Project Alpha Team Standup"
-"Dentist Appointment - Dr. Smith at 3pm Room 205" → "Dentist Appointment With Dr Smith"
+"Dentist Appointment - Dr. Smith at 3pm Room 205" → "Dentist Appointment with Dr Smith"
 "Sarah's Birthday Party Celebration at Restaurant" → "Sarah's Birthday Party"
 "Q4 Sales Review Meeting with Leadership Team" → "Q4 Sales Leadership Meeting"
-"Flight to New York - Delta Airlines AA1234" → "Flight To New York"
-"Coffee with John to discuss project updates" → "Coffee With John"
+"Flight to New York - Delta Airlines AA1234" → "Flight to New York"
+"Coffee with John to discuss project updates" → "Coffee with John"
 "Annual Performance Review - HR Department" → "Annual Performance Review"
 "Python Programming Workshop - Advanced Level" → "Advanced Python Programming Workshop"
 "Client Presentation - Final Project Deliverable" → "Final Client Project Presentation"
 "🎂 Birthday Party for Emma at home" → "🎂 Emma's Birthday Party"
 "📊 Monthly Sales Meeting with Team" → "📊 Monthly Sales Meeting"
 "🏥 Doctor Appointment at 2pm" → "🏥 Doctor Appointment"
-"✈️ Flight to Paris - Air France" → "✈️ Flight To Paris"
-"🍽️ Dinner with Friends at Italian Restaurant" → "🍽️ Dinner With Friends"
-"CS101-Introduction to Computer Science (Room 301)" → "Introduction To Computer Science"
-"MATH205.Advanced Calculus for Engineers (A1234/B5678)" → "Advanced Calculus For Engineers"
+"✈️ Flight to Paris - Air France" → "✈️ Flight to Paris"
+"🍽️ Dinner with Friends at Italian Restaurant" → "🍽️ Dinner with Friends"
+"CS101-Introduction to Computer Science (Room 301)" → "Introduction to Computer Science"
+"MATH205.Advanced Calculus for Engineers (A1234/B5678)" → "Advanced Calculus for Engineers"
 "PHY301 - Quantum Mechanics (Hall B205) Lecture 5" → "Quantum Mechanics Lecture"
 "ENG102-Creative Writing Workshop Section 3A" → "Creative Writing Workshop"
 
@@ -216,24 +257,6 @@ COLLOQUIAL & SLANG RECOGNITION:
 "Ruokaostokset" = Grocery shopping
 "Henkkareita" = ID/Documents
 "Kämpän siivous" = Apartment cleaning
-
-MORE QUALITY EXAMPLES (5 words preferred, MAINTAIN ORIGINAL LANGUAGE):
-ENGLISH: "Weekly Team Standup Meeting - Project Alpha Q4" → "Project Alpha Team Standup"
-ENGLISH: "Dentist Appointment - Dr. Smith at 3pm Room 205" → "Dentist Appointment With Dr Smith"
-ENGLISH: "Sarah's Birthday Party Celebration at Restaurant" → "Sarah's Birthday Party"
-ENGLISH: "Q4 Sales Review Meeting with Leadership Team" → "Q4 Sales Leadership Meeting"
-ENGLISH: "Flight to New York - Delta Airlines AA1234" → "Flight To New York"
-ENGLISH: "Coffee with John to discuss project updates" → "Coffee Meeting With John"
-ENGLISH: "Annual Performance Review - HR Department" → "Annual Performance Review"
-ENGLISH: "Python Programming Workshop - Advanced Level" → "Advanced Python Programming Workshop"
-ENGLISH: "Client Presentation - Final Project Deliverable" → "Final Client Project Presentation"
-ENGLISH: "🎂 Birthday Party for Emma at home" → "🎂 Emma's Birthday Party"
-ENGLISH: "📊 Monthly Sales Meeting with Team" → "📊 Monthly Sales Meeting"
-ENGLISH: "🏥 Doctor Appointment at 2pm" → "🏥 Doctor Appointment"
-ENGLISH: "✈️ Flight to Paris - Air France" → "✈️ Flight To Paris"
-ENGLISH: "🍽️ Dinner with Friends at Italian Restaurant" → "🍽️ Dinner With Friends"
-SWEDISH: "Veckomöte med projektgrupp Alpha kvartal 4" → "Veckomöte Projektgrupp Alpha"
-FINNISH: "Viikkokokous projektiryhmä Beta neljännes 4" → "Viikkokokous Projektiryhmä Beta"
 
 Return ONLY the simplified title in the ORIGINAL language, nothing else."""
 
@@ -257,9 +280,9 @@ Return ONLY the simplified title in the ORIGINAL language, nothing else."""
                 
                 logger.debug(f"Attempt {attempt + 1} failed validation: '{simplified}', retrying...")
             
-            # If both attempts failed, use fallback
-            logger.warning(f"OpenAI failed validation after 2 attempts for '{title}', using fallback")
-            return self._fallback_simplify(title)
+            # Both answers had typos or invented words: keep the original wording, minus the codes
+            logger.info(f"OpenAI failed validation after 2 attempts for '{title}', stripping codes instead")
+            return _strip_codes(title) or self._fallback_simplify(title)
             
         except openai.NotFoundError as e:
             # Retired/unknown model: say so once and stop calling it, instead of a warning per title
@@ -279,6 +302,12 @@ Return ONLY the simplified title in the ORIGINAL language, nothing else."""
         # Clean the title for validation
         cleaned = self._clean_title(simplified)
         words = cleaned.split()
+
+        # Extractive only: a word that isn't in the original is a translation or a typo (short connectors like 'och' allowed)
+        source = original.lower()
+        if any(len(w) > 3 and w not in source for w in re.findall(r"[^\W\d_]+", cleaned.lower())):
+            logger.debug(f"Word not in original: '{cleaned}'")
+            return False
         
         # Remove emojis for word count
         text_words = []
@@ -350,7 +379,7 @@ Return ONLY the simplified title in the ORIGINAL language, nothing else."""
                 if len(words) >= 5:  # Updated to 5 words
                     break
                 if len(term) > 1:
-                    words.append(term.title())
+                    words.append(term)
             
             # If we don't have enough words, use first few words from title
             # Aim for at least 3 words for better context
@@ -362,7 +391,7 @@ Return ONLY the simplified title in the ORIGINAL language, nothing else."""
                         break
                     # Avoid duplicates
                     if word.lower() not in words_lower:
-                        words.append(word.title())
+                        words.append(word)
                         words_lower.add(word.lower())
             
             # Final check: if still less than 3 words, add more from original
@@ -375,7 +404,7 @@ Return ONLY the simplified title in the ORIGINAL language, nothing else."""
                     if len(words) >= 5:
                         break
                     if word.lower() not in words_lower:
-                        words.append(word.title())
+                        words.append(word)
                         words_lower.add(word.lower())
             
             # Ensure we have at least one word
@@ -383,6 +412,7 @@ Return ONLY the simplified title in the ORIGINAL language, nothing else."""
                 return "Event"
             
             result = " ".join(words[:5])  # Updated to 5 words max
+            result = result[:1].upper() + result[1:]
             return self._clean_title(result)
             
         except Exception as e:

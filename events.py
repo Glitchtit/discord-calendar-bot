@@ -1240,21 +1240,17 @@ def compute_event_core_fingerprint(event: dict) -> str:
         def clean(text: str) -> str:
             return " ".join(text.strip().split())
 
-        # Original title, not the AI-simplified one: the simplification can vary between runs
-        summary = clean(event.get("original_summary") or event.get("summary", ""))
-        location = clean(event.get("location", ""))
-        description = clean(event.get("description", ""))
-        
-        # Include event ID if available for more precise matching
-        event_id = event.get("id", "")
-
-        # Core identity without timing
-        core = {
-            "summary": summary,
-            "location": location,
-            "description": description,
-            "id": event_id
-        }
+        # The calendar's own ID survives renames, moves and location edits, so those
+        # show as one "changed" event instead of an added + removed pair
+        if event.get("id"):
+            core = {"id": event["id"]}
+        else:
+            # Original title, not the AI-simplified one: the simplification can vary between runs
+            core = {
+                "summary": clean(event.get("original_summary") or event.get("summary", "")),
+                "location": clean(event.get("location", "")),
+                "description": clean(event.get("description", "")),
+            }
 
         normalized_json = json.dumps(core, sort_keys=True)
         return hashlib.md5(normalized_json.encode("utf-8")).hexdigest()

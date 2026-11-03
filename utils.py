@@ -62,37 +62,6 @@ def get_monday_of_week(day: date = None) -> date:
 
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# ║ 🔤 emoji_for_event                                                 ║
-# ║ Attempts to guess an emoji based on event title                    ║
-# ╚════════════════════════════════════════════════════════════════════╝
-def emoji_for_event(title: str) -> str:
-    # Handle None or non-string inputs
-    if not title or not isinstance(title, str):
-        return "•"
-        
-    try:
-        title = title.lower()
-        if "class" in title or "lecture" in title or re.search(r"\b(em|ia)\b", title):
-            return "📚"
-        if "meeting" in title:
-            return "📞"
-        if "lunch" in title:
-            return "🥪"
-        if "dinner" in title or "banquet" in title:
-            return "🍽️"
-        if "party" in title:
-            return "🎉"
-        if "exam" in title or "test" in title:
-            return "📝"
-        if "appointment" in title:
-            return "📅"
-        return "•"
-    except Exception as e:
-        logger.exception(f"Error determining emoji for title '{title}': {e}")
-        return "•"
-
-
-# ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🕒 parse_date_string                                               ║
 # ║ Safely parses ISO date/datetime strings with fallbacks             ║
 # ╚════════════════════════════════════════════════════════════════════╝
@@ -195,73 +164,51 @@ def parse_agenda_date(text: str, today: date):
     return parsed.date() if parsed else None
 
 
+def shorten(text: str, limit: int) -> str:
+    """Cut *text* to *limit* characters at a word boundary, ending with "…"."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit - 1]
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip(" -–,.:;") + "…"
+
+
+def escape_md(text: str) -> str:
+    return re.sub(r"([*_`~|\\])", r"\\\1", text)
+
+
+def event_when(event: dict, with_date: bool = False) -> str:
+    """'08:30–11:00' or 'all day'; with_date: 'Fri 23.10 08:30–11:00' / 'Fri 23.10 · all day'."""
+    start = event.get("start", {}).get("dateTime", event.get("start", {}).get("date", ""))
+    end = event.get("end", {}).get("dateTime", event.get("end", {}).get("date", ""))
+    if "T" not in start:
+        days = event_days(event)
+        if not with_date or not days:
+            return "all day"
+        first, last = days
+        span = f"{first:%a %d.%m}" + (f"–{last:%a %d.%m}" if last != first else "")
+        return f"{span} · all day"
+    tz_ = get_local_timezone()
+    s = parse_date_string(start, tz_)
+    if not s:
+        return ""
+    e = parse_date_string(end, tz_) if "T" in end else None
+    times = f"{s:%H:%M}" + (f"–{e:%H:%M}" if e else "")
+    return f"{s:%a %d.%m} {times}" if with_date else times
+
+
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📝 format_event                                                    ║
-# ║ Converts an event dictionary into a stylized, readable string     ║
+# ║ One event as a Discord markdown line                               ║
 # ╚════════════════════════════════════════════════════════════════════╝
-def format_event(event: dict) -> str:
-    try:
-        # Validate event data
-        if not event or not isinstance(event, dict):
-            logger.warning(f"Invalid event data: {event}")
-            return "⚠️ **Invalid event data**"
-            
-        # Get event start/end times with validation
-        start_data = event.get("start", {})
-        end_data = event.get("end", {})
-        
-        if not isinstance(start_data, dict) or not isinstance(end_data, dict):
-            logger.warning(f"Invalid start/end data format in event: {event}")
-            return "⚠️ **Invalid event format**"
-            
-        start = start_data.get("dateTime", start_data.get("date", ""))
-        end = end_data.get("dateTime", end_data.get("date", ""))
-        
-        # Get and sanitize title (prevent markdown injection)
-        title = event.get("summary", "Untitled")
-        if isinstance(title, str):
-            # Truncate long titles to prevent display issues
-            if len(title) > 50:
-                title = title[:47] + "..."
-            # Escape characters that could break markdown formatting
-            title = title.replace("*", "\\*").replace("_", "\\_").replace("`", "\\`")
-        else:
-            title = "Untitled"
-            
-        # Get and sanitize location
-        location = event.get("location", "")
-        if isinstance(location, str):
-            location = location.replace("*", "\\*").replace("_", "\\_")
-        else:
-            location = ""
-            
-        # Get appropriate emoji
-        emoji = emoji_for_event(title)
-
-        # Parse start time
-        local_timezone = get_local_timezone()
-        start_str = "All Day"
-        
-        if start and "T" in start:
-            start_dt = parse_date_string(start, local_timezone)
-            if start_dt:
-                start_str = start_dt.strftime("%H:%M")
-
-        # Parse end time
-        end_str = ""
-        if end and "T" in end:
-            end_dt = parse_date_string(end, local_timezone)
-            if end_dt:
-                end_str = end_dt.strftime("%H:%M")
-
-        # Format the time range and location
-        time_range = f"{start_str}–{end_str}" if end_str else start_str
-        location_str = f" *({location})*" if location else ""
-
-        return f"{emoji} **{title}** `{time_range}`{location_str}"
-    except Exception as e:
-        logger.exception(f"Error formatting event: {e}")
-        return "⚠️ **Error formatting event**"
+def format_event(event: dict, with_date: bool = False) -> str:
+    title = event.get("summary") if isinstance(event.get("summary"), str) else ""
+    title = escape_md(shorten(title, 50)) or "Untitled"
+    location = event.get("location") if isinstance(event.get("location"), str) else ""
+    location_str = f" · *{escape_md(shorten(location, 40))}*" if location.strip() else ""
+    return f"**{title}** `{event_when(event, with_date)}`{location_str}"
 
 
 # ╔════════════════════════════════════════════════════════════════════╗

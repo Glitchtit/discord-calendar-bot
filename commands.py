@@ -15,7 +15,7 @@ from events import (
     TAG_NAMES
 )
 from log import logger
-from utils import format_event, resolve_input_to_tags, event_local_date, event_days
+from utils import resolve_input_to_tags, event_local_date, event_days, shorten
 from resilience import async_retry_with_backoff
 from views import (
     build_event_pages,
@@ -184,16 +184,17 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
 # ║ Sends an embed of events for a specific tag on a given day        ║
 # ║ Returns posted events ([] if none, None if a fetch or send failed)║
 # ╚════════════════════════════════════════════════════════════════════╝
-async def post_tagged_events(bot, tag: str, day: datetime.date, allow_partial: bool = True) -> list | None:
+async def post_tagged_events(bot, tag: str, day: datetime.date, allow_partial: bool = True,
+                             send: bool = True) -> list | None:
     """allow_partial=False posts nothing (returns None) while any calendar fails,
-    so the scheduler can retry instead of posting an incomplete agenda."""
+    so the scheduler can retry instead of posting an incomplete agenda.
+    send=False only collects the day's events (the Monday week post already shows them)."""
     try:
         calendars = GROUPED_CALENDARS.get(tag)
         if not calendars:
             logger.warning(f"No calendars found for tag: {tag}")
             return []
 
-        events_by_source = defaultdict(list)
         all_events = []
 
         fetch_failed = False
@@ -207,23 +208,22 @@ async def post_tagged_events(bot, tag: str, day: datetime.date, allow_partial: b
             if events is None:
                 fetch_failed = True
                 continue
-            all_events.extend([(meta["name"], e) for e in events])
+            all_events += events
         if fetch_failed and not allow_partial:
             return None
 
-        for source_name, event in all_events:
-            days = event_days(event)
-            if days and days[0] <= day <= days[1]:  # multi-day events show on every day they cover
-                events_by_source[source_name].append(event)
+        # Multi-day events show on every day they cover
+        day_events = [e for e in all_events if (d := event_days(e)) and d[0] <= day <= d[1]]
 
-        if not events_by_source:
+        if not day_events:
             logger.debug(f"Skipping {tag} — no events for {day}")
             return None if fetch_failed else []
+        if not send:
+            return day_events
 
         pages, epp = build_event_pages(
-            events_by_source,
-            title=f"🗓️ Herald's Scroll — {get_name_for_tag(tag)}",
-            description=f"Events for **{day.strftime('%A, %B %d')}**",
+            day_events,
+            title=f"🗓️ {get_name_for_tag(tag)} — {day:%A %d.%m}",
             color=get_color_for_tag(tag),
         )
         view = PaginatedEmbedView(pages, epp)
@@ -231,7 +231,7 @@ async def post_tagged_events(bot, tag: str, day: datetime.date, allow_partial: b
             return None
         if fetch_failed:
             logger.warning(f"Posted {tag} for {day} without a calendar that failed to fetch")
-        return [ev for evs in events_by_source.values() for ev in evs]
+        return day_events
 
     except Exception as e:
         logger.exception(f"Error in post_tagged_events for tag {tag} on {day}: {e}")
@@ -285,8 +285,8 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date, allow_partial: 
 
         pages, epp = build_week_pages(
             events_by_day,
-            title=f"📜 Herald’s Week — {get_name_for_tag(tag)}",
-            description=f"Week of **{monday.strftime('%B %d')}**",
+            title=f"📜 {get_name_for_tag(tag)} — week {monday.isocalendar().week}",
+            description=f"{monday:%a %d.%m} – {end:%a %d.%m}",
             color=get_color_for_tag(tag),
             monday=monday,
         )
@@ -366,8 +366,8 @@ async def search_events(
 
     if not matches:
         embed = discord.Embed(
-            title=f"🔎 No results for \"{query}\"",
-            description=f"No events matching **{query}** in the next {days_ahead} days.",
+            title=f"🔎 No results for “{shorten(query, 100)}”",
+            description=f"Nothing matches in the next {days_ahead} days. Try a shorter word.",
             color=0x95A5A6,
         )
         return [embed], [[]]
@@ -381,7 +381,7 @@ async def search_events(
 
     pages, epp = build_week_pages(
         events_by_day,
-        title=f"🔎 Results for \"{query}\"",
+        title=f"🔎 Results for “{shorten(query, 100)}”",
         description=f"{len(matches)} event{'s' if len(matches) != 1 else ''} in the next {days_ahead} days",
         color=0x3498DB,
         monday=None,

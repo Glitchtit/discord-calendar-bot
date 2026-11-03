@@ -311,7 +311,7 @@ def test_daily_retry_only_reposts_failed_tags(monkeypatch):
     calls = []
     fail_once = {"B"}
 
-    async def fake_post(bot, tag, day, allow_partial=True):
+    async def fake_post(bot, tag, day, allow_partial=True, send=True):
         calls.append(tag)
         if tag in fail_once:
             fail_once.discard(tag)
@@ -382,5 +382,70 @@ def test_title_model_not_found_disables_openai_once(monkeypatch):
 
     parser = atp.AITitleParser()
     parser.client = type("C", (), {"chat": type("Ch", (), {"completions": FakeCompletions()})()})()
-    assert parser.simplify_title("Mini exam one") and parser.simplify_title("Another title here")
+    assert parser.simplify_title("Mini exam one (A1)") and parser.simplify_title("Another title here (B2)")
     assert len(calls) == 1 and parser.client is None
+
+
+# --- message UX ------------------------------------------------------------------
+def test_monday_daily_post_only_collects_events_already_in_the_week_post(monkeypatch):
+    sends = {}
+
+    async def fake_post(bot, tag, day, allow_partial=True, send=True):
+        sends[tag] = send
+        return [{"summary": tag}]
+
+    monkeypatch.setattr(tasks, "GROUPED_CALENDARS", {"A": [], "B": []})
+    monkeypatch.setattr(tasks, "post_tagged_events", fake_post)
+    monkeypatch.setattr(tasks, "AI_TOGGLE", False)
+    state = {"daily": set(), "events": [], "weekly": {"A"}}
+    assert asyncio.run(tasks.post_todays_happenings(None, True, state)) is True
+    assert sends == {"A": False, "B": True}
+    assert len(state["events"]) == 2  # the greeting still sees Monday's events
+
+
+def test_change_lines_carry_dates_and_all_day_is_not_noon(monkeypatch):
+    import utils
+    from views import format_change_lines
+    monkeypatch.setattr(utils, "get_local_timezone", lambda: tz.gettz("Europe/Helsinki"))
+    timed = {"summary": "Kampaaja", "start": {"dateTime": "2026-10-22T16:30:00+03:00"},
+             "end": {"dateTime": "2026-10-22T19:00:00+03:00"}, "id": "k"}
+    all_day = {"summary": "Boat", "start": {"date": "2026-10-23"}, "end": {"date": "2026-10-24"}, "id": "b"}
+    moved = {**timed, "start": {"dateTime": "2026-10-23T15:00:00+03:00"}, "end": {"dateTime": "2026-10-23T17:00:00+03:00"}}
+    text, _ = format_change_lines([timed], [all_day], [(timed, moved)])
+    assert "`Thu 22.10 16:30–19:00`" in text
+    assert "~~**Boat** `Fri 23.10 · all day`~~" in text and "12:00" not in text
+    assert "`Fri 23.10 15:00–17:00` · was `Thu 22.10 16:30–19:00`" in text
+
+
+def test_renamed_event_with_same_id_is_one_change():
+    old = {"summary": "Fira pappa", "original_summary": "Fira pappa", "id": "x",
+           "start": {"dateTime": "2026-11-04T13:30:00+02:00"}, "end": {"dateTime": "2026-11-04T15:00:00+02:00"}}
+    new = {**old, "summary": "Fira mamma", "original_summary": "Fira mamma", "location": "Hemma"}
+    added, removed, changed = tasks.detect_event_changes([old], [new], date(2026, 11, 3))
+    assert (added, removed) == ([], []) and changed == [(old, new)]
+    from views import _format_change_diff
+    assert "title was *Fira pappa*" in _format_change_diff(old, new)
+
+
+def test_short_titles_are_kept_as_typed():
+    import ai_title_parser as atp
+    parser = atp.AITitleParser()
+    parser.client = object()  # any model call would crash
+    for title in ["Emmi tuparit", "Juna tre-hki", "Fira pappa", "DIFF möte"]:
+        assert parser.simplify_title(title) == title
+    assert parser.simplify_title("TEAMMÖTE EL") == "Teammöte el"
+    assert atp._uncaps("3 ANSVARSARBETSTID") == "3 Ansvarsarbetstid"
+    assert atp._uncaps("AI-material FAST ARBETSTID") == "AI-material fast arbetstid"
+    assert atp._uncaps("PEDAGOGISK TIMME") == "Pedagogisk timme"
+    assert atp._uncaps("Komplettering EM24H") == "Komplettering EM24H"
+    assert atp._strip_codes("RESERVERAT (DUBBELBOKNING TILLÅTEN) GEM KOMPLETTERING/YRKESPLANERING") == "Reserverat gem komplettering/yrkesplanering"
+    assert atp._strip_codes("2627H.Arbete inom el- och automationsbranschen (230.1) (AM26H)") == "Arbete inom el- och automationsbranschen"
+    # a model answer with a word the original doesn't contain (typo, translation) is rejected
+    assert not parser._validate_simplified_title("Organisatiionens utveckling", "2 MIN OCH ORGANISATIONENS UTVECKLING")
+    assert parser._validate_simplified_title("Arbete el automation Elgrunder", "2627H.Arbete inom el- och automationsbranschen Elgrunder (230.1)")
+
+
+def test_shorten_cuts_at_a_word():
+    from utils import shorten
+    assert shorten("Ansvarsarbetstid Kulturfonden AI Utbildningsmaterial", 40) == "Ansvarsarbetstid Kulturfonden AI…"
+    assert shorten("short", 40) == "short"

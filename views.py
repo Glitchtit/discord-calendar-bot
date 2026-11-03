@@ -6,7 +6,7 @@ from datetime import timedelta
 import discord  # type: ignore
 
 from log import logger
-from utils import format_event, parse_date_string, get_local_timezone
+from utils import format_event, event_when, escape_md, shorten, get_today
 
 # ---------------------------------------------------------------------------
 # Video-call link extraction
@@ -62,12 +62,12 @@ def _paginate(fields: list[tuple[str, list[dict]]], title: str, description: str
     """Lay out (field name, events) pairs over as many embeds as Discord's limits need."""
     pages: list[discord.Embed] = []
     epp: list[list[dict]] = []
-    embed = discord.Embed(title=title, description=description, color=color)
+    embed = discord.Embed(title=title, description=description or None, color=color)
     cur_events: list[dict] = []
     page_chars = len(title) + len(description)
 
     for name, events in fields:
-        value = "\n".join(f" {format_event(e)}" for e in events) + "\n\u200b"
+        value = "\n".join(format_event(e) for e in events)
         size = len(name) + len(value)
         if embed.fields and (len(embed.fields) >= _MAX_FIELDS or page_chars + size > _MAX_PAGE_CHARS):
             pages.append(embed)
@@ -87,22 +87,22 @@ def _paginate(fields: list[tuple[str, list[dict]]], title: str, description: str
 
 
 def build_event_pages(
-    events_by_source: dict[str, list[dict]],
+    events: list[dict],
     *,
     title: str,
     description: str = "",
     color: int = 0x95A5A6,
 ) -> tuple[list[discord.Embed], list[list[dict]]]:
-    """Build paginated embeds from events grouped by calendar source.
+    """Build paginated embeds listing *events* in time order.
 
     Returns ``(pages, events_per_page)`` where *pages[i]* is a
     :class:`discord.Embed` and *events_per_page[i]* is the flat list
     of event dicts visible on that page.
     """
-    fields = []
-    for source_name, events in sorted(events_by_source.items()):
-        for ci, chunk in enumerate(_chunk_events(events)):
-            fields.append((f"📖 {source_name}" + (" (cont.)" if ci else ""), chunk))
+    n = len(events)
+    heading = f"{n} event{'s' if n != 1 else ''}"
+    fields = [(heading if ci == 0 else f"{heading} (cont.)", chunk)
+              for ci, chunk in enumerate(_chunk_events(events))]
     return _paginate(fields, title, description, color)
 
 
@@ -116,11 +116,14 @@ def build_week_pages(
 ) -> tuple[list[discord.Embed], list[list[dict]]]:
     """Build paginated embeds for a weekly view (one or more fields per day)."""
     days = [monday + timedelta(days=i) for i in range(7)] if monday else sorted(events_by_day.keys())
+    today = get_today()
     fields = []
     for day in days:
         for ci, chunk in enumerate(_chunk_events(events_by_day.get(day, []))):
             # Multi-week ranges (e.g. /search) need the date to tell repeated weekdays apart
-            label = day.strftime('%A') if monday else day.strftime('%a %d.%m')
+            label = day.strftime('%A %d.%m') if monday else day.strftime('%a %d.%m')
+            if monday and day == today:
+                label += " · today"
             fields.append((f"📅 {label}" + (" (cont.)" if ci else ""), chunk))
     return _paginate(fields, title, description, color)
 
@@ -137,7 +140,7 @@ class PaginatedEmbedView(discord.ui.View):
         pages: list[discord.Embed],
         events_per_page: list[list[dict]] | None = None,
         *,
-        timeout: float = 180,
+        timeout: float | None = 24 * 3600,  # shortcut: buttons die on a bot restart, use persistent views if that matters
     ):
         super().__init__(timeout=timeout)
         self.pages = pages
@@ -205,7 +208,7 @@ class PaginatedEmbedView(discord.ui.View):
         )
         if not events:
             await interaction.response.send_message(
-                "No event details available.", ephemeral=True
+                "No details for this page.", ephemeral=True
             )
             return
         embed = _build_detail_embed(events, self.pages[self.current].color)
@@ -227,50 +230,21 @@ class PaginatedEmbedView(discord.ui.View):
 
 def _build_detail_embed(events: list[dict], color) -> discord.Embed:
     """Ephemeral embed with full description, location, and video links."""
-    embed = discord.Embed(title="📋 Event Details", color=color or 0x95A5A6)
+    embed = discord.Embed(title="📋 Details", color=color or 0x95A5A6)
 
     for event in events[:10]:
-        title = event.get("original_summary") or event.get("summary", "Untitled")
-        desc = event.get("description", "") or ""
-        location = event.get("location", "") or ""
+        title = event.get("original_summary") or event.get("summary") or "Untitled"
+        desc = (event.get("description") or "").strip()
+        location = event.get("location") or ""
 
-        parts: list[str] = []
-
-        # Time
-        start_data = event.get("start", {})
-        end_data = event.get("end", {})
-        tz = get_local_timezone()
-        start_str = start_data.get("dateTime", start_data.get("date", ""))
-        end_str = end_data.get("dateTime", end_data.get("date", ""))
-        start_dt = parse_date_string(start_str, tz) if start_str else None
-        end_dt = parse_date_string(end_str, tz) if end_str else None
-        if start_dt:
-            time_text = start_dt.strftime("%A %B %d, %H:%M")
-            if end_dt:
-                time_text += f" – {end_dt.strftime('%H:%M')}"
-            parts.append(f"🕐 {time_text}")
-
+        parts = [f"🕐 {event_when(event, with_date=True)}"]
         if location:
             parts.append(f"📍 {location}")
-
-        links = extract_video_links(desc)
-        for label, url in links:
-            parts.append(f"🔗 [{label}]({url})")
-
+        parts += [f"🔗 [{label}]({url})" for label, url in extract_video_links(desc)]
         if desc:
-            clean = desc.strip()[:300]
-            if len(desc.strip()) > 300:
-                clean += "…"
-            parts.append(clean)
+            parts.append(shorten(desc, 300))
 
-        if not parts:
-            parts.append("*No additional details*")
-
-        embed.add_field(
-            name=title[:256],
-            value="\n".join(parts)[:1024],
-            inline=False,
-        )
+        embed.add_field(name=shorten(title, 256), value="\n".join(parts)[:1024], inline=False)
 
     if len(events) > 10:
         embed.set_footer(text=f"Showing 10 of {len(events)} events")
@@ -295,51 +269,27 @@ def format_change_lines(
     ``0x2ecc71`` (green / adds only), ``0xe74c3c`` (red / removals only),
     or ``0xf1c40f`` (yellow / mixed).
     """
+    sections = [
+        ("Added", [f"➕ {format_event(ev, with_date=True)}" for ev in added]),
+        ("Changed", [_format_change_diff(old, new) for old, new in changed]),
+        ("Removed", [f"➖ ~~{format_event(ev, with_date=True)}~~" for ev in removed]),
+    ]
     lines: list[str] = []
-    total = len(added) + len(removed) + len(changed)
     shown = 0
-
-    if added:
-        lines.append("**📥 Added:**")
-        for ev in added:
-            if shown >= cap:
-                break
-            lines.append(f"➕ {format_event(ev)}")
-            shown += 1
-
-    if removed:
+    for heading, items in sections:
+        items = items[:max(0, cap - shown)]
+        if not items:
+            continue
         if lines:
             lines.append("")
-        lines.append("**📤 Removed:**")
-        for ev in removed:
-            if shown >= cap:
-                break
-            title = ev.get("summary", "Untitled")
-            if len(title) > 47:
-                title = title[:44] + "..."
-            # Time info
-            start_data = ev.get("start", {})
-            start_raw = start_data.get("dateTime", start_data.get("date", ""))
-            tz = get_local_timezone()
-            dt = parse_date_string(start_raw, tz) if start_raw else None
-            time_str = dt.strftime("%a %H:%M") if dt else ""
-            lines.append(f"➖ ~~{title}~~ `{time_str}`")
-            shown += 1
+        lines.append(f"**{heading}**")
+        lines += items
+        shown += len(items)
 
-    if changed:
-        if lines:
-            lines.append("")
-        lines.append("**✏️ Changed:**")
-        for old_ev, new_ev in changed:
-            if shown >= cap:
-                break
-            lines.append(_format_change_diff(old_ev, new_ev))
-            shown += 1
-
+    total = len(added) + len(removed) + len(changed)
     if shown < total:
         lines.append(f"\n*… and {total - shown} more*")
 
-    # Colour hint
     if added and not removed and not changed:
         color = 0x2ECC71  # green
     elif removed and not added and not changed:
@@ -351,39 +301,15 @@ def format_change_lines(
 
 
 def _format_change_diff(old: dict, new: dict) -> str:
-    """Produce a single line highlighting what changed between two events."""
-    new_title = new.get("summary", "Untitled")
-    if len(new_title) > 47:
-        new_title = new_title[:44] + "..."
-
+    """'✏️ **New title** `Sun 08.11 15:00` · was `Sun 08.11 13:30`, title was *Old*'."""
     diffs: list[str] = []
-
-    # Title change
-    old_title = old.get("summary", "")
-    if old_title != new.get("summary", ""):
-        ot = old_title[:30] + "…" if len(old_title) > 30 else old_title
-        diffs.append(f"title was *{ot}*")
-
-    # Time change
-    tz = get_local_timezone()
-    old_start = parse_date_string(
-        old.get("start", {}).get("dateTime", old.get("start", {}).get("date", "")), tz
-    )
-    new_start = parse_date_string(
-        new.get("start", {}).get("dateTime", new.get("start", {}).get("date", "")), tz
-    )
-    if old_start and new_start and old_start != new_start:
-        diffs.append(f"was {old_start.strftime('%a %H:%M')}")
-
-    # Location change
-    old_loc = old.get("location", "") or ""
-    new_loc = new.get("location", "") or ""
+    old_when, new_when = event_when(old, with_date=True), event_when(new, with_date=True)
+    if old_when != new_when:
+        diffs.append(f"was `{old_when}`")
+    # Compare original titles: the simplified ones can differ between runs
+    if (old.get("original_summary") or old.get("summary")) != (new.get("original_summary") or new.get("summary")):
+        diffs.append(f"title was *{escape_md(shorten(old.get('summary') or '', 40))}*")
+    old_loc, new_loc = old.get("location") or "", new.get("location") or ""
     if old_loc != new_loc:
-        diffs.append(f"location was *{old_loc[:30]}*" if old_loc else "location added")
-
-    diff_str = f" ({'  · '.join(diffs)})" if diffs else ""
-    time_str = ""
-    if new_start:
-        time_str = f" `{new_start.strftime('%a %H:%M')}`"
-
-    return f"✏️ **{new_title}**{time_str}{diff_str}"
+        diffs.append(f"location was *{escape_md(shorten(old_loc, 30))}*" if old_loc else "location added")
+    return f"✏️ {format_event(new, with_date=True)} · {', '.join(diffs) or 'details updated'}"

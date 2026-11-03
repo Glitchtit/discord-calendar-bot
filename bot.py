@@ -171,16 +171,17 @@ async def on_resumed():
 @app_commands.checks.cooldown(1, 600, key=lambda i: i.guild_id)  # floods the channel otherwise
 async def herald_command(interaction: discord.Interaction):
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         today = get_today()
         monday = get_monday_of_week(today)
 
         for tag in GROUPED_CALENDARS:
             await post_tagged_week(bot, tag, monday)
-        for tag in GROUPED_CALENDARS:
-            await post_tagged_events(bot, tag, today)
+        if today.weekday():  # on Mondays the week post already shows today
+            for tag in GROUPED_CALENDARS:
+                await post_tagged_events(bot, tag, today)
 
-        await interaction.followup.send("Herald posted for **all** tags — week and today.")
+        await interaction.followup.send("Posted this week and today for every calendar.")
     except Exception as e:
         logger.exception(f"Error in /herald command: {e}")
         await interaction.followup.send("An error occurred while posting the herald.")
@@ -201,7 +202,7 @@ async def herald_command(interaction: discord.Interaction):
 @app_commands.autocomplete(input=autocomplete_agenda_input, target=autocomplete_agenda_target)
 async def agenda_command(interaction: discord.Interaction, input: str, target: str = ""):
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
 
         today = get_today()
         tags = resolve_input_to_tags(target, TAG_NAMES, GROUPED_CALENDARS) if target.strip() else list(GROUPED_CALENDARS.keys())
@@ -215,13 +216,13 @@ async def agenda_command(interaction: discord.Interaction, input: str, target: s
             for tag in tags:
                 posted = await post_tagged_events(bot, tag, today)
                 any_posted |= bool(posted)
-            label = today.strftime("%A, %B %d")
+            label = f"{today:%A %d.%m}"
         elif input.lower() == "week":
             monday = get_monday_of_week(today)
             for tag in tags:
                 await post_tagged_week(bot, tag, monday)
             any_posted = True  # Weekly always posts if calendars are valid
-            label = f"week of {monday.strftime('%B %d')}"
+            label = f"week {monday.isocalendar().week}"
         else:
             day = parse_agenda_date(input, today)
             if not day:
@@ -230,7 +231,7 @@ async def agenda_command(interaction: discord.Interaction, input: str, target: s
             for tag in tags:
                 posted = await post_tagged_events(bot, tag, day)
                 any_posted |= bool(posted)
-            label = day.strftime("%A, %B %d")
+            label = f"{day:%A %d.%m}"
 
         tag_names = ", ".join(TAG_NAMES.get(t, t) for t in tags)
         if any_posted:
@@ -260,10 +261,10 @@ async def search_command(
     tag: str = "",
 ):
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         pages, epp = await search_events(query, max(1, min(days_ahead, 365)), tag or None)
 
-        view = PaginatedEmbedView(pages, epp)
+        view = PaginatedEmbedView(pages, epp, timeout=900)  # ephemeral messages can't be edited after 15 min
         await interaction.followup.send(embed=pages[0], view=view)
         msg = await interaction.original_response()
         view.message = msg
@@ -338,7 +339,7 @@ async def remind_command(
 @app_commands.checks.cooldown(1, 3600, key=lambda i: i.guild_id)  # each run is paid gpt-4o + DALL-E calls
 async def greet_command(interaction: discord.Interaction):
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         
         # Check if AI is enabled before proceeding
         if not AI_TOGGLE:
@@ -361,7 +362,7 @@ async def greet_command(interaction: discord.Interaction):
 @app_commands.default_permissions(administrator=True)
 async def reload_command(interaction: discord.Interaction):
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         # force_refresh drops the metadata cache; to_thread keeps the network
         # I/O off the event loop. Updates GROUPED_CALENDARS in place.
         await asyncio.to_thread(load_calendar_sources, True)
@@ -379,7 +380,7 @@ async def reload_command(interaction: discord.Interaction):
 @bot.tree.command(name="who", description="List calendar tags and their assigned users")
 async def who_command(interaction: discord.Interaction):
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         lines = [f"**{tag}** → {TAG_NAMES.get(tag, tag)}" for tag in sorted(GROUPED_CALENDARS)]
         await interaction.followup.send("**Calendar Tags:**\n" + "\n".join(lines))
     except Exception as e:
@@ -394,7 +395,7 @@ async def who_command(interaction: discord.Interaction):
 @bot.tree.command(name="verify_status", description="Show status of pending change verifications (debug)")
 async def verify_status_command(interaction: discord.Interaction):
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         
         from tasks import get_pending_changes_status
         status = get_pending_changes_status()
@@ -422,7 +423,7 @@ async def verify_status_command(interaction: discord.Interaction):
 @app_commands.default_permissions(administrator=True)
 async def clear_pending_command(interaction: discord.Interaction):
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         
         from tasks import _pending_changes
         count = len(_pending_changes)
@@ -443,7 +444,7 @@ async def clear_pending_command(interaction: discord.Interaction):
 @app_commands.describe(detailed="Show detailed breakdown including circuit breaker status")
 async def health_command(interaction: discord.Interaction, detailed: bool = False):
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         
         # Import here to avoid circular imports
         from calendar_health import get_health_summary, get_circuit_breaker_status
@@ -572,7 +573,7 @@ async def health_command(interaction: discord.Interaction, detailed: bool = Fals
 ])
 async def reset_health_command(interaction: discord.Interaction, component: str = "all"):
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         
         # Import here to avoid circular imports
         from events import reset_metrics, _calendar_breakers
@@ -603,7 +604,7 @@ async def reset_health_command(interaction: discord.Interaction, component: str 
 @bot.tree.command(name="log_health", description="Manually log current health status to system logs")
 async def log_health_command(interaction: discord.Interaction):
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         
         # Import here to avoid circular imports
         from calendar_health import log_health_status, get_health_summary
@@ -635,7 +636,7 @@ async def log_health_command(interaction: discord.Interaction):
 @bot.tree.command(name="calendars", description="Show status of all configured calendar sources")
 async def calendars_command(interaction: discord.Interaction):
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         
         # Import here to avoid circular imports
         from calendar_health import get_calendar_summary
@@ -714,7 +715,7 @@ async def calendars_command(interaction: discord.Interaction):
 @app_commands.describe(query="URL or partial name of the calendar to debug")
 async def debug_calendar_command(interaction: discord.Interaction, query: str):
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         
         from events import _fetch_ics_content
         

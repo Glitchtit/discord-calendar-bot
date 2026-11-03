@@ -12,7 +12,7 @@ from utils import (
     get_today,
     get_monday_of_week,
     is_in_current_week,
-    format_event,
+    shorten,
     get_local_timezone,
     parse_date_string,
 )
@@ -616,7 +616,9 @@ async def post_todays_happenings(bot, include_greeting: bool = False, state: dic
                 if i:
                     await asyncio.sleep(1)
                 # Reuse the posted events for the greeting instead of re-fetching
-                posted_events = await post_tagged_events(bot, tag, today, allow_partial=allow_partial)
+                # On Mondays the week post already lists today, so only collect the events
+                posted_events = await post_tagged_events(bot, tag, today, allow_partial=allow_partial,
+                                                         send=tag not in state.get("weekly", ()))
                 if posted_events is not None:
                     state["daily"].add(tag)
                     state["events"] += posted_events
@@ -892,7 +894,7 @@ async def process_single_verification(bot, tag: str):
         description, color_hint = format_change_lines(verified_added, verified_removed, verified_changed)
         sent = await send_embed(
             bot,
-            title=f"📣 Event Changes – {get_name_for_tag(tag)}",
+            title=f"📣 {get_name_for_tag(tag)} — calendar changes",
             description=description,
             color=color_hint,
         )
@@ -1235,20 +1237,23 @@ async def _send_reminder_dm(bot, user_id: int, event: dict, minutes_left: int):
         location = event.get("location", "")
 
         import discord
+        from views import extract_video_links
+        start = parse_date_string(event.get("start", {}).get("dateTime", ""), get_local_timezone())
+        # Discord renders <t:…> in each reader's own time zone and keeps the countdown live
+        when = (f"<t:{int(start.timestamp())}:t> · <t:{int(start.timestamp())}:R>" if start
+                else f"in {minutes_left} minute{'s' if minutes_left != 1 else ''}")
         embed = discord.Embed(
-            title=f"🔔 Reminder: {title}",
-            description=f"Starting in **{minutes_left} minute{'s' if minutes_left != 1 else ''}**",
+            title=f"🔔 {shorten(title, 240)}",
+            description=f"Starts {when}",
             color=0x3498DB,
         )
         if location:
-            embed.add_field(name="📍 Location", value=location, inline=False)
+            embed.add_field(name="📍 Location", value=shorten(location, 1000), inline=False)
 
-        desc = event.get("description", "") or ""
-        from views import extract_video_links
-        links = extract_video_links(desc)
+        links = extract_video_links(event.get("description", "") or "")
         if links:
             link_text = "\n".join(f"[{label}]({url})" for label, url in links)
-            embed.add_field(name="🔗 Join", value=link_text, inline=False)
+            embed.add_field(name="🔗 Join", value=link_text[:1024], inline=False)
 
         await user.send(embed=embed)
         logger.debug(f"Sent reminder DM to {user_id} for '{title}'")
