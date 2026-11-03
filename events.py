@@ -1081,7 +1081,8 @@ def get_ics_events(start_date, end_date, url):
         if cal is None:
             return None
 
-        if "\nRRULE:" in content:
+        # RRULE inside VTIMEZONE (DST rules) is normal; only an RRULE in a VEVENT means a series
+        if re.search(r"^BEGIN:VEVENT$(?:(?!^END:VEVENT$).)*?^RRULE:", content, re.S | re.M):
             # shortcut: ics 0.7.2 doesn't expand RRULE, so repeating events show only their first
             # occurrence; switch to recurring-ical-events if a feed relies on them
             logger.warning(f"ICS feed {url} has repeating events (RRULE); only first occurrences are shown")
@@ -1163,7 +1164,17 @@ def get_events(source_meta, start_date, end_date):
         if source_type == "google":
             return get_google_events(start_date, end_date, source_id)
         elif source_type == "ics":
-            return get_ics_events(start_date, end_date, source_id)
+            events = get_ics_events(start_date, end_date, source_id)
+            if events is not None and source_meta.get("error"):
+                # The content fetch works even though the metadata probe failed (e.g. a
+                # Cloudflare challenge on HEAD): drop the stale error and its scary name
+                logger.info(f"Calendar '{source_name}' fetched fine; clearing its probe error")
+                tag = source_meta.get("tag")
+                source_meta.clear()
+                source_meta.update(type="ics", id=source_id, name=_derive_ics_name_from_url(source_id),
+                                   validation_method="content-fetch", cached_at=time.time(), tag=tag)
+                _calendar_metadata_cache[f"ics_{source_id}"] = source_meta
+            return events
         else:
             logger.warning(f"Unknown calendar source type '{source_type}' for source '{source_name}'")
             return []

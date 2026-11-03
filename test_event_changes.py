@@ -81,7 +81,7 @@ def _run_watch():
 def test_failed_source_does_not_report_removals(watch_env, monkeypatch):
     ev_a, ev_b, saved = watch_env
     monkeypatch.setattr(tasks, "get_events", lambda meta, s, e: None if meta["id"] == "B" else [ev_a])
-    monkeypatch.setattr(tasks, "load_previous_events", lambda: {"T_full": [ev_a, ev_b]})
+    monkeypatch.setattr(tasks, "load_previous_events", lambda: {"T_full": [ev_a, ev_b], "T_sources": ["A", "B"]})
     _run_watch()
     assert tasks._pending_changes == {} and saved == []
 
@@ -92,7 +92,7 @@ def test_missing_snapshot_is_saved_silently(watch_env, monkeypatch):
     monkeypatch.setattr(tasks, "load_previous_events", lambda: {})
     _run_watch()
     assert tasks._pending_changes == {}
-    assert [k for k, _ in saved] == ["T_full"]
+    assert [k for k, _ in saved] == ["T_full", "T_sources"]
 
 
 def test_event_moved_out_of_week_is_reported():
@@ -267,11 +267,11 @@ def test_ics_source_with_failed_probe_is_still_fetched(monkeypatch):
 def test_startup_keeps_existing_snapshots(monkeypatch):
     saved = []
     monkeypatch.setattr(tasks, "GROUPED_CALENDARS", {"OLD": [{"id": "A"}], "NEW": [{"id": "B"}]})
-    monkeypatch.setattr(tasks, "load_previous_events", lambda: {"OLD_full": [{"x": 1}]})
+    monkeypatch.setattr(tasks, "load_previous_events", lambda: {"OLD_full": [{"x": 1}], "OLD_sources": ["A"]})
     monkeypatch.setattr(tasks, "get_events", lambda meta, s, e: [])
     monkeypatch.setattr(tasks, "save_current_events_for_key", lambda k, evs: saved.append(k))
     asyncio.run(tasks.initialize_event_snapshots())
-    assert saved == ["NEW_full"]
+    assert saved == ["NEW_full", "NEW_sources"]
 
 
 ALLDAY_BREAK = ICS.replace("DTSTART:20261103T{start}00Z", "DTSTART;VALUE=DATE:20261102") \
@@ -325,3 +325,37 @@ def test_daily_retry_only_reposts_failed_tags(monkeypatch):
     assert asyncio.run(tasks.post_todays_happenings(None, True, state, allow_partial=False)) is False
     assert asyncio.run(tasks.post_todays_happenings(None, True, state, allow_partial=False)) is True
     assert calls == ["A", "B", "B"]
+
+
+# --- review follow-ups ------------------------------------------------------------
+def test_adding_a_calendar_to_a_tag_rebaselines_instead_of_announcing(watch_env, monkeypatch):
+    ev_a, ev_b, saved = watch_env
+    monkeypatch.setattr(tasks, "get_events", lambda meta, s, e: [ev_a] if meta["id"] == "A" else [ev_b])
+    # snapshot taken when the tag only had calendar A
+    monkeypatch.setattr(tasks, "load_previous_events", lambda: {"T_full": [ev_a], "T_sources": ["A"]})
+    _run_watch()
+    assert tasks._pending_changes == {}
+    assert [k for k, _ in saved] == ["T_full", "T_sources"]
+
+
+def test_ics_probe_error_is_cleared_when_fetch_works(monkeypatch):
+    meta = {"type": "ics", "id": "https://x/wilma/cal.ics", "name": "ICS Calendar (Access Denied)",
+            "error": True, "error_type": "forbidden", "tag": "T"}
+    monkeypatch.setattr(events, "fetch_ics_calendar_metadata", lambda url: meta)
+    monkeypatch.setattr(events, "get_ics_events", lambda s, e, url: [])
+    events.get_events(meta, date(2026, 11, 1), date(2026, 11, 2))
+    assert meta["name"] == "cal.ics" and "error" not in meta and meta["tag"] == "T"
+
+
+def test_rrule_warning_ignores_vtimezone_dst_rules(monkeypatch, caplog):
+    vtz = ("BEGIN:VTIMEZONE\nTZID:Europe/Helsinki\nBEGIN:DAYLIGHT\nDTSTART:19700329T030000\n"
+           "TZOFFSETFROM:+0200\nTZOFFSETTO:+0300\nRRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU\nEND:DAYLIGHT\n"
+           "END:VTIMEZONE\n")
+    plain = ICS.format(start="1000", end="1100").replace("PRODID:test\n", "PRODID:test\n" + vtz)
+    series = plain.replace("SUMMARY:Mini Exam\n", "SUMMARY:Mini Exam\nRRULE:FREQ=WEEKLY;COUNT=3\n")
+    warned = []
+    monkeypatch.setattr(events.logger, "warning", lambda msg, *a, **k: warned.append(msg))
+    for content in (plain, series):
+        monkeypatch.setattr(events, "_fetch_ics_content", lambda url, c=content: c)
+        events.get_ics_events(date(2026, 11, 1), date(2026, 11, 30), "https://x/" + str(len(warned)))
+    assert sum("RRULE" in m for m in warned) == 1

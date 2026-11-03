@@ -87,6 +87,21 @@ async def _fetch_calendar_events_safe(meta: dict, start, end, context: str = "",
     return None
 
 
+def _tag_sources(calendars: list) -> list:
+    return sorted(m.get("id", "") for m in calendars)
+
+
+def _needs_baseline(snapshots: dict, tag: str, calendars: list) -> bool:
+    """No snapshot yet, or the tag's calendars changed since it was taken: comparing
+    would announce a whole added/removed calendar as individual event changes."""
+    return f"{tag}_full" not in snapshots or snapshots.get(f"{tag}_sources") != _tag_sources(calendars)
+
+
+def _save_baseline(tag: str, calendars: list, events: list) -> None:
+    save_current_events_for_key(f"{tag}_full", events)
+    save_current_events_for_key(f"{tag}_sources", _tag_sources(calendars))
+
+
 def _event_start_key(e: dict) -> str:
     return e["start"].get("dateTime", e["start"].get("date", ""))
 
@@ -410,11 +425,11 @@ async def watch_for_event_changes(bot):
                 # Compare with previous snapshot
                 key = f"{tag}_full"
                 snapshots = load_previous_events()
-                if key not in snapshots:
-                    # No baseline yet (failed startup snapshot, new tag): record one
-                    # silently instead of announcing every event as "added"
-                    save_current_events_for_key(key, all_events)
-                    logger.info(f"No snapshot for '{tag}' yet; saved baseline of {len(all_events)} events")
+                if _needs_baseline(snapshots, tag, calendars):
+                    # New tag, failed startup snapshot, or calendars added/removed
+                    # (/reload, restart): record silently instead of announcing them
+                    _save_baseline(tag, calendars, all_events)
+                    logger.info(f"Saved new baseline for '{tag}' ({len(all_events)} events)")
                     continue
                 prev_snapshot = snapshots[key]
                 
@@ -711,10 +726,10 @@ async def initialize_event_snapshots():
 
         # Existing snapshots are kept: they survive restarts on purpose, so changes
         # pending at shutdown or made while the bot was down are still announced.
-        # Only tags without one get a silent baseline.
+        # Only tags without one, or whose calendar list changed, get a silent baseline.
         existing = load_previous_events()
         failed = 0
-        missing = [(t, c) for t, c in list(GROUPED_CALENDARS.items()) if f"{t}_full" not in existing]
+        missing = [(t, c) for t, c in list(GROUPED_CALENDARS.items()) if _needs_baseline(existing, t, c)]
         # Process tags sequentially to avoid overloading APIs
         for i, (tag, calendars) in enumerate(missing):
             if i:
@@ -724,7 +739,7 @@ async def initialize_event_snapshots():
                 # Keep any older snapshot rather than saving a partial one
                 failed += 1
                 continue
-            save_current_events_for_key(f"{tag}_full", all_events)
+            _save_baseline(tag, calendars, all_events)
             logger.debug(f"Initial snapshot saved for '{tag}' with {len(all_events)} events")
 
         status = "complete" if failed == 0 else f"partial (failed tags: {failed})"
