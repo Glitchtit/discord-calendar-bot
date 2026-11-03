@@ -15,7 +15,7 @@ from events import (
     TAG_NAMES
 )
 from log import logger
-from utils import format_event, resolve_input_to_tags, event_local_date
+from utils import format_event, resolve_input_to_tags, event_local_date, event_days
 from resilience import async_retry_with_backoff
 from views import (
     build_event_pages,
@@ -182,9 +182,11 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📅 post_tagged_events                                              ║
 # ║ Sends an embed of events for a specific tag on a given day        ║
-# ║ Returns posted events ([] if none to post, None if send failed)   ║
+# ║ Returns posted events ([] if none, None if a fetch or send failed)║
 # ╚════════════════════════════════════════════════════════════════════╝
-async def post_tagged_events(bot, tag: str, day: datetime.date) -> list | None:
+async def post_tagged_events(bot, tag: str, day: datetime.date, allow_partial: bool = True) -> list | None:
+    """allow_partial=False posts nothing (returns None) while any calendar fails,
+    so the scheduler can retry instead of posting an incomplete agenda."""
     try:
         calendars = GROUPED_CALENDARS.get(tag)
         if not calendars:
@@ -194,22 +196,29 @@ async def post_tagged_events(bot, tag: str, day: datetime.date) -> list | None:
         events_by_source = defaultdict(list)
         all_events = []
 
+        fetch_failed = False
         for meta in calendars:
             try:
                 # Run the blocking fetch (requests + retry sleeps) off the event loop
-                events = await asyncio.to_thread(get_events, meta, day, day) or []
-                all_events.extend([(meta["name"], e) for e in events])
+                events = await asyncio.to_thread(get_events, meta, day, day)
             except Exception as e:
                 logger.exception(f"Error getting events for {meta['name']}: {e}")
+                events = None
+            if events is None:
+                fetch_failed = True
+                continue
+            all_events.extend([(meta["name"], e) for e in events])
+        if fetch_failed and not allow_partial:
+            return None
 
         for source_name, event in all_events:
-            start_str = event["start"].get("dateTime", event["start"].get("date"))
-            if event_local_date(start_str) == day:
+            days = event_days(event)
+            if days and days[0] <= day <= days[1]:  # multi-day events show on every day they cover
                 events_by_source[source_name].append(event)
 
         if not events_by_source:
             logger.debug(f"Skipping {tag} — no events for {day}")
-            return []
+            return None if fetch_failed else []
 
         pages, epp = build_event_pages(
             events_by_source,
@@ -220,6 +229,8 @@ async def post_tagged_events(bot, tag: str, day: datetime.date) -> list | None:
         view = PaginatedEmbedView(pages, epp)
         if not await send_embed(bot, embed=pages[0], view=view):
             return None
+        if fetch_failed:
+            logger.warning(f"Posted {tag} for {day} without a calendar that failed to fetch")
         return [ev for evs in events_by_source.values() for ev in evs]
 
     except Exception as e:
@@ -231,8 +242,9 @@ async def post_tagged_events(bot, tag: str, day: datetime.date) -> list | None:
 # ║ 📆 post_tagged_week                                                ║
 # ║ Sends an embed of the weekly schedule for a given calendar tag    ║
 # ╚════════════════════════════════════════════════════════════════════╝
-async def post_tagged_week(bot, tag: str, monday: datetime.date) -> bool:
-    """Post the week for a tag. False only if sending to Discord failed."""
+async def post_tagged_week(bot, tag: str, monday: datetime.date, allow_partial: bool = True) -> bool:
+    """Post the week for a tag. False if sending failed, or (with allow_partial=False)
+    if a calendar failed to fetch, so the scheduler can retry."""
     try:
         calendars = GROUPED_CALENDARS.get(tag)
         if not calendars:
@@ -241,22 +253,35 @@ async def post_tagged_week(bot, tag: str, monday: datetime.date) -> bool:
 
         end = monday + timedelta(days=6)
         all_events = []
+        fetch_failed = False
         for meta in calendars:
             try:
                 # Run the blocking fetch (requests + retry sleeps) off the event loop
-                all_events += await asyncio.to_thread(get_events, meta, monday, end) or []
+                events = await asyncio.to_thread(get_events, meta, monday, end)
             except Exception as e:
                 logger.exception(f"Error getting weekly events for {meta['name']}: {e}")
+                events = None
+            if events is None:
+                fetch_failed = True
+                continue
+            all_events += events
+        if fetch_failed and not allow_partial:
+            return False
 
         if not all_events:
             logger.debug(f"Skipping {tag} — no weekly events from {monday} to {end}")
             return True
 
+        # File each event under every day of this week it covers (multi-day events included)
         events_by_day = defaultdict(list)
         for e in all_events:
-            day = event_local_date(e["start"].get("dateTime", e["start"].get("date")))
-            if day:
+            days = event_days(e)
+            if not days:
+                continue
+            day = max(days[0], monday)
+            while day <= min(days[1], end):
                 events_by_day[day].append(e)
+                day += timedelta(days=1)
 
         pages, epp = build_week_pages(
             events_by_day,

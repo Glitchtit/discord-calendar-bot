@@ -168,6 +168,7 @@ async def on_resumed():
     name="herald",
     description="Post all weekly and daily events for every calendar tag"
 )
+@app_commands.checks.cooldown(1, 600, key=lambda i: i.guild_id)  # floods the channel otherwise
 async def herald_command(interaction: discord.Interaction):
     try:
         await interaction.response.defer()
@@ -334,6 +335,7 @@ async def remind_command(
 # ║ Generates a persona-based medieval greeting with image      ║
 # ╚═════════════════════════════════════════════════════════════╝
 @bot.tree.command(name="greet", description="Post the morning greeting with image")
+@app_commands.checks.cooldown(1, 3600, key=lambda i: i.guild_id)  # each run is paid gpt-4o + DALL-E calls
 async def greet_command(interaction: discord.Interaction):
     try:
         await interaction.response.defer()

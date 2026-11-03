@@ -141,6 +141,22 @@ def event_local_date(start_str: str):
     return dt.astimezone(get_local_timezone()).date() if "T" in start_str else dt.date()
 
 
+def event_days(event: dict):
+    """(first, last) local dates an event covers, or None. All-day end dates are
+    exclusive, and a timed event ending exactly at midnight doesn't cover that day."""
+    start_str = event.get("start", {}).get("dateTime", event.get("start", {}).get("date", ""))
+    end_str = event.get("end", {}).get("dateTime", event.get("end", {}).get("date", "")) or start_str
+    first = event_local_date(start_str) if start_str else None
+    if first is None:
+        return None
+    if "T" in end_str:
+        end = parse_date_string(end_str)
+        last = (end - timedelta(microseconds=1)).date() if end else first
+    else:
+        last = date.fromisoformat(end_str) - timedelta(days=1)
+    return first, max(first, last)
+
+
 _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 _DDMM_RE = re.compile(r"^(\d{1,2})\.(\d{1,2})\.?(\d{4})?$")
 
@@ -156,11 +172,19 @@ def parse_agenda_date(text: str, today: date):
         return today + timedelta(days=1)
     m = _DDMM_RE.match(s)
     if m:
-        day, month, year = int(m[1]), int(m[2]), int(m[3] or today.year)
-        try:
-            return date(year, month, day)
-        except ValueError:
-            return None
+        day, month = int(m[1]), int(m[2])
+        if m[3]:
+            years = [int(m[3])]
+        else:
+            # No year: the nearest such date, so "2.1" asked in late December means next January
+            years = [today.year - 1, today.year, today.year + 1]
+        candidates = []
+        for y in years:
+            try:
+                candidates.append(date(y, month, day))
+            except ValueError:
+                pass
+        return min(candidates, key=lambda d: abs(d - today)) if candidates else None
     words = s.split()
     if words and words[-1] in _WEEKDAYS and len(words) <= 2 and (len(words) == 1 or words[0] in ("this", "next")):
         idx = _WEEKDAYS.index(words[-1])

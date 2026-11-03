@@ -53,10 +53,9 @@ _MAX_VERIFICATION_ATTEMPTS = 3  # Maximum number of verification attempts
 # cycles instead of always re-checking the first few.
 _watch_tag_cursor = 0
 
-# Daily/weekly post markers so the scheduler is robust to loop drift
-# (posts once anytime within the 08:00 hour instead of on an exact minute).
-_last_weekly_post_date = None
-_last_daily_post_date = None
+# Per-day posting progress, so a retry within the 08:00 window only covers the
+# tags that haven't gone out yet (memory only: see the window comment below)
+_post_state: dict = {"date": None}
 
 
 async def _fetch_calendar_events_safe(meta: dict, start, end, context: str = "", timeout: int = 300) -> list | None:
@@ -316,40 +315,41 @@ async def schedule_daily_posts(bot):
             return
             
         try:
-            global _last_weekly_post_date, _last_daily_post_date
+            global _post_state
 
             # Use utils' timezone-safe function
             local_now = datetime.now(tz=get_local_timezone())
             today = local_now.date()
+            if _post_state["date"] != today:
+                _post_state = {"date": today, "weekly": set(), "daily": set(), "events": [], "daily_complete": False}
+            state = _post_state
 
             # Posts go out in a 08:00–08:14 window rather than an exact minute, so loop
             # drift can't drop them; the window is short so a restart later in the
-            # morning doesn't post a second time (the markers live in memory only).
+            # morning doesn't post a second time (the state lives in memory only).
+            # A tag whose calendar fails to fetch is retried each minute; from
+            # 08:10 on it is posted with whatever could be fetched.
             in_window = local_now.hour == 8 and local_now.minute < 15
+            final_try = local_now.minute >= 10
 
             # Monday — weekly summaries
-            if local_now.weekday() == 0 and in_window and _last_weekly_post_date != today:
-                _last_weekly_post_date = today
-                logger.info("Starting weekly summary posting")
+            if local_now.weekday() == 0 and in_window:
                 monday = get_monday_of_week(today)
-
-                results = []
-                for tag in list(GROUPED_CALENDARS.keys()):  # Use list() to prevent dict changed during iteration
-                    results.append(await post_tagged_week(bot, tag, monday))
+                for tag in [t for t in list(GROUPED_CALENDARS) if t not in state["weekly"]]:
+                    if await post_tagged_week(bot, tag, monday, allow_partial=final_try):
+                        state["weekly"].add(tag)
+                    else:
+                        logger.warning(f"Weekly post for '{tag}' failed; will retry")
                     # Small delay between posts to avoid rate limits
                     await asyncio.sleep(1)
-                if results and not any(results):
-                    # Every send failed (Discord/channel down): retry next minute
-                    logger.warning("Weekly posts all failed to send; will retry")
-                    _last_weekly_post_date = None
 
             # Daily agenda and greeting (from minute 1 so the Monday weekly post goes out first)
-            if in_window and local_now.minute >= 1 and _last_daily_post_date != today:
-                _last_daily_post_date = today
-                logger.info("Starting daily posts with greeting")
-                if not await post_todays_happenings(bot, include_greeting=True):
-                    logger.warning("Daily posts all failed to send; will retry")
-                    _last_daily_post_date = None
+            if in_window and local_now.minute >= 1 and not state["daily_complete"]:
+                all_done = await post_todays_happenings(bot, include_greeting=True, state=state, allow_partial=final_try)
+                if all_done or final_try:
+                    state["daily_complete"] = True
+                else:
+                    logger.warning("Some daily posts failed; will retry")
 
             # Update task health status
             update_task_health(task_name, True)
@@ -583,48 +583,45 @@ async def monitor_task_health(bot):
 # ║ 📜 post_todays_happenings                                          ║
 # ║ Posts all events for today and an optional greeting and image     ║
 # ╚════════════════════════════════════════════════════════════════════╝
-async def post_todays_happenings(bot, include_greeting: bool = False) -> bool:
-    """Post today's events (and greeting). False only if every Discord send failed."""
+async def post_todays_happenings(bot, include_greeting: bool = False, state: dict | None = None,
+                                 allow_partial: bool = True) -> bool:
+    """Post today's events per tag, then the greeting once every tag is done
+    (or allow_partial). *state* ({"daily": done tags, "events": posted events})
+    carries progress across scheduler retries. Returns True when every tag is done."""
     try:
         today = get_today()
-        all_events_for_greeting = []
-        tag_count = 0
-        success_count = 0
+        if state is None:
+            state = {"daily": set(), "events": []}
         error_count = 0
-        send_failures = 0
 
-        # Post events for each tag
-        for tag in GROUPED_CALENDARS:
-            tag_count += 1
+        # Post events for each tag not done yet
+        for i, tag in enumerate([t for t in list(GROUPED_CALENDARS) if t not in state["daily"]]):
             try:
-                # Post events for this tag; reuse the returned events for the
-                # greeting instead of re-fetching every calendar a second time
-                posted_events = await post_tagged_events(bot, tag, today)
-                if posted_events:
-                    success_count += 1
-                    all_events_for_greeting += posted_events
-                elif posted_events is None:
-                    send_failures += 1
-
                 # Add small delay between posts to avoid rate limiting
-                if tag_count > 1:
+                if i:
                     await asyncio.sleep(1)
+                # Reuse the posted events for the greeting instead of re-fetching
+                posted_events = await post_tagged_events(bot, tag, today, allow_partial=allow_partial)
+                if posted_events is not None:
+                    state["daily"].add(tag)
+                    state["events"] += posted_events
             except Exception as e:
                 error_count += 1
+                state["daily"].add(tag)  # a bug, not an outage: retrying won't help
                 logger.exception(f"Error posting events for tag {tag}: {e}")
 
-        if send_failures and not success_count:
-            return False
+        all_done = all(t in state["daily"] for t in GROUPED_CALENDARS)
+        all_events_for_greeting = state["events"]
 
         # Generate and post greeting if requested
-        if include_greeting and (success_count > 0 or tag_count == 0):
+        if include_greeting and (all_done or allow_partial) and (all_events_for_greeting or not GROUPED_CALENDARS):
             retry_count = 0
             max_retries = 2
             
             # Check if AI is enabled before attempting generation
             if not AI_TOGGLE:
                 logger.info("AI features disabled via AI_TOGGLE. Skipping greeting generation.")
-                return True
+                return all_done
                 
             while retry_count <= max_retries:
                 try:
@@ -694,8 +691,8 @@ async def post_todays_happenings(bot, include_greeting: bool = False) -> bool:
                     
         # Log error summary 
         if error_count > 0:
-            logger.warning(f"Completed with {error_count} errors, {success_count} successes")
-        return True
+            logger.warning(f"Daily posts completed with {error_count} errors")
+        return all_done
     except Exception as e:
         logger.exception(f"Error in post_todays_happenings: {e}")
         return True  # a bug, not an outage: retrying won't help
@@ -712,9 +709,14 @@ async def initialize_event_snapshots():
         earliest = today - timedelta(days=30)
         latest = today + timedelta(days=90)
 
+        # Existing snapshots are kept: they survive restarts on purpose, so changes
+        # pending at shutdown or made while the bot was down are still announced.
+        # Only tags without one get a silent baseline.
+        existing = load_previous_events()
         failed = 0
+        missing = [(t, c) for t, c in list(GROUPED_CALENDARS.items()) if f"{t}_full" not in existing]
         # Process tags sequentially to avoid overloading APIs
-        for i, (tag, calendars) in enumerate(list(GROUPED_CALENDARS.items())):
+        for i, (tag, calendars) in enumerate(missing):
             if i:
                 await asyncio.sleep(2)
             all_events = await _fetch_tag_events(calendars, earliest, latest, context="initialization")

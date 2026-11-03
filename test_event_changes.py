@@ -203,7 +203,7 @@ def test_floating_ics_time_is_local_wall_clock():
 
 @pytest.mark.parametrize("text,expected", [
     ("today", date(2026, 11, 3)), ("tomorrow", date(2026, 11, 4)),
-    ("10.04", date(2026, 4, 10)), ("25.12.2027", date(2027, 12, 25)), ("31.02", None),
+    ("10.04", date(2027, 4, 10)), ("02.11", date(2026, 11, 2)), ("25.12.2027", date(2027, 12, 25)), ("31.02", None),
     ("friday", date(2026, 11, 6)), ("this friday", date(2026, 11, 6)), ("tuesday", date(2026, 11, 3)),
     ("next monday", date(2026, 11, 9)), ("next friday", date(2026, 11, 13)),
 ])
@@ -242,3 +242,86 @@ def test_errored_google_source_is_revalidated(monkeypatch):
     monkeypatch.setattr(events, "get_google_events", lambda s, e, cid: [])
     assert events.get_events(meta, date(2026, 11, 1), date(2026, 11, 2)) == []
     assert meta["name"] == "Family" and "error" not in meta and meta["tag"] == "T"
+
+
+# --- cycle 5 ----------------------------------------------------------------------
+from resilience import CalendarCircuitBreakers
+from utils import event_days
+from events import _validate_ics_content
+
+
+def test_dd_mm_in_late_december_means_next_january():
+    assert parse_agenda_date("2.1", date(2026, 12, 28)) == date(2027, 1, 2)
+
+
+def test_ics_source_with_failed_probe_is_still_fetched(monkeypatch):
+    meta = {"type": "ics", "id": "https://x/cal.ics", "name": "ICS Calendar (Access Denied)",
+            "error": True, "error_type": "forbidden", "tag": "T"}
+    monkeypatch.setattr(events, "fetch_ics_calendar_metadata", lambda url: meta)  # still cached as an error
+    monkeypatch.setattr(events, "get_ics_events", lambda s, e, url: None)
+    assert events.get_events(meta, date(2026, 11, 1), date(2026, 11, 2)) is None  # failed, not "empty"
+    monkeypatch.setattr(events, "get_ics_events", lambda s, e, url: ["ok"])
+    assert events.get_events(meta, date(2026, 11, 1), date(2026, 11, 2)) == ["ok"]
+
+
+def test_startup_keeps_existing_snapshots(monkeypatch):
+    saved = []
+    monkeypatch.setattr(tasks, "GROUPED_CALENDARS", {"OLD": [{"id": "A"}], "NEW": [{"id": "B"}]})
+    monkeypatch.setattr(tasks, "load_previous_events", lambda: {"OLD_full": [{"x": 1}]})
+    monkeypatch.setattr(tasks, "get_events", lambda meta, s, e: [])
+    monkeypatch.setattr(tasks, "save_current_events_for_key", lambda k, evs: saved.append(k))
+    asyncio.run(tasks.initialize_event_snapshots())
+    assert saved == ["NEW_full"]
+
+
+ALLDAY_BREAK = ICS.replace("DTSTART:20261103T{start}00Z", "DTSTART;VALUE=DATE:20261102") \
+                  .replace("DTEND:20261103T{end}00Z", "DTEND;VALUE=DATE:20261107")
+
+
+def test_multi_day_event_covers_each_day():
+    evs = _extract_ics_events(Calendar(ALLDAY_BREAK), "t", date(2026, 11, 4), date(2026, 11, 4))
+    assert len(evs) == 1 and event_days(evs[0]) == (date(2026, 11, 2), date(2026, 11, 6))
+    timed = _ev("t", "Late", date(2026, 11, 3), hour=1)
+    timed["end"] = {"dateTime": "2026-11-04T00:00:00+02:00"}  # ends exactly at midnight
+    assert event_days(timed)[1] == date(2026, 11, 3)
+
+
+def test_shared_uid_events_get_distinct_ids():
+    two = ICS.replace("END:VCALENDAR", "BEGIN:VEVENT\nUID:wilma-123\nDTSTART:20261105T100000Z\n"
+                      "DTEND:20261105T110000Z\nSUMMARY:Mini Exam\nEND:VEVENT\nEND:VCALENDAR")
+    evs = _extract_ics_events(Calendar(two.format(start="1000", end="1100")), "t", date(2026, 11, 1), date(2026, 11, 30))
+    assert len({e["id"] for e in evs}) == 2
+
+
+def test_bom_feed_is_accepted():
+    content = "﻿" + ICS.format(start="1000", end="1100")
+    assert _validate_ics_content(content, "t") is not None
+
+
+def test_circuit_breaker_opens_only_at_threshold():
+    cb = CalendarCircuitBreakers(threshold=5)
+    for _ in range(4):
+        cb.record_failure("x")
+    assert not cb.is_open("x") and len(cb) == 0
+    cb.record_failure("x")
+    assert cb.is_open("x") and "x" in cb
+
+
+def test_daily_retry_only_reposts_failed_tags(monkeypatch):
+    calls = []
+    fail_once = {"B"}
+
+    async def fake_post(bot, tag, day, allow_partial=True):
+        calls.append(tag)
+        if tag in fail_once:
+            fail_once.discard(tag)
+            return None
+        return [{"summary": tag}]
+
+    monkeypatch.setattr(tasks, "GROUPED_CALENDARS", {"A": [], "B": []})
+    monkeypatch.setattr(tasks, "post_tagged_events", fake_post)
+    monkeypatch.setattr(tasks, "AI_TOGGLE", False)
+    state = {"daily": set(), "events": []}
+    assert asyncio.run(tasks.post_todays_happenings(None, True, state, allow_partial=False)) is False
+    assert asyncio.run(tasks.post_todays_happenings(None, True, state, allow_partial=False)) is True
+    assert calls == ["A", "B", "B"]

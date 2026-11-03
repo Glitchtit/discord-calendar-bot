@@ -113,7 +113,9 @@ class CalendarCircuitBreakers:
         if calendar_id not in self._breakers:
             return False
         info = self._breakers[calendar_id]
-        if info.get("backoff_until", datetime.min) > datetime.now():
+        # Only open after `threshold` consecutive failures; a few blips must not
+        # black out e.g. the 08:00 posting window
+        if info["count"] >= self.threshold and info.get("backoff_until", datetime.min) > datetime.now():
             return True
         if datetime.now() - info.get("last_failure", datetime.min) > self.auto_reset_after:
             logger.debug(f"Auto-resetting circuit breaker for calendar {calendar_id}")
@@ -129,7 +131,7 @@ class CalendarCircuitBreakers:
         info["count"] += 1
         info["last_failure"] = now
         backoff_seconds = min(
-            self.base_backoff * (2 ** (info["count"] - 1)),
+            self.base_backoff * (2 ** max(0, info["count"] - self.threshold)),
             self.max_backoff,
         )
         info["backoff_until"] = now + timedelta(seconds=backoff_seconds)
@@ -155,7 +157,7 @@ class CalendarCircuitBreakers:
     def get_status(self) -> dict[str, Any]:
         """Get status of all active breakers for monitoring."""
         result = {}
-        for cal_id, info in self._breakers.items():
+        for cal_id, info in self._tripped().items():
             backoff_remaining = 0
             if info.get("backoff_until", datetime.min) > datetime.now():
                 backoff_remaining = (info["backoff_until"] - datetime.now()).total_seconds()
@@ -166,15 +168,15 @@ class CalendarCircuitBreakers:
             }
         return result
 
-    def items(self):
-        """Iterate over (calendar_id, failure_info) pairs."""
-        return self._breakers.items()
+    def _tripped(self) -> dict[str, dict[str, Any]]:
+        """Breakers that reached the threshold; below it a source is only being counted."""
+        return {k: v for k, v in self._breakers.items() if v["count"] >= self.threshold}
 
     def __len__(self) -> int:
-        return len(self._breakers)
+        return len(self._tripped())
 
     def __contains__(self, key: str) -> bool:
-        return key in self._breakers
+        return key in self._tripped()
 
 
 # ╔════════════════════════════════════════════════════════════════════╗

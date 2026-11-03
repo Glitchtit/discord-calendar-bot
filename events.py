@@ -6,6 +6,7 @@ import requests
 import time
 import ssl
 import threading
+from collections import Counter
 from datetime import datetime, timedelta, timezone, time as dtime
 from typing import Dict, List, Tuple, Optional, Any
 from ics import Calendar as ICS_Calendar # type: ignore
@@ -850,7 +851,9 @@ def _fetch_ics_content(url: str) -> str | None:
 
     # Handle encoding issues
     try:
-        response.encoding = response.encoding or 'utf-8'
+        # requests assumes ISO-8859-1 for text/* without a charset; ICS is UTF-8 by spec
+        if "charset" not in response.headers.get("content-type", "").lower():
+            response.encoding = "utf-8"
         return response.text
     except UnicodeDecodeError:
         logger.warning(f"Encoding error in ICS content from {url}, trying latin-1")
@@ -863,6 +866,7 @@ def _fetch_ics_content(url: str) -> str | None:
 
 def _validate_ics_content(content: str, url: str) -> str | None:
     """Validate and preprocess ICS content. Returns cleaned content or None."""
+    content = content.lstrip("\ufeff")  # a UTF-8 BOM would fail the BEGIN:VCALENDAR check
     if not content or len(content) < 50:
         logger.warning(f"ICS content too small or empty from {url}")
         return None
@@ -947,6 +951,9 @@ def _extract_ics_events(cal, url: str, start_date, end_date, has_uids: bool = Tr
         logger.warning(f"Error accessing events from ICS calendar {url}: {e}")
         return []
 
+    # A UID shared by several VEVENTs (a series plus moved occurrences) can't identify one event alone
+    uid_counts = Counter(getattr(e, "uid", None) for e in cal_events) if has_uids else Counter()
+
     events = []
     try:
         for i, e in enumerate(cal_events):
@@ -958,11 +965,15 @@ def _extract_ics_events(cal, url: str, start_date, end_date, has_uids: bool = Tr
                     all_day = bool(getattr(e, "all_day", False))
                     # Timed events are dated (and shown) in the bot's timezone; all-day events keep their calendar date
                     begin = e.begin if all_day else e.begin.to(get_local_timezone())
-                    event_date = begin.date()
+                    end = e.end if all_day else e.end.to(get_local_timezone())
+                    first_day = begin.date()
+                    # All-day ends are exclusive; a timed event ending at 00:00 doesn't touch that day
+                    last_day = (end - timedelta(microseconds=1)).date() if end > begin else first_day
                 except (AttributeError, ValueError, TypeError):
                     continue
 
-                if not (start_date <= event_date <= end_date):
+                # Overlap, not start date: multi-day events show on every day they cover
+                if last_day < start_date or first_day > end_date:
                     continue
 
                 # Cap counts only in-window events; cal.events is an unordered set,
@@ -989,6 +1000,8 @@ def _extract_ics_events(cal, url: str, start_date, end_date, has_uids: bool = Tr
 
                 # A real UID is stable across time changes, so reschedules show as "changed"
                 uid = getattr(e, "uid", None) if has_uids else None
+                if uid and uid_counts[uid] > 1:
+                    uid = f"{uid}|{e.begin}"
                 id_source = uid or f"{original_title}|{e.begin}|{e.end}|{location}"
 
                 try:
@@ -1002,7 +1015,7 @@ def _extract_ics_events(cal, url: str, start_date, end_date, has_uids: bool = Tr
                         "original_summary": original_title,
                         # Same shape as Google: {"date"} for all-day, local {"dateTime"} otherwise
                         "start": {"date": e.begin.date().isoformat()} if all_day else {"dateTime": begin.isoformat()},
-                        "end": {"date": e.end.date().isoformat()} if all_day else {"dateTime": e.end.to(get_local_timezone()).isoformat()},
+                        "end": {"date": e.end.date().isoformat()} if all_day else {"dateTime": end.isoformat()},
                         "location": location,
                         "description": description,
                         "id": hashlib.md5(id_source.encode("utf-8")).hexdigest(),
@@ -1068,6 +1081,10 @@ def get_ics_events(start_date, end_date, url):
         if cal is None:
             return None
 
+        if "\nRRULE:" in content:
+            # shortcut: ics 0.7.2 doesn't expand RRULE, so repeating events show only their first
+            # occurrence; switch to recurring-ical-events if a feed relies on them
+            logger.warning(f"ICS feed {url} has repeating events (RRULE); only first occurrences are shown")
         # Only trust UIDs when every VEVENT has one (else ics invents random ones)
         has_uids = len(re.findall(r"^UID[:;]", content, re.M)) >= content.count("BEGIN:VEVENT")
         events = _extract_ics_events(cal, url, start_date, end_date, has_uids)
@@ -1127,14 +1144,13 @@ def get_events(source_meta, start_date, end_date):
             logger.error(f"Missing required fields in source metadata: {source_meta}")
             return []
         
-        # Metadata that failed at startup is re-validated here, otherwise one bad
-        # probe (e.g. a Cloudflare 403, a network blip) sticks until /reload.
-        # ICS config-type errors are re-probed once their cached error expires
-        # (6h/24h) and skipped until then; Google errors aren't cached, so they
-        # re-check every fetch but events are fetched regardless.
-        ics_blocked = source_type == "ics" and source_meta.get("error_type") in ["authentication", "forbidden", "not_found", "method_not_allowed"]
-        if ics_blocked or (source_type == "google" and source_meta.get("error")):
-            fresh = (fetch_ics_calendar_metadata if ics_blocked else fetch_google_calendar_metadata)(source_id)
+        # Metadata that failed at startup (e.g. a Cloudflare 403 on the probe) is
+        # re-validated here so the real name comes back without /reload. The
+        # events are fetched regardless: the probe and the content fetch can
+        # disagree, and only the fetch decides "failed" (None) vs "empty" ([]).
+        if source_meta.get("error"):
+            fetch_meta = fetch_ics_calendar_metadata if source_type == "ics" else fetch_google_calendar_metadata
+            fresh = fetch_meta(source_id)  # ICS errors stay cached 30min-24h, so this is cheap
             if not fresh.get("error") and fresh is not source_meta:
                 # Recovered: update in place, since GROUPED_CALENDARS holds this dict
                 logger.info(f"Calendar '{source_name}' validated again as '{fresh['name']}'")
@@ -1142,10 +1158,6 @@ def get_events(source_meta, start_date, end_date):
                 source_meta.clear()
                 source_meta.update(fresh, tag=tag)
                 source_name = source_meta["name"]
-            elif ics_blocked:
-                logger.debug(f"Skipping calendar '{source_name}' - {fresh.get('error_type')} error")
-                return []
-        # Other ICS error types (timeout, connection, ...) are still fetched: likely temporary
         
         # Route to appropriate fetcher based on source type
         if source_type == "google":
