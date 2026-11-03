@@ -98,7 +98,9 @@ def floating_times_to_utc(content: str) -> str:
     def to_utc(m):
         local = datetime.strptime(m.group(3), "%Y%m%dT%H%M%S").replace(tzinfo=get_local_timezone())
         return f"{m.group(1)}{m.group(2) or ''}:{local.astimezone(timezone.utc):%Y%m%dT%H%M%S}Z"
-    return _FLOATING_RE.sub(to_utc, content)
+    # Only inside VEVENTs: VTIMEZONE DST rules (e.g. DTSTART:19700329T030000) must stay local
+    return re.sub(r"^BEGIN:VEVENT\r?$.*?^END:VEVENT\r?$",
+                  lambda block: _FLOATING_RE.sub(to_utc, block.group()), content, flags=re.S | re.M)
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║ 🔄 Circuit Breaker and Retry Logic                                ║

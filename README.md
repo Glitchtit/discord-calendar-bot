@@ -60,7 +60,8 @@ Copy `.env.example` to `.env` and supply the required values. These environment 
 | `CALENDAR_SOURCES` | Comma-separated list of sources in the form `google:<calendar_id>:<TAG>` or `ics:<url>:<TAG>`. Multiple sources can share the same tag.【F:environ.py†L23-L27】【F:events.py†L13-L24】 |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to the Google service account file. Defaults to `/app/service_account.json` inside Docker.【F:environ.py†L19-L27】 |
 | `USER_TAG_MAPPING` | Comma-separated list of `discord_user_id:TAG` entries used to map members to tags and colours.【F:environ.py†L23-L31】【F:bot.py†L452-L520】 |
-| `OPENAI_API_KEY` | Enables AI greetings and artwork when present.【F:environ.py†L15-L22】【F:ai.py†L1-L60】 |
+| `OPENAI_API_KEY` | Enables AI greetings and artwork, and AI title shortening, when present.【F:environ.py†L15-L22】【F:ai.py†L1-L60】 |
+| `OPENAI_TITLE_MODEL` | Optional; model for title shortening (default `gpt-5.4-nano`). Change it when OpenAI retires a model. |
 | `AI_TOGGLE` | Set to `false` to disable AI features without removing the key.【F:environ.py†L31-L33】【F:bot.py†L205-L223】 |
 | `DEBUG` | Optional; set to `true` for verbose logging.【F:environ.py†L7-L12】【F:log.py†L1-L100】 |
 

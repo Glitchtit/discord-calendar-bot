@@ -359,3 +359,28 @@ def test_rrule_warning_ignores_vtimezone_dst_rules(monkeypatch, caplog):
         monkeypatch.setattr(events, "_fetch_ics_content", lambda url, c=content: c)
         events.get_ics_events(date(2026, 11, 1), date(2026, 11, 30), "https://x/" + str(len(warned)))
     assert sum("RRULE" in m for m in warned) == 1
+
+
+def test_floating_conversion_leaves_vtimezone_rules_alone():
+    vtz = ("BEGIN:VTIMEZONE\nTZID:Europe/Helsinki\nBEGIN:DAYLIGHT\nDTSTART:19700329T030000\n"
+           "TZOFFSETFROM:+0200\nTZOFFSETTO:+0300\nEND:DAYLIGHT\nEND:VTIMEZONE\n")
+    floating = ICS.replace("{start}00Z", "{start}00").replace("{end}00Z", "{end}00").format(start="0800", end="0900")
+    out = floating_times_to_utc(floating.replace("PRODID:test\n", "PRODID:test\n" + vtz))
+    assert "DTSTART:19700329T030000\n" in out           # DST rule untouched
+    assert "DTSTART:20261103T080000\n" not in out       # event time converted
+
+
+def test_title_model_not_found_disables_openai_once(monkeypatch):
+    import openai, httpx
+    import ai_title_parser as atp
+    calls = []
+
+    class FakeCompletions:
+        def create(self, **kw):
+            calls.append(kw["model"])
+            raise openai.NotFoundError("gone", response=httpx.Response(404, request=httpx.Request("POST", "http://x")), body=None)
+
+    parser = atp.AITitleParser()
+    parser.client = type("C", (), {"chat": type("Ch", (), {"completions": FakeCompletions()})()})()
+    assert parser.simplify_title("Mini exam one") and parser.simplify_title("Another title here")
+    assert len(calls) == 1 and parser.client is None

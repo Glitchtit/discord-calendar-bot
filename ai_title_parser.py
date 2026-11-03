@@ -5,6 +5,10 @@ from typing import Dict, Optional
 from log import logger
 import os
 
+# The default broke once already (gpt-4.1-nano was retired), so it is overridable
+TITLE_MODEL = os.getenv("OPENAI_TITLE_MODEL", "gpt-5.4-nano")
+
+
 class AITitleParser:
     """OpenAI-powered title parser that intelligently simplifies calendar event titles."""
     
@@ -233,22 +237,19 @@ FINNISH: "Viikkokokous projektiryhmä Beta neljännes 4" → "Viikkokokous Proje
 
 Return ONLY the simplified title in the ORIGINAL language, nothing else."""
 
-            # Try with higher temperature first for creativity, then lower if needed
+            # GPT-5 models reject temperature/top_p/penalties and need max_completion_tokens
             for attempt in range(2):
                 response = self.client.chat.completions.create(
-                    model="gpt-4.1-nano",
+                    model=TITLE_MODEL,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": f"Simplify this calendar event title (keep it in its original language - English, Swedish, or Finnish): {title}"}
                     ],
-                    max_tokens=150,  # Increased for 5-word titles
-                    temperature=0.2 if attempt == 0 else 0.05,
-                    top_p=0.8,
-                    frequency_penalty=0.1,
-                    presence_penalty=0.1
+                    max_completion_tokens=100,
+                    reasoning_effort="none",
                 )
                 
-                simplified = response.choices[0].message.content.strip()
+                simplified = (response.choices[0].message.content or "").strip()
                 
                 # Validate and clean the response
                 if self._validate_simplified_title(simplified, title):
@@ -260,6 +261,12 @@ Return ONLY the simplified title in the ORIGINAL language, nothing else."""
             logger.warning(f"OpenAI failed validation after 2 attempts for '{title}', using fallback")
             return self._fallback_simplify(title)
             
+        except openai.NotFoundError as e:
+            # Retired/unknown model: say so once and stop calling it, instead of a warning per title
+            logger.error(f"OpenAI title model '{TITLE_MODEL}' unavailable ({e}); using pattern-based titles. "
+                         f"Set OPENAI_TITLE_MODEL to a current model.")
+            self.client = None
+            return self._fallback_simplify(title)
         except Exception as e:
             logger.warning(f"OpenAI API error for title '{title}': {e}")
             return self._fallback_simplify(title)
