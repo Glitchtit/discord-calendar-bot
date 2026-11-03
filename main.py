@@ -3,8 +3,6 @@ import os
 import signal
 import asyncio
 import atexit
-import threading
-import time
 from types import FrameType
 from typing import Optional
 
@@ -96,36 +94,6 @@ def signal_handler(sig: int, frame: Optional[FrameType] = None) -> None:
         sys.exit(0)
 
 # ╔════════════════════════════════════════════════════════════════════╗
-# ║ 🔄 setup_watchdog                                                  ║
-# ║ Sets up a watchdog thread to detect if the bot becomes stuck      ║
-# ╚════════════════════════════════════════════════════════════════════╝
-def setup_watchdog():
-    """Set up a watchdog thread to monitor bot health."""
-    def watchdog_thread():
-        # Wait for initial startup period
-        time.sleep(300)  # 5 minutes
-
-        while not shutdown_in_progress:
-            # bot.last_heartbeat is refreshed every 30s by the
-            # verification_watchdog task, so it only advances while the
-            # event loop is actually executing tasks. A stale value means
-            # the loop is blocked/frozen even if the gateway looks alive.
-            last_heartbeat = getattr(bot, 'last_heartbeat', None)
-            if last_heartbeat and time.time() - last_heartbeat > 600:  # 10 minutes
-                logger.warning(
-                    f"Watchdog detected possible bot freeze - event loop heartbeat "
-                    f"stale for {(time.time() - last_heartbeat) / 60:.0f} minutes"
-                )
-
-            # Sleep before next check
-            time.sleep(60)  # Check every minute
-    
-    # Start watchdog in a daemon thread
-    watchdog = threading.Thread(target=watchdog_thread, daemon=True)
-    watchdog.start()
-    logger.debug("Watchdog monitoring thread started")
-
-# ╔════════════════════════════════════════════════════════════════════╗
 # ║ 📊 display_startup_info                                            ║
 # ║ Logs useful information during startup                            ║
 # ╚════════════════════════════════════════════════════════════════════╝
@@ -166,55 +134,10 @@ def main():
             logger.error("Environment validation failed. Exiting.")
             sys.exit(1)
         
-        # Start watchdog monitoring
-        setup_watchdog()
-        
-        # Configure Discord client with reconnect settings
-        bot.max_reconnect_attempts = 10
-
-        # Seed the event-loop liveness timestamp; the verification_watchdog
-        # task in tasks.py refreshes it every 30 seconds once running.
-        # (Note: registering on_resumed/on_heartbeat here would silently
-        # replace bot.py's handlers — discord.py keys events by name.)
-        bot.last_heartbeat = time.time()
-
-        # Start the bot with reconnect enabled and retry logic
+        # One run: discord.py reconnects by itself, and a closed client can't be
+        # restarted in-process, so on a fatal error we exit and let Docker restart us
         logger.info("Starting Discord bot...")
-        
-        max_startup_retries = 3
-        startup_retry_count = 0
-        
-        while startup_retry_count < max_startup_retries:
-            try:
-                bot.run(DISCORD_BOT_TOKEN, reconnect=True)
-                break  # If we get here, the bot stopped normally
-                
-            except KeyboardInterrupt:
-                logger.info("Bot shutdown requested by user")
-                break
-                
-            except Exception as bot_error:
-                startup_retry_count += 1
-                
-                # Check if this is a critical error that we shouldn't retry
-                error_str = str(bot_error).lower()
-                critical_errors = [
-                    "improper token", "login failure", "unauthorized", 
-                    "forbidden", "invalid token", "token is invalid"
-                ]
-                
-                if any(critical in error_str for critical in critical_errors):
-                    logger.error(f"Critical bot error - not retrying: {bot_error}")
-                    break
-                    
-                if startup_retry_count < max_startup_retries:
-                    retry_delay = min(30, 5 * (2 ** startup_retry_count))  # Exponential backoff, max 30s
-                    logger.error(f"Bot crashed (attempt {startup_retry_count}/{max_startup_retries}): {bot_error}")
-                    logger.info(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                else:
-                    logger.error(f"Bot failed after {max_startup_retries} attempts: {bot_error}")
-                    raise
+        bot.run(DISCORD_BOT_TOKEN, reconnect=True)
         
     except Exception as e:
         logger.exception(f"Critical error in main: {e}")

@@ -154,22 +154,20 @@ async def send_embed(bot, embed: discord.Embed = None, title: str = "", descript
                 
             return msg
             
-        # Process image if provided
-        file = None
-        if image_path and os.path.exists(image_path):
-            try:
-                file = discord.File(image_path, filename="image.png")
-                embed.set_image(url="attachment://image.png")
-            except Exception as e:
-                logger.warning(f"Failed to load image from {image_path}: {e}")
-        
-        # Send the message with retry
-        kwargs: dict = {"embed": embed}
-        if file:
-            kwargs["file"] = file
-        if view is not None:
-            kwargs["view"] = view
-        msg = await _retry_discord_operation(lambda: channel.send(**kwargs))
+        has_image = bool(image_path and os.path.exists(image_path))
+        if has_image:
+            embed.set_image(url="attachment://image.png")
+
+        def _send():
+            kwargs: dict = {"embed": embed}
+            if has_image:
+                # Fresh File per attempt: discord.py closes it after a send, so a reused one breaks retries
+                kwargs["file"] = discord.File(image_path, filename="image.png")
+            if view is not None:
+                kwargs["view"] = view
+            return channel.send(**kwargs)
+
+        msg = await _retry_discord_operation(_send)
 
         # Store message reference so View can disable buttons on timeout
         if view is not None and hasattr(view, "message") and msg:

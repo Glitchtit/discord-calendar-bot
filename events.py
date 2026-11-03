@@ -439,15 +439,14 @@ def fetch_google_calendar_metadata(calendar_id: str) -> Dict[str, Any]:
             
             logger.debug(f"Loaded Google calendar metadata: {name}")
             
-        # Cache the result
-        _calendar_metadata_cache[cache_key] = result
+        # Errors aren't cached: get_events retries them so a boot-time blip self-heals
+        if not result.get("error"):
+            _calendar_metadata_cache[cache_key] = result
         return result
         
     except Exception as e:
         logger.warning(f"Error getting metadata for Google calendar {calendar_id}: {e}")
-        result = {"type": "google", "id": calendar_id, "name": calendar_id, "error": True}
-        _calendar_metadata_cache[cache_key] = result
-        return result
+        return {"type": "google", "id": calendar_id, "name": calendar_id, "error": True}
     
 # Browser-like headers shared by the ICS validation probe and the real content
 # fetch. Cloudflare-fronted hosts (e.g. inschool.fi/Wilma) challenge the default
@@ -1128,21 +1127,25 @@ def get_events(source_meta, start_date, end_date):
             logger.error(f"Missing required fields in source metadata: {source_meta}")
             return []
         
-        # Sources that failed validation with a config-type error are skipped,
-        # but re-validated once the cached error expires (6h/24h) -- otherwise one
-        # bad probe at startup (e.g. a Cloudflare 403) would hide it until /reload
-        if source_type == "ics" and source_meta.get("error_type") in ["authentication", "forbidden", "not_found", "method_not_allowed"]:
-            fresh = fetch_ics_calendar_metadata(source_id)
-            if fresh.get("error"):
+        # Metadata that failed at startup is re-validated here, otherwise one bad
+        # probe (e.g. a Cloudflare 403, a network blip) sticks until /reload.
+        # ICS config-type errors are re-probed once their cached error expires
+        # (6h/24h) and skipped until then; Google errors aren't cached, so they
+        # re-check every fetch but events are fetched regardless.
+        ics_blocked = source_type == "ics" and source_meta.get("error_type") in ["authentication", "forbidden", "not_found", "method_not_allowed"]
+        if ics_blocked or (source_type == "google" and source_meta.get("error")):
+            fresh = (fetch_ics_calendar_metadata if ics_blocked else fetch_google_calendar_metadata)(source_id)
+            if not fresh.get("error") and fresh is not source_meta:
+                # Recovered: update in place, since GROUPED_CALENDARS holds this dict
+                logger.info(f"Calendar '{source_name}' validated again as '{fresh['name']}'")
+                tag = source_meta.get("tag")
+                source_meta.clear()
+                source_meta.update(fresh, tag=tag)
+                source_name = source_meta["name"]
+            elif ics_blocked:
                 logger.debug(f"Skipping calendar '{source_name}' - {fresh.get('error_type')} error")
                 return []
-            # Recovered: update in place, since GROUPED_CALENDARS holds this dict
-            logger.info(f"Calendar '{source_name}' validated again as '{fresh['name']}'")
-            tag = source_meta.get("tag")
-            source_meta.clear()
-            source_meta.update(fresh, tag=tag)
-            source_name = source_meta["name"]
-        # Other error types (timeout, connection, ...) are still fetched: likely temporary
+        # Other ICS error types (timeout, connection, ...) are still fetched: likely temporary
         
         # Route to appropriate fetcher based on source type
         if source_type == "google":

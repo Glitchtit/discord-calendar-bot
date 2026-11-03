@@ -3,7 +3,9 @@ from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
 import asyncio
+import os
 import random
+import threading
 import time
 
 from log import logger
@@ -43,6 +45,24 @@ bot = commands.Bot(command_prefix="/", intents=intents)
 bot.is_initialized = False
 
 
+def start_loop_watchdog(loop, timeout: float = 120, interval: float = 60):
+    """Exit the process if the event loop stops running callbacks, so Docker's
+    restart policy brings the bot back instead of leaving it silently frozen."""
+    def run():
+        while True:
+            time.sleep(interval)
+            alive = threading.Event()
+            try:
+                loop.call_soon_threadsafe(alive.set)
+            except RuntimeError:  # loop closed: normal shutdown
+                return
+            if not alive.wait(timeout):
+                logger.critical(f"Event loop unresponsive for {timeout:.0f}s; exiting so the container restarts")
+                os._exit(1)
+                return  # unreachable in production; stops the thread when _exit is mocked
+    threading.Thread(target=run, name="loop-watchdog", daemon=True).start()
+
+
 # ╔═════════════════════════════════════════════════════════════╗
 # ║ 🟢 on_ready                                                  ║
 # ║ Called once the bot is online and ready                     ║
@@ -55,6 +75,9 @@ async def on_ready():
     if bot.is_initialized:
         logger.info("Bot reconnected, skipping initialization")
         return
+    if not getattr(bot, "watchdog_started", False):
+        start_loop_watchdog(asyncio.get_running_loop())
+        bot.watchdog_started = True
     
     # Perform initialization with progressive backoff for retries
     max_retries = 3
@@ -135,7 +158,6 @@ async def on_disconnect():
 @bot.event
 async def on_resumed():
     logger.info("Bot connection resumed")
-    bot.last_heartbeat = time.time()
 
 
 # ╔═════════════════════════════════════════════════════════════╗

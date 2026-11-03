@@ -219,3 +219,26 @@ def test_week_pages_respect_discord_limits_and_keep_all_events():
     for p in pages:
         assert len(p) <= 6000 and len(p.fields) <= 25 and all(len(f.value) <= 1024 for f in p.fields)
     assert sum(len(e) for e in epp) == 30 * 25
+
+
+# --- cycle 4 ----------------------------------------------------------------------
+import threading
+
+
+def test_loop_watchdog_exits_when_loop_is_stuck(monkeypatch):
+    import bot as bot_module
+    exited = threading.Event()
+    monkeypatch.setattr(bot_module.os, "_exit", lambda code: exited.set())
+    stuck_loop = asyncio.new_event_loop()  # never run, so callbacks never fire
+    bot_module.start_loop_watchdog(stuck_loop, timeout=0.05, interval=0)
+    assert exited.wait(2)
+    stuck_loop.close()
+
+
+def test_errored_google_source_is_revalidated(monkeypatch):
+    meta = {"type": "google", "id": "cal@x", "name": "cal@x", "error": True, "tag": "T"}
+    monkeypatch.setattr(events, "fetch_google_calendar_metadata",
+                        lambda cid: {"type": "google", "id": cid, "name": "Family"})
+    monkeypatch.setattr(events, "get_google_events", lambda s, e, cid: [])
+    assert events.get_events(meta, date(2026, 11, 1), date(2026, 11, 2)) == []
+    assert meta["name"] == "Family" and "error" not in meta and meta["tag"] == "T"

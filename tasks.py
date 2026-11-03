@@ -916,10 +916,6 @@ async def verification_watchdog(bot):
     """Dedicated task to process pending verifications more frequently."""
     task_name = "verification_watchdog"
 
-    # Liveness signal for the watchdog thread in main.py: this only advances
-    # while the event loop is actually running tasks.
-    bot.last_heartbeat = time.time()
-
     async with TaskLock(task_name) as acquired:
         if not acquired:
             return
